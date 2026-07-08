@@ -40,6 +40,12 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { getAnnouncementColorClass } from '@/lib/colors'
 import { formatDateTimeObject } from '@/lib/time'
 import { cn } from '@/lib/utils'
@@ -60,6 +66,7 @@ interface NotificationPopoverProps {
   onTabChange: (tab: 'notice' | 'announcements') => void
   notice: string
   announcements: AnnouncementItem[]
+  runtimeTimestamp?: string
   loading: boolean
   className?: string
 }
@@ -298,6 +305,7 @@ export function NotificationPopover({
   onTabChange,
   notice,
   announcements,
+  runtimeTimestamp,
   loading,
   className,
 }: NotificationPopoverProps) {
@@ -331,7 +339,25 @@ export function NotificationPopover({
         className='w-[min(26rem,calc(100vw-1rem))] gap-3 p-3'
       >
         <PopoverHeader className='gap-1 px-1'>
-          <PopoverTitle>{t('System Announcements')}</PopoverTitle>
+          <PopoverTitle className='flex min-w-0 items-baseline gap-2'>
+            <span className='min-w-0 truncate'>
+              {t('System Announcements')}
+            </span>
+            {runtimeTimestamp ? (
+              <TooltipProvider delay={200}>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className='text-muted-foreground hover:text-foreground shrink-0 cursor-help text-xs font-normal tabular-nums' />
+                    }
+                  >
+                    Docker {runtimeTimestamp}
+                  </TooltipTrigger>
+                  <TooltipContent>Docker {runtimeTimestamp}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : null}
+          </PopoverTitle>
           <p className='text-muted-foreground text-xs'>
             {t('Latest platform updates and notices')}
           </p>

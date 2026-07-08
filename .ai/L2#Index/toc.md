@@ -78,6 +78,11 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
   - 部署流程
   - 自动化测试
 
+- **na.q.srl 部署排障经验** - `../L4#Changelog/2026-07-09-newapi-qiqi-na-q-srl-deploy-lessons.md`
+  - SSH 必须优先使用 `.env` 的 `SERVER_IP` 和 `QIQI_SSH_KEY`
+  - 生产 compose 文件是 `/opt/new-api/docker-compose.prod.yml`
+  - 端口冲突、模板 compose 误用、健康检查和嵌套 git 仓库处理经验
+
 ### 🎯 核心概念
 
 #### 路径为王 (Path is King)

@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import * as z from 'zod'
 
 import {
@@ -55,6 +57,8 @@ export function QiqiSettingsSection({
 }: QiqiSettingsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const baselineRef = useRef<QiqiSettingsFormValues>(defaultValues)
+  const baselineSerializedRef = useRef<string>(JSON.stringify(defaultValues))
 
   const form = useForm<QiqiSettingsFormValues>({
     resolver: zodResolver(qiqiSettingsSchema),
@@ -63,22 +67,40 @@ export function QiqiSettingsSection({
 
   useResetForm(form, defaultValues)
 
+  useEffect(() => {
+    const serialized = JSON.stringify(defaultValues)
+    if (serialized === baselineSerializedRef.current) return
+
+    baselineRef.current = defaultValues
+    baselineSerializedRef.current = serialized
+  }, [defaultValues])
+
   const onSubmit = async (values: QiqiSettingsFormValues) => {
     const key = 'qiqi_setting.context_request_logging_enabled'
-    if (values[key] === defaultValues[key]) {
+    if (values[key] === baselineRef.current[key]) {
+      toast.info(t('No changes to save'))
       return
     }
 
-    await updateOption.mutateAsync({
+    const response = await updateOption.mutateAsync({
       key,
       value: values[key],
     })
+
+    if (response.success) {
+      baselineRef.current = values
+      baselineSerializedRef.current = JSON.stringify(values)
+      form.reset(values)
+    }
   }
 
   return (
-    <SettingsSection title={t('Qiqi Settings')}>
+    <SettingsSection title={t('Qiqi Settings')} className='w-full max-w-2xl'>
       <Form {...form}>
-        <SettingsForm onSubmit={form.handleSubmit(onSubmit)}>
+        <SettingsForm
+          onSubmit={form.handleSubmit(onSubmit)}
+          className='rounded-lg border bg-card p-4 shadow-sm sm:p-5 lg:grid-cols-1'
+        >
           <SettingsPageFormActions
             onSave={form.handleSubmit(onSubmit)}
             isSaving={updateOption.isPending}
@@ -89,8 +111,8 @@ export function QiqiSettingsSection({
             control={form.control}
             name='qiqi_setting.context_request_logging_enabled'
             render={({ field }) => (
-              <SettingsSwitchItem>
-                <SettingsSwitchContent>
+              <SettingsSwitchItem className='items-start rounded-md bg-muted/30 px-3 py-3 sm:px-4'>
+                <SettingsSwitchContent className='max-w-xl space-y-1'>
                   <FormLabel>{t('Save full relay context')}</FormLabel>
                   <FormDescription>
                     {t(
@@ -102,6 +124,7 @@ export function QiqiSettingsSection({
                   <Switch
                     checked={field.value}
                     onCheckedChange={field.onChange}
+                    disabled={updateOption.isPending}
                   />
                 </FormControl>
               </SettingsSwitchItem>

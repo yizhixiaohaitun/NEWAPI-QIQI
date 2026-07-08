@@ -63,7 +63,7 @@ load_dotenv_defaults() {
     [ -f "$env_file" ] || return 0
     while IFS='=' read -r key value; do
         case "$key" in
-            SERVER_DOMAIN|SERVER_IP|SERVER_SSH_PORT|SERVER_SSH_USER|FRONTEND_BASE_URL|QIQI_*)
+            SERVER_DOMAIN|SERVER_IP|SERVER_SSH_PORT|SERVER_SSH_USER|SERVER_ROOT_PASSWORD|FRONTEND_BASE_URL|QIQI_*)
                 [ -n "${!key:-}" ] && continue
                 value="$(strip_env_value "${value:-}")"
                 [ -n "$value" ] && export "$key=$value"
@@ -92,25 +92,46 @@ fi
 IMAGE_REPO="${IMAGE%:*}"
 DEPLOY_HOST="${QIQI_DEPLOY_HOST:-${SERVER_DOMAIN:-na.q.srl}}"
 DEPLOY_IP="${QIQI_DEPLOY_IP:-${SERVER_IP:-}}"
-DEPLOY_USE_IP="${QIQI_DEPLOY_USE_IP:-false}"
+if [ -n "${QIQI_DEPLOY_USE_IP:-}" ]; then
+    DEPLOY_USE_IP="$QIQI_DEPLOY_USE_IP"
+elif [ -n "$DEPLOY_IP" ]; then
+    DEPLOY_USE_IP="true"
+else
+    DEPLOY_USE_IP="false"
+fi
 DEPLOY_SSH_HOST="$DEPLOY_HOST"
 [ "$DEPLOY_USE_IP" = "true" ] && [ -n "$DEPLOY_IP" ] && DEPLOY_SSH_HOST="$DEPLOY_IP"
 DEPLOY_USER="${QIQI_DEPLOY_USER:-${SERVER_SSH_USER:-root}}"
 DEPLOY_PORT="${QIQI_DEPLOY_PORT:-${SERVER_SSH_PORT:-22}}"
-DEPLOY_DIR="${QIQI_DEPLOY_DIR:-/root/NEWAPI-QIQI}"
-COMPOSE_FILE="${QIQI_COMPOSE_FILE:-docker-compose.yml}"
+DEPLOY_DIR="${QIQI_DEPLOY_DIR:-/opt/new-api}"
+COMPOSE_FILE="${QIQI_COMPOSE_FILE:-docker-compose.prod.yml}"
 COMPOSE_OVERRIDE_FILE="${QIQI_COMPOSE_OVERRIDE_FILE:-docker-compose.qiqi-image.override.yml}"
 COMPOSE_SERVICE="${QIQI_COMPOSE_SERVICE:-new-api}"
 PUBLIC_URL="${QIQI_PUBLIC_URL:-${FRONTEND_BASE_URL:-https://na.q.srl}}"
 HEALTH_PATH="${QIQI_HEALTH_PATH:-/api/status}"
 HEALTH_TIMEOUT="${QIQI_HEALTH_TIMEOUT:-120}"
 HEALTH_INTERVAL="${QIQI_HEALTH_INTERVAL:-5}"
-SSH_KEY="${QIQI_SSH_KEY:-${HOME}/.ssh/al90slj23}"
+if [ -n "${QIQI_SSH_KEY:-}" ]; then
+    SSH_KEY="$QIQI_SSH_KEY"
+elif [ -f "${HOME}/.ssh/qiqi" ]; then
+    SSH_KEY="${HOME}/.ssh/qiqi"
+else
+    SSH_KEY="${HOME}/.ssh/al90slj23"
+fi
 SSH_CONFIG_FILE="${QIQI_SSH_CONFIG_FILE:-/dev/null}"
+SSH_PASSWORD="${QIQI_DEPLOY_PASSWORD:-${SERVER_ROOT_PASSWORD:-}}"
+SSH_USE_SSHPASS="false"
 AUTO_ADD_ALL="${QIQI_DEPLOY_AUTO_ADD_ALL:-false}"
 
 SSH_OPTS=(-F "$SSH_CONFIG_FILE" -p "$DEPLOY_PORT" -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6)
-[ -f "$SSH_KEY" ] && SSH_OPTS=(-i "$SSH_KEY" "${SSH_OPTS[@]}")
+if [ -f "$SSH_KEY" ]; then
+    SSH_OPTS=(-i "$SSH_KEY" "${SSH_OPTS[@]}")
+elif [ -n "$SSH_PASSWORD" ] && command -v sshpass >/dev/null 2>&1; then
+    SSH_USE_SSHPASS="true"
+    SSH_OPTS=(-o PreferredAuthentications=password -o PubkeyAuthentication=no "${SSH_OPTS[@]}")
+elif [ -n "$SSH_PASSWORD" ]; then
+    log_warn "检测到 SSH 密码但未安装 sshpass，将回退到系统 ssh 交互/默认认证。"
+fi
 
 shell_single_quote() {
     printf "'"
@@ -120,7 +141,11 @@ shell_single_quote() {
 
 remote_exec() {
     # shellcheck disable=SC2029
-    ssh "${SSH_OPTS[@]}" "${DEPLOY_USER}@${DEPLOY_SSH_HOST}" "$@"
+    if [ "$SSH_USE_SSHPASS" = "true" ]; then
+        SSHPASS="$SSH_PASSWORD" sshpass -e ssh "${SSH_OPTS[@]}" "${DEPLOY_USER}@${DEPLOY_SSH_HOST}" "$@"
+    else
+        ssh "${SSH_OPTS[@]}" "${DEPLOY_USER}@${DEPLOY_SSH_HOST}" "$@"
+    fi
 }
 
 require_command() {
@@ -156,6 +181,36 @@ git_has_changes() {
         [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]
 }
 
+git_add_all_excluding_embedded_repos() {
+    local embedded_roots=()
+    local paths=()
+    local git_dir parent rel path embedded_root skip
+
+    while IFS= read -r git_dir; do
+        parent="${git_dir%/.git}"
+        rel="${parent#./}"
+        [ -n "$rel" ] || continue
+        [ "$rel" = "." ] && continue
+        log_warn "跳过嵌套 git 仓库: ${rel}"
+        embedded_roots+=("$rel")
+    done < <(find . -path ./.git -prune -o -type d -name .git -print)
+
+    while IFS= read -r -d '' path; do
+        skip="false"
+        for embedded_root in "${embedded_roots[@]}"; do
+            if [ "$path" = "$embedded_root" ] || [[ "$path" == "$embedded_root/"* ]]; then
+                skip="true"
+                break
+            fi
+        done
+        [ "$skip" = "true" ] && continue
+        paths+=("$path")
+    done < <(git ls-files -m -d -o --exclude-standard -z)
+
+    [ "${#paths[@]}" -eq 0 ] && return 0
+    git add -A -- "${paths[@]}"
+}
+
 confirm_git_scope_for_deploy() {
     local commit_msg="${1:-}"
     local reply
@@ -181,7 +236,7 @@ confirm_git_scope_for_deploy() {
         log_warn "QIQI_DEPLOY_AUTO_ADD_ALL=true：将执行 git add -A。"
     fi
 
-    git add -A || die "git add 失败"
+    git_add_all_excluding_embedded_repos || die "git add 失败"
 
     if git diff --cached --quiet; then
         log_info "没有已暂存改动需要提交。"
@@ -349,7 +404,7 @@ services:
 EOF
     docker pull \"\$image\"
     docker compose -f \"\$compose_file\" -f \"\$override_file\" pull \"\$service\" || true
-    docker compose -f \"\$compose_file\" -f \"\$override_file\" up -d --no-deps --force-recreate \"\$service\"
+    docker compose -f \"\$compose_file\" -f \"\$override_file\" up -d --force-recreate \"\$service\"
     docker image prune -f >/dev/null 2>&1 || true
     ;;
   restart)
@@ -369,9 +424,10 @@ wait_health() {
     local waited=0
     local status_code
     local url="${PUBLIC_URL%/}${HEALTH_PATH}"
-    local q_dir q_service
+    local q_dir q_file q_service
 
     q_dir="$(shell_single_quote "$DEPLOY_DIR")"
+    q_file="$(shell_single_quote "$COMPOSE_FILE")"
     q_service="$(shell_single_quote "$COMPOSE_SERVICE")"
     log_info "等待远端服务健康: ${url}"
 
@@ -384,14 +440,14 @@ wait_health() {
 
         if [ "$waited" -eq 0 ] || [ $((waited % 15)) -eq 0 ]; then
             log_warn "HTTP 尚未就绪（${waited}s/${HEALTH_TIMEOUT}s）: ${status_code:-no_response}"
-            remote_exec "cd ${q_dir} && docker compose ps ${q_service}" || true
+            remote_exec "cd ${q_dir} && docker compose -f ${q_file} ps ${q_service}" || true
         fi
         sleep "$HEALTH_INTERVAL"
         waited=$((waited + HEALTH_INTERVAL))
     done
 
     log_error "HTTP 健康检查失败: ${status_code:-no_response}"
-    remote_exec "cd ${q_dir} && docker compose logs --tail=120 ${q_service}" || true
+    remote_exec "cd ${q_dir} && docker compose -f ${q_file} logs --tail=120 ${q_service}" || true
     return 1
 }
 

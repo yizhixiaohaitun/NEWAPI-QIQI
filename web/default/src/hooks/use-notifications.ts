@@ -17,11 +17,32 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { useState, useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 import { useStatus } from '@/hooks/use-status'
 import { getNotice } from '@/lib/api'
 import { useNotificationStore } from '@/stores/notification-store'
+
+function formatCompactTimestamp(timestamp: unknown): string {
+  const parsed =
+    typeof timestamp === 'string' || typeof timestamp === 'number'
+      ? Number(timestamp)
+      : Number.NaN
+  if (!Number.isFinite(parsed) || parsed <= 0) return ''
+
+  const date = new Date(parsed * 1000)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return [
+    String(date.getFullYear()),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds()),
+  ].join('')
+}
 
 function hashString(input: string): string {
   let hash = 0
@@ -82,10 +103,15 @@ export function useNotifications() {
   // Fetch Announcements from status
   const { status, loading: statusLoading } = useStatus()
   const announcementsEnabled = status?.announcements_enabled ?? false
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const announcements: Record<string, unknown>[] = announcementsEnabled
-    ? ((status?.announcements || []) as Record<string, unknown>[]).slice(0, 20)
-    : []
+  const runtimeTimestamp = formatCompactTimestamp(status?.start_time)
+  const announcements = useMemo<Record<string, unknown>[]>(() => {
+    if (!announcementsEnabled) return []
+
+    return ((status?.announcements || []) as Record<string, unknown>[]).slice(
+      0,
+      20
+    )
+  }, [announcementsEnabled, status?.announcements])
 
   // Notification store
   const {
@@ -166,6 +192,7 @@ export function useNotifications() {
     // Data
     notice: noticeContent,
     announcements,
+    runtimeTimestamp,
     loading: noticeLoading || statusLoading,
 
     // Unread counts
