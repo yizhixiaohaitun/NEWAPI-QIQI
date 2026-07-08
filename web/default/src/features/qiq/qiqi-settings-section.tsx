@@ -64,6 +64,10 @@ export function QiqiSettingsSection({
     resolver: zodResolver(qiqiSettingsSchema),
     defaultValues,
   })
+  const { isDirty, isSubmitting } = form.formState
+  const contextLoggingEnabled = form.watch(
+    'qiqi_setting.context_request_logging_enabled'
+  )
 
   useResetForm(form, defaultValues)
 
@@ -88,9 +92,10 @@ export function QiqiSettingsSection({
     })
 
     if (response.success) {
-      baselineRef.current = values
-      baselineSerializedRef.current = JSON.stringify(values)
-      form.reset(values)
+      const savedValues = { ...values }
+      baselineRef.current = savedValues
+      baselineSerializedRef.current = JSON.stringify(savedValues)
+      form.reset(savedValues)
     }
   }
 
@@ -103,7 +108,8 @@ export function QiqiSettingsSection({
         >
           <SettingsPageFormActions
             onSave={form.handleSubmit(onSubmit)}
-            isSaving={updateOption.isPending}
+            isSaving={updateOption.isPending || isSubmitting}
+            isSaveDisabled={!isDirty}
             saveLabel='Save Qiqi settings'
           />
 
@@ -113,7 +119,23 @@ export function QiqiSettingsSection({
             render={({ field }) => (
               <SettingsSwitchItem className='items-start rounded-md bg-muted/30 px-3 py-3 sm:px-4'>
                 <SettingsSwitchContent className='max-w-xl space-y-1'>
-                  <FormLabel>{t('Save full relay context')}</FormLabel>
+                  <div className='flex flex-wrap items-center gap-2'>
+                    <FormLabel>{t('Save full relay context')}</FormLabel>
+                    <span
+                      className={
+                        contextLoggingEnabled
+                          ? 'rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600 ring-1 ring-emerald-500/20 dark:text-emerald-400'
+                          : 'bg-muted text-muted-foreground ring-border rounded-md px-1.5 py-0.5 text-[11px] font-medium ring-1'
+                      }
+                    >
+                      {t(contextLoggingEnabled ? 'Enabled' : 'Disabled')}
+                    </span>
+                    {isDirty ? (
+                      <span className='bg-primary/10 text-primary rounded-md px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-primary/20'>
+                        {t('Unsaved changes')}
+                      </span>
+                    ) : null}
+                  </div>
                   <FormDescription>
                     {t(
                       'Persist relay request and response payloads for debugging.'
@@ -123,8 +145,8 @@ export function QiqiSettingsSection({
                 <FormControl>
                   <Switch
                     checked={field.value}
-                    onCheckedChange={field.onChange}
-                    disabled={updateOption.isPending}
+                    onCheckedChange={(checked) => field.onChange(checked)}
+                    disabled={updateOption.isPending || isSubmitting}
                   />
                 </FormControl>
               </SettingsSwitchItem>
