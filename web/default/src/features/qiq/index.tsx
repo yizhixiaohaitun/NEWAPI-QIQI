@@ -22,10 +22,12 @@ import { QiqiSettingsSection } from './qiqi-settings-section'
 
 type QiqiSettingsValues = {
   'qiqi_setting.context_request_logging_enabled': boolean
+  'qiqi_setting.responses_missing_reasoning_item_retry_enabled': boolean
 }
 
 const defaultQiqiSettings: QiqiSettingsValues = {
   'qiqi_setting.context_request_logging_enabled': false,
+  'qiqi_setting.responses_missing_reasoning_item_retry_enabled': true,
 }
 
 const QIQI_SECTION = 'qiq' as const
@@ -42,6 +44,10 @@ export function QiqiSettings() {
           defaultValues={{
             'qiqi_setting.context_request_logging_enabled':
               settings['qiqi_setting.context_request_logging_enabled'],
+            'qiqi_setting.responses_missing_reasoning_item_retry_enabled':
+              settings[
+                'qiqi_setting.responses_missing_reasoning_item_retry_enabled'
+              ],
           }}
         />
       )}

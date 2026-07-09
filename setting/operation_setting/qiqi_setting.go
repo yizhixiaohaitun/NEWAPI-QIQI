@@ -3,11 +3,13 @@ package operation_setting
 import "github.com/QuantumNous/new-api/setting/config"
 
 type QiqiSetting struct {
-	ContextRequestLoggingEnabled bool `json:"context_request_logging_enabled"`
+	ContextRequestLoggingEnabled              bool `json:"context_request_logging_enabled"`
+	ResponsesMissingReasoningItemRetryEnabled bool `json:"responses_missing_reasoning_item_retry_enabled"`
 }
 
 var qiqiSetting = QiqiSetting{
-	ContextRequestLoggingEnabled: false,
+	ContextRequestLoggingEnabled:              false,
+	ResponsesMissingReasoningItemRetryEnabled: true,
 }
 
 func init() {
@@ -20,4 +22,8 @@ func GetQiqiSetting() *QiqiSetting {
 
 func IsContextRequestLoggingEnabled() bool {
 	return qiqiSetting.ContextRequestLoggingEnabled
+}
+
+func IsResponsesMissingReasoningItemRetryEnabled() bool {
+	return qiqiSetting.ResponsesMissingReasoningItemRetryEnabled
 }

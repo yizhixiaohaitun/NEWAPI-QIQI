@@ -17,12 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useEffect, useRef } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
 
+import { Badge } from '@/components/ui/badge'
 import {
   Form,
   FormControl,
@@ -31,7 +32,7 @@ import {
   FormLabel,
 } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
-
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   SettingsForm,
   SettingsSwitchContent,
@@ -44,9 +45,12 @@ import { useUpdateOption } from '@/features/system-settings/hooks/use-update-opt
 
 const qiqiContextRequestLoggingOption =
   'qiqi_setting.context_request_logging_enabled' as const
+const qiqiResponsesMissingReasoningItemRetryOption =
+  'qiqi_setting.responses_missing_reasoning_item_retry_enabled' as const
 
 const qiqiSettingsSchema = z.object({
   contextRequestLoggingEnabled: z.boolean(),
+  responsesMissingReasoningItemRetryEnabled: z.boolean(),
 })
 
 type QiqiSettingsFormValues = z.infer<typeof qiqiSettingsSchema>
@@ -54,61 +58,61 @@ type QiqiSettingsFormValues = z.infer<typeof qiqiSettingsSchema>
 type QiqiSettingsSectionProps = {
   defaultValues: {
     [qiqiContextRequestLoggingOption]: boolean
+    [qiqiResponsesMissingReasoningItemRetryOption]: boolean
   }
 }
 
-export function QiqiSettingsSection({
-  defaultValues,
-}: QiqiSettingsSectionProps) {
+export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const updateOption = useUpdateOption()
   const formDefaults: QiqiSettingsFormValues = {
-    contextRequestLoggingEnabled: defaultValues[qiqiContextRequestLoggingOption],
+    contextRequestLoggingEnabled:
+      props.defaultValues[qiqiContextRequestLoggingOption],
+    responsesMissingReasoningItemRetryEnabled:
+      props.defaultValues[qiqiResponsesMissingReasoningItemRetryOption],
   }
-  const baselineRef = useRef<QiqiSettingsFormValues>(formDefaults)
-  const baselineSerializedRef = useRef<string>(JSON.stringify(formDefaults))
 
   const form = useForm<QiqiSettingsFormValues>({
     resolver: zodResolver(qiqiSettingsSchema),
     defaultValues: formDefaults,
   })
-  const { isDirty, isSubmitting } = form.formState
+  const { dirtyFields, isDirty, isSubmitting } = form.formState
   const contextLoggingEnabled = form.watch('contextRequestLoggingEnabled')
+  const responsesMissingReasoningItemRetryEnabled = form.watch(
+    'responsesMissingReasoningItemRetryEnabled'
+  )
 
   useResetForm(form, formDefaults)
 
-  useEffect(() => {
-    const nextDefaults = {
-      contextRequestLoggingEnabled:
-        defaultValues[qiqiContextRequestLoggingOption],
-    }
-    const serialized = JSON.stringify(nextDefaults)
-    if (serialized === baselineSerializedRef.current) return
-
-    baselineRef.current = nextDefaults
-    baselineSerializedRef.current = serialized
-  }, [defaultValues])
-
   const onSubmit = async (values: QiqiSettingsFormValues) => {
-    if (
-      values.contextRequestLoggingEnabled ===
-      baselineRef.current.contextRequestLoggingEnabled
-    ) {
+    const updates = [
+      {
+        key: qiqiContextRequestLoggingOption,
+        value: values.contextRequestLoggingEnabled,
+        savedValue: props.defaultValues[qiqiContextRequestLoggingOption],
+      },
+      {
+        key: qiqiResponsesMissingReasoningItemRetryOption,
+        value: values.responsesMissingReasoningItemRetryEnabled,
+        savedValue:
+          props.defaultValues[qiqiResponsesMissingReasoningItemRetryOption],
+      },
+    ].filter((entry) => entry.value !== entry.savedValue)
+
+    if (updates.length === 0) {
       toast.info(t('No changes to save'))
       return
     }
 
-    const response = await updateOption.mutateAsync({
-      key: qiqiContextRequestLoggingOption,
-      value: values.contextRequestLoggingEnabled,
-    })
-
-    if (response.success) {
-      const savedValues = { ...values }
-      baselineRef.current = savedValues
-      baselineSerializedRef.current = JSON.stringify(savedValues)
-      form.reset(savedValues)
+    for (const update of updates) {
+      const response = await updateOption.mutateAsync({
+        key: update.key,
+        value: update.value,
+      })
+      if (!response.success) break
     }
+    await queryClient.refetchQueries({ queryKey: ['system-options'] })
   }
 
   return (
@@ -116,7 +120,7 @@ export function QiqiSettingsSection({
       <Form {...form}>
         <SettingsForm
           onSubmit={form.handleSubmit(onSubmit)}
-          className='rounded-lg border bg-card p-4 shadow-sm sm:p-5 lg:grid-cols-1'
+          className='bg-card rounded-lg border p-4 shadow-sm sm:p-5 lg:grid-cols-1'
         >
           <SettingsPageFormActions
             onSave={form.handleSubmit(onSubmit)}
@@ -125,45 +129,92 @@ export function QiqiSettingsSection({
             saveLabel='Save Qiqi settings'
           />
 
-          <FormField
-            control={form.control}
-            name='contextRequestLoggingEnabled'
-            render={({ field }) => (
-              <SettingsSwitchItem className='items-start rounded-md bg-muted/30 px-3 py-3 sm:px-4'>
-                <SettingsSwitchContent className='max-w-xl space-y-1'>
-                  <div className='flex flex-wrap items-center gap-2'>
-                    <FormLabel>{t('Save full relay context')}</FormLabel>
-                    <span
-                      className={
-                        contextLoggingEnabled
-                          ? 'rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600 ring-1 ring-emerald-500/20 dark:text-emerald-400'
-                          : 'bg-muted text-muted-foreground ring-border rounded-md px-1.5 py-0.5 text-[11px] font-medium ring-1'
-                      }
-                    >
-                      {t(contextLoggingEnabled ? 'Enabled' : 'Disabled')}
-                    </span>
-                    {isDirty ? (
-                      <span className='bg-primary/10 text-primary rounded-md px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-primary/20'>
-                        {t('Unsaved changes')}
-                      </span>
-                    ) : null}
-                  </div>
-                  <FormDescription>
-                    {t(
-                      'Persist relay request and response payloads for debugging.'
-                    )}
-                  </FormDescription>
-                </SettingsSwitchContent>
-                <FormControl>
-                  <Switch
-                    checked={field.value}
-                    onCheckedChange={(checked) => field.onChange(checked)}
-                    disabled={updateOption.isPending || isSubmitting}
-                  />
-                </FormControl>
-              </SettingsSwitchItem>
-            )}
-          />
+          <Tabs defaultValue='general' className='min-w-0'>
+            <TabsList variant='line' className='max-w-full justify-start'>
+              <TabsTrigger value='general'>{t('General')}</TabsTrigger>
+              <TabsTrigger value='enhanced-compatibility'>
+                {t('Enhanced compatibility')}
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value='general' className='pt-4'>
+              <FormField
+                control={form.control}
+                name='contextRequestLoggingEnabled'
+                render={({ field }) => (
+                  <SettingsSwitchItem className='bg-muted/30 items-start rounded-md px-3 py-3 sm:px-4'>
+                    <SettingsSwitchContent className='max-w-xl space-y-1'>
+                      <div className='flex flex-wrap items-center gap-2'>
+                        <FormLabel>{t('Save full relay context')}</FormLabel>
+                        <Badge variant='secondary'>
+                          {t(contextLoggingEnabled ? 'Enabled' : 'Disabled')}
+                        </Badge>
+                        {dirtyFields.contextRequestLoggingEnabled ? (
+                          <Badge variant='outline'>
+                            {t('Unsaved changes')}
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <FormDescription>
+                        {t(
+                          'Persist relay request and response payloads for debugging.'
+                        )}
+                      </FormDescription>
+                    </SettingsSwitchContent>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        disabled={updateOption.isPending || isSubmitting}
+                      />
+                    </FormControl>
+                  </SettingsSwitchItem>
+                )}
+              />
+            </TabsContent>
+
+            <TabsContent value='enhanced-compatibility' className='pt-4'>
+              <FormField
+                control={form.control}
+                name='responsesMissingReasoningItemRetryEnabled'
+                render={({ field }) => (
+                  <SettingsSwitchItem className='bg-muted/30 items-start rounded-md px-3 py-3 sm:px-4'>
+                    <SettingsSwitchContent className='max-w-xl space-y-1'>
+                      <div className='flex flex-wrap items-center gap-2'>
+                        <FormLabel>
+                          {t('Recover missing Responses reasoning state')}
+                        </FormLabel>
+                        <Badge variant='secondary'>
+                          {t(
+                            responsesMissingReasoningItemRetryEnabled
+                              ? 'Enabled'
+                              : 'Disabled'
+                          )}
+                        </Badge>
+                        {dirtyFields.responsesMissingReasoningItemRetryEnabled ? (
+                          <Badge variant='outline'>
+                            {t('Unsaved changes')}
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <FormDescription>
+                        {t(
+                          'When an upstream cannot find an empty rs_ reasoning item, remove only that invalid reference and retry once on the same channel.'
+                        )}
+                      </FormDescription>
+                    </SettingsSwitchContent>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        disabled={updateOption.isPending || isSubmitting}
+                      />
+                    </FormControl>
+                  </SettingsSwitchItem>
+                )}
+              />
+            </TabsContent>
+          </Tabs>
         </SettingsForm>
       </Form>
     </SettingsSection>

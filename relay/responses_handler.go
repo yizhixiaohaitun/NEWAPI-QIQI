@@ -71,11 +71,13 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	adaptor.Init(info)
 	var requestBody io.Reader
+	var requestBodyStorage common.BodyStorage
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 		}
+		requestBodyStorage = storage
 		requestBody = common.ReaderOnly(storage)
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
@@ -108,6 +110,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 		defer closer.Close()
+		requestBodyStorage, _ = closer.(common.BodyStorage)
 		jsonData = nil
 		info.UpstreamRequestBodySize = size
 		requestBody = body
@@ -126,9 +129,31 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 		if httpResp.StatusCode != http.StatusOK {
 			newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
-			// reset status code 重置状态码
-			service.ResetStatusCode(newAPIError, statusCodeMappingStr)
-			return newAPIError
+			retryResp, retryError, retried := retryMissingResponsesReasoningItem(
+				c,
+				info,
+				requestBodyStorage,
+				newAPIError,
+				func(body io.Reader) (any, error) {
+					return adaptor.DoRequest(c, info, body)
+				},
+			)
+			if retried {
+				if retryError != nil {
+					return retryError
+				}
+				httpResp = retryResp.(*http.Response)
+				if httpResp.StatusCode == http.StatusOK {
+					newAPIError = nil
+				} else {
+					newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+				}
+			}
+			if newAPIError != nil {
+				// reset status code 重置状态码
+				service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+				return newAPIError
+			}
 		}
 	}
 
