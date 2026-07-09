@@ -43,10 +43,12 @@ import { SettingsSection } from '@/features/system-settings/components/settings-
 import { useResetForm } from '@/features/system-settings/hooks/use-reset-form'
 import { useUpdateOption } from '@/features/system-settings/hooks/use-update-option'
 
+import { RESPONSES_MISSING_REASONING_ITEM_RULE } from './enhanced-compatibility-rules'
+
 const qiqiContextRequestLoggingOption =
   'qiqi_setting.context_request_logging_enabled' as const
 const qiqiResponsesMissingReasoningItemRetryOption =
-  'qiqi_setting.responses_missing_reasoning_item_retry_enabled' as const
+  RESPONSES_MISSING_REASONING_ITEM_RULE.settingKey
 
 const qiqiSettingsSchema = z.object({
   contextRequestLoggingEnabled: z.boolean(),
@@ -181,8 +183,13 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
                   <SettingsSwitchItem className='bg-muted/30 items-start rounded-md px-3 py-3 sm:px-4'>
                     <SettingsSwitchContent className='max-w-xl space-y-1'>
                       <div className='flex flex-wrap items-center gap-2'>
+                        <Badge variant='outline' className='font-mono'>
+                          {RESPONSES_MISSING_REASONING_ITEM_RULE.id}
+                        </Badge>
                         <FormLabel>
-                          {t('Recover missing Responses reasoning state')}
+                          {t(
+                            RESPONSES_MISSING_REASONING_ITEM_RULE.shortNameKey
+                          )}
                         </FormLabel>
                         <Badge variant='secondary'>
                           {t(
@@ -199,7 +206,7 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
                       </div>
                       <FormDescription>
                         {t(
-                          'When an upstream cannot find an empty rs_ reasoning item, remove only that invalid reference and retry once on the same channel.'
+                          RESPONSES_MISSING_REASONING_ITEM_RULE.descriptionKey
                         )}
                       </FormDescription>
                     </SettingsSwitchContent>

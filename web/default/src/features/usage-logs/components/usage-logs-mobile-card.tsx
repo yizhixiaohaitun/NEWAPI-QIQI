@@ -234,6 +234,11 @@ function CommonLogsCard<TData>({
           cell={cells.get('content')}
           className='col-span-2 bg-transparent px-0 py-0'
         />
+        <SummaryField
+          label={t('Reference')}
+          cell={cells.get('reference')}
+          className='col-span-2'
+        />
       </div>
     </div>
   )

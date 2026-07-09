@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type ColumnDef } from '@tanstack/react-table'
-import { CircleAlert, GitBranch, Sparkles, KeyRound } from 'lucide-react'
+import type { ColumnDef } from '@tanstack/react-table'
+import { CircleAlert, GitBranch, KeyRound, Sparkles } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -65,6 +65,7 @@ import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { ModelBadge } from '../model-badge'
 import { useUsageLogsContext } from '../usage-logs-provider'
+import { CompatibilityReference } from './compatibility-reference'
 
 interface DetailSegment {
   text: string
@@ -207,9 +208,9 @@ function buildDetailSegments(
     }
   } else {
     const isPerCall = isPerCallBilling(other.model_price)
-    if (isPerCall) {
+    if (isPerCall && other.model_price != null) {
       segments.push({
-        text: `${t('Per-call')} · ${formatBillingCurrencyFromUSD(other.model_price!, priceOpts)}`,
+        text: `${t('Per-call')} · ${formatBillingCurrencyFromUSD(other.model_price, priceOpts)}`,
       })
     } else if (other.model_ratio != null) {
       const inputPriceUSD = other.model_ratio * 2.0
@@ -685,7 +686,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                     <Tooltip>
                       <TooltipTrigger
                         render={<CircleAlert className='size-3 text-red-500' />}
-                      ></TooltipTrigger>
+                      />
                       <TooltipContent>
                         <div className='space-y-0.5 text-xs'>
                           <p>
@@ -820,6 +821,36 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const segments = buildDetailSegments(log, other, t)
         const primary = segments[0]
         const hasMore = segments.length > 1
+        let primaryTextClassName = 'text-foreground'
+        if (primary?.muted) {
+          primaryTextClassName = 'text-muted-foreground/60'
+        } else if (primary?.danger) {
+          primaryTextClassName = 'text-red-600 dark:text-red-400'
+        }
+        let detailsPreview = <span className='text-muted-foreground/40'>—</span>
+        if (primary) {
+          detailsPreview = (
+            <span
+              className={cn(
+                'truncate leading-snug group-hover:underline',
+                primaryTextClassName
+              )}
+            >
+              {primary.text}
+              {hasMore && (
+                <span className='text-muted-foreground/40 ml-0.5'>
+                  +{segments.length - 1}
+                </span>
+              )}
+            </span>
+          )
+        } else if (log.content) {
+          detailsPreview = (
+            <span className='text-muted-foreground truncate group-hover:underline'>
+              {log.content}
+            </span>
+          )
+        }
 
         return (
           <>
@@ -829,31 +860,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
               onClick={() => setDialogOpen(true)}
               title={t('Click to view full details')}
             >
-              {primary ? (
-                <span
-                  className={cn(
-                    'truncate leading-snug group-hover:underline',
-                    primary.muted
-                      ? 'text-muted-foreground/60'
-                      : primary.danger
-                        ? 'text-red-600 dark:text-red-400'
-                        : 'text-foreground'
-                  )}
-                >
-                  {primary.text}
-                  {hasMore && (
-                    <span className='text-muted-foreground/40 ml-0.5'>
-                      +{segments.length - 1}
-                    </span>
-                  )}
-                </span>
-              ) : log.content ? (
-                <span className='text-muted-foreground truncate group-hover:underline'>
-                  {log.content}
-                </span>
-              ) : (
-                <span className='text-muted-foreground/40'>—</span>
-              )}
+              {detailsPreview}
             </button>
             <DetailsDialog
               log={log}
@@ -868,6 +875,37 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       maxSize: 200,
     }
   )
+
+  if (isAdmin) {
+    columns.push({
+      id: 'reference',
+      header: t('Reference'),
+      cell: ({ row }) => {
+        const log = row.original
+        const other = parseLogOther(log.other)
+        const events = other?.admin_info?.compatibility_events
+
+        if (!Array.isArray(events) || events.length === 0) {
+          return <span className='text-muted-foreground/40'>—</span>
+        }
+
+        return (
+          <div className='flex max-w-[300px] flex-col gap-2'>
+            {events.map((event) => (
+              <CompatibilityReference
+                key={`${event.rule_id || event.key}-${event.event_type || event.outcome}-${event.action || event.item_id}`}
+                log={log}
+                event={event}
+                t={t}
+              />
+            ))}
+          </div>
+        )
+      },
+      size: 280,
+      maxSize: 320,
+    })
+  }
 
   return columns
 }

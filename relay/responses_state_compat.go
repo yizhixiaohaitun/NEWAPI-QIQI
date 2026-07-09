@@ -17,8 +17,7 @@ import (
 )
 
 const (
-	responsesMissingReasoningItemCompatibilityKey = "responses_missing_reasoning_item_retry"
-	ginKeyResponsesMissingReasoningItemRetried    = "responses_missing_reasoning_item_retried"
+	ginKeyResponsesMissingReasoningItemRetried = "responses_missing_reasoning_item_retried"
 )
 
 var missingResponsesItemPattern = regexp.MustCompile(`(?i)^item with id ['"](rs_[a-z0-9]+)['"] not found\.?$`)
@@ -32,7 +31,7 @@ func retryMissingResponsesReasoningItem(
 	upstreamError *types.NewAPIError,
 	doRequest responsesRetryRequestFunc,
 ) (any, *types.NewAPIError, bool) {
-	if !operation_setting.IsResponsesMissingReasoningItemRetryEnabled() || c == nil || info == nil || source == nil || doRequest == nil {
+	if c == nil || info == nil || source == nil {
 		return nil, nil, false
 	}
 	if retried, _ := c.Get(ginKeyResponsesMissingReasoningItemRetried); retried == true {
@@ -54,6 +53,26 @@ func retryMissingResponsesReasoningItem(
 		return nil, nil, false
 	}
 	if removed == 0 {
+		return nil, nil, false
+	}
+
+	if !operation_setting.IsResponsesMissingReasoningItemRetryEnabled() {
+		event := service.NewRelayCompatibilityEvent(
+			service.ResponsesMissingReasoningItemRule,
+			service.RelayCompatibilityEventTypeRecommendation,
+		)
+		event.Action = "recommend_enable_rule"
+		event.Outcome = "disabled"
+		event.ItemID = itemID
+		event.Count = removed
+		service.RecordRelayCompatibilityEvent(c, event)
+		logger.LogWarn(c, fmt.Sprintf(
+			"responses compatibility recommendation: request matches rule %s but the rule is disabled",
+			service.ResponsesMissingReasoningItemRule.ID,
+		))
+		return nil, nil, false
+	}
+	if doRequest == nil {
 		return nil, nil, false
 	}
 
@@ -79,14 +98,16 @@ func retryMissingResponsesReasoningItem(
 	} else if httpResp, ok := resp.(*http.Response); !ok || httpResp == nil || httpResp.StatusCode != http.StatusOK {
 		outcome = "upstream_error"
 	}
-	service.RecordRelayCompatibilityEvent(c, service.RelayCompatibilityEvent{
-		Key:     responsesMissingReasoningItemCompatibilityKey,
-		Action:  "remove_missing_empty_reasoning_item_and_retry_same_channel",
-		Outcome: outcome,
-		ItemID:  itemID,
-		Count:   removed,
-		Retried: true,
-	})
+	event := service.NewRelayCompatibilityEvent(
+		service.ResponsesMissingReasoningItemRule,
+		service.RelayCompatibilityEventTypeApplied,
+	)
+	event.Action = "remove_missing_empty_reasoning_item_and_retry_same_channel"
+	event.Outcome = outcome
+	event.ItemID = itemID
+	event.Count = removed
+	event.Retried = true
+	service.RecordRelayCompatibilityEvent(c, event)
 	if requestErr != nil {
 		return nil, types.NewOpenAIError(requestErr, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError), true
 	}

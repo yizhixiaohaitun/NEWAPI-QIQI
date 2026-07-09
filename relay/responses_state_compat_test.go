@@ -88,7 +88,10 @@ func TestRetryMissingResponsesReasoningItemRetriesOnceAndRecordsEvent(t *testing
 	events, ok := adminInfo["compatibility_events"].([]service.RelayCompatibilityEvent)
 	require.True(t, ok)
 	require.Len(t, events, 1)
-	require.Equal(t, responsesMissingReasoningItemCompatibilityKey, events[0].Key)
+	require.Equal(t, service.ResponsesMissingReasoningItemRule.ID, events[0].RuleID)
+	require.Equal(t, service.ResponsesMissingReasoningItemRule.Key, events[0].Key)
+	require.Equal(t, service.ResponsesMissingReasoningItemRule.SettingKey, events[0].SettingKey)
+	require.Equal(t, service.RelayCompatibilityEventTypeApplied, events[0].EventType)
 	require.Equal(t, "accepted", events[0].Outcome)
 	require.Equal(t, "rs_missing", events[0].ItemID)
 	require.Equal(t, 1, events[0].Count)
@@ -139,4 +142,28 @@ func TestRetryMissingResponsesReasoningItemRespectsGlobalSwitch(t *testing.T) {
 
 	require.False(t, retried)
 	require.Zero(t, requestCount)
+
+	adminInfo := map[string]interface{}{}
+	service.AppendRelayCompatibilityAdminInfo(ctx, adminInfo)
+	events, ok := adminInfo["compatibility_events"].([]service.RelayCompatibilityEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1)
+	require.Equal(t, service.ResponsesMissingReasoningItemRule.ID, events[0].RuleID)
+	require.Equal(t, service.RelayCompatibilityEventTypeRecommendation, events[0].EventType)
+	require.Equal(t, "disabled", events[0].Outcome)
+	require.False(t, events[0].Retried)
+
+	_, _, retried = retryMissingResponsesReasoningItem(
+		ctx,
+		&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 18}},
+		storage,
+		upstreamError,
+		nil,
+	)
+	require.False(t, retried)
+	adminInfo = map[string]interface{}{}
+	service.AppendRelayCompatibilityAdminInfo(ctx, adminInfo)
+	events, ok = adminInfo["compatibility_events"].([]service.RelayCompatibilityEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1)
 }
