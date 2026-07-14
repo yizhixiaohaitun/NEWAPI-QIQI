@@ -5208,6 +5208,8 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Azure Responses resource affinity protection": "Protection de l’affinité des ressources Azure Responses",
+    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "Associe en priorité les requêtes contenant previous_response_id ou item_reference à la ressource Azure qui a créé cet état, afin d’éviter les erreurs 400 causées par une autre ressource Azure OpenAI. Si la ressource d’origine est indisponible, la requête échoue de manière sûre au lieu de basculer aléatoirement vers une autre ressource."
   }
 }

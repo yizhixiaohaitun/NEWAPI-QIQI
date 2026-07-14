@@ -26,6 +26,7 @@ const (
 	ginKeyChannelAffinityMeta       = "channel_affinity_meta"
 	ginKeyChannelAffinityLogInfo    = "channel_affinity_log_info"
 	ginKeyChannelAffinitySkipRetry  = "channel_affinity_skip_retry_on_failure"
+	ginKeyResponsesStateUnresolved  = "responses_state_affinity_unresolved"
 
 	channelAffinityCacheNamespace           = "new-api:channel_affinity:v1"
 	channelAffinityUsageCacheStatsNamespace = "new-api:channel_affinity_usage_cache_stats:v1"
@@ -653,6 +654,9 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 	if setting == nil || !setting.Enabled {
 		return 0, false
 	}
+	if c != nil {
+		c.Set(ginKeyResponsesStateUnresolved, false)
+	}
 	path := ""
 	if c != nil && c.Request != nil && c.Request.URL != nil {
 		path = c.Request.URL.Path
@@ -672,29 +676,58 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 		if len(rule.UserAgentInclude) > 0 && !matchAnyIncludeFold(rule.UserAgentInclude, userAgent) {
 			continue
 		}
-		var affinityValue string
-		var usedSource operation_setting.ChannelAffinityKeySource
-		for _, src := range rule.KeySources {
-			affinityValue = extractChannelAffinityValue(c, src)
-			if affinityValue != "" {
-				usedSource = src
-				break
-			}
+		type affinityCandidate struct {
+			value  string
+			source operation_setting.ChannelAffinityKeySource
 		}
-		if affinityValue == "" && shouldUseResponsesStateAffinityFallback(rule, path) {
-			stateValue, statePath := extractResponsesStateAffinityValue(c)
-			if stateValue != "" {
-				affinityValue = stateValue
-				usedSource = operation_setting.ChannelAffinityKeySource{
-					Type: channelAffinityKeySourceResponsesState,
-					Path: statePath,
+		candidates := make([]affinityCandidate, 0, len(rule.KeySources)+1)
+		appendCandidate := func(value string, source operation_setting.ChannelAffinityKeySource) {
+			if value == "" {
+				return
+			}
+			for _, candidate := range candidates {
+				if candidate.value == value && strings.EqualFold(candidate.source.Type, source.Type) {
+					return
 				}
 			}
+			candidates = append(candidates, affinityCandidate{value: value, source: source})
 		}
-		if affinityValue == "" {
-			continue
+
+		useResponsesState := shouldUseResponsesStateAffinityFallback(rule, path)
+		stateValue, statePath := "", ""
+		if useResponsesState {
+			stateValue, statePath = extractResponsesStateAffinityValue(c)
 		}
-		if rule.ValueRegex != "" && !matchAnyRegexCached([]string{rule.ValueRegex}, affinityValue) {
+		protectResponsesState := operation_setting.IsAzureResponsesResourceAffinityEnabled() && stateValue != ""
+		if protectResponsesState {
+			// Persistent Responses state is bound to the Azure resource that created it.
+			// Always try that state before weaker hints such as prompt_cache_key.
+			appendCandidate(stateValue, operation_setting.ChannelAffinityKeySource{
+				Type: channelAffinityKeySourceResponsesState,
+				Path: statePath,
+			})
+			for _, src := range rule.KeySources {
+				appendCandidate(extractChannelAffinityValue(c, src), src)
+			}
+		} else {
+			// Preserve the legacy first-non-empty key semantics when the optimization
+			// is disabled or the request does not carry persistent Responses state.
+			for _, src := range rule.KeySources {
+				value := extractChannelAffinityValue(c, src)
+				if value == "" {
+					continue
+				}
+				appendCandidate(value, src)
+				break
+			}
+			if len(candidates) == 0 && stateValue != "" {
+				appendCandidate(stateValue, operation_setting.ChannelAffinityKeySource{
+					Type: channelAffinityKeySourceResponsesState,
+					Path: statePath,
+				})
+			}
+		}
+		if len(candidates) == 0 {
 			continue
 		}
 
@@ -702,36 +735,101 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 		if ttlSeconds <= 0 {
 			ttlSeconds = setting.DefaultTTLSeconds
 		}
-		cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, modelName, usingGroup, affinityValue)
-		cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
-		setChannelAffinityContext(c, channelAffinityMeta{
-			CacheKey:       cacheKeyFull,
-			TTLSeconds:     ttlSeconds,
-			RuleName:       rule.Name,
-			SkipRetry:      rule.SkipRetryOnFailure,
-			ParamTemplate:  cloneStringAnyMap(rule.ParamOverrideTemplate),
-			KeySourceType:  strings.TrimSpace(usedSource.Type),
-			KeySourceKey:   strings.TrimSpace(usedSource.Key),
-			KeySourcePath:  strings.TrimSpace(usedSource.Path),
-			KeyHint:        buildChannelAffinityKeyHint(affinityValue),
-			KeyFingerprint: affinityFingerprint(affinityValue),
-			UsingGroup:     usingGroup,
-			ModelName:      modelName,
-			RequestPath:    path,
-		})
-
 		cache := getChannelAffinityCache()
-		channelID, found, err := cache.Get(cacheKeySuffix)
-		if err != nil {
-			common.SysError(fmt.Sprintf("channel affinity cache get failed: key=%s, err=%v", cacheKeyFull, err))
+		preferredContextSet := false
+		for _, candidate := range candidates {
+			if rule.ValueRegex != "" && !matchAnyRegexCached([]string{rule.ValueRegex}, candidate.value) {
+				continue
+			}
+			lookupGroups := channelAffinityLookupGroups(c, usingGroup, candidate.source.Type)
+			for _, lookupGroup := range lookupGroups {
+				cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, modelName, lookupGroup, candidate.value)
+				cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
+				if !preferredContextSet {
+					setChannelAffinityContext(c, channelAffinityMeta{
+						CacheKey:       cacheKeyFull,
+						TTLSeconds:     ttlSeconds,
+						RuleName:       rule.Name,
+						SkipRetry:      rule.SkipRetryOnFailure,
+						ParamTemplate:  cloneStringAnyMap(rule.ParamOverrideTemplate),
+						KeySourceType:  strings.TrimSpace(candidate.source.Type),
+						KeySourceKey:   strings.TrimSpace(candidate.source.Key),
+						KeySourcePath:  strings.TrimSpace(candidate.source.Path),
+						KeyHint:        buildChannelAffinityKeyHint(candidate.value),
+						KeyFingerprint: affinityFingerprint(candidate.value),
+						UsingGroup:     usingGroup,
+						ModelName:      modelName,
+						RequestPath:    path,
+					})
+					preferredContextSet = true
+				}
+
+				channelID, found, err := cache.Get(cacheKeySuffix)
+				if err != nil {
+					common.SysError(fmt.Sprintf("channel affinity cache get failed: key=%s, err=%v", cacheKeyFull, err))
+					if protectResponsesState && c != nil {
+						c.Set(ginKeyResponsesStateUnresolved, true)
+					}
+					return 0, false
+				}
+				if found {
+					return channelID, true
+				}
+			}
+		}
+		if preferredContextSet {
+			if protectResponsesState && c != nil {
+				c.Set(ginKeyResponsesStateUnresolved, true)
+			}
 			return 0, false
 		}
-		if found {
-			return channelID, true
-		}
-		return 0, false
 	}
 	return 0, false
+}
+
+func channelAffinityLookupGroups(c *gin.Context, usingGroup string, sourceType string) []string {
+	groups := []string{usingGroup}
+	if !operation_setting.IsAzureResponsesResourceAffinityEnabled() ||
+		!strings.EqualFold(strings.TrimSpace(sourceType), channelAffinityKeySourceResponsesState) ||
+		!strings.EqualFold(strings.TrimSpace(usingGroup), "auto") || c == nil {
+		return groups
+	}
+	for _, group := range GetUserAutoGroup(common.GetContextKeyString(c, constant.ContextKeyUserGroup)) {
+		group = strings.TrimSpace(group)
+		if group != "" && !slicesContainsFold(groups, group) {
+			groups = append(groups, group)
+		}
+	}
+	return groups
+}
+
+func slicesContainsFold(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// ShouldProtectResponsesStateAffinity reports whether a matched persistent Responses state
+// must stay on its original Azure resource instead of falling back to random routing.
+func ShouldProtectResponsesStateAffinity(c *gin.Context) bool {
+	if c == nil || !operation_setting.IsAzureResponsesResourceAffinityEnabled() {
+		return false
+	}
+	meta, ok := getChannelAffinityMeta(c)
+	return ok && strings.EqualFold(strings.TrimSpace(meta.KeySourceType), channelAffinityKeySourceResponsesState)
+}
+
+// ShouldRejectUnresolvedResponsesStateAffinity reports that the request carries
+// persistent Responses state but no safe original-resource route could be found.
+func ShouldRejectUnresolvedResponsesStateAffinity(c *gin.Context) bool {
+	if !ShouldProtectResponsesStateAffinity(c) {
+		return false
+	}
+	unresolved, ok := c.Get(ginKeyResponsesStateUnresolved)
+	return ok && unresolved == true
 }
 
 func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
@@ -880,7 +978,7 @@ func RecordResponsesStateChannelAffinity(c *gin.Context, channelID int, modelNam
 	if modelName == "" && c != nil {
 		modelName = strings.TrimSpace(c.GetString(string(constant.ContextKeyOriginalModel)))
 	}
-	usingGroup = normalizeChannelAffinityUsingGroup(c, usingGroup)
+	usingGroups := channelAffinityRecordGroups(c, usingGroup)
 
 	cache := getChannelAffinityCache()
 	for _, rule := range setting.Rules {
@@ -905,12 +1003,39 @@ func RecordResponsesStateChannelAffinity(c *gin.Context, channelID int, modelNam
 			if rule.ValueRegex != "" && !matchAnyRegexCached([]string{rule.ValueRegex}, value) {
 				continue
 			}
-			cacheKey := buildChannelAffinityCacheKeySuffix(rule, modelName, usingGroup, value)
-			if err := cache.SetWithTTL(cacheKey, channelID, ttl); err != nil {
-				common.SysError(fmt.Sprintf("responses state channel affinity cache set failed: key=%s, err=%v", cache.FullKey(cacheKey), err))
+			for _, recordGroup := range usingGroups {
+				cacheKey := buildChannelAffinityCacheKeySuffix(rule, modelName, recordGroup, value)
+				if err := cache.SetWithTTL(cacheKey, channelID, ttl); err != nil {
+					common.SysError(fmt.Sprintf("responses state channel affinity cache set failed: key=%s, err=%v", cache.FullKey(cacheKey), err))
+				}
 			}
 		}
 	}
+}
+
+func channelAffinityRecordGroups(c *gin.Context, usingGroup string) []string {
+	usingGroup = strings.TrimSpace(usingGroup)
+	if !operation_setting.IsAzureResponsesResourceAffinityEnabled() {
+		return []string{normalizeChannelAffinityUsingGroup(c, usingGroup)}
+	}
+	groups := make([]string, 0, 2)
+	if usingGroup != "" {
+		groups = append(groups, usingGroup)
+	}
+	if c != nil {
+		requestGroup := strings.TrimSpace(c.GetString(string(constant.ContextKeyUsingGroup)))
+		if requestGroup != "" && !slicesContainsFold(groups, requestGroup) {
+			groups = append(groups, requestGroup)
+		}
+		selectedGroup := strings.TrimSpace(c.GetString(string(constant.ContextKeyAutoGroup)))
+		if selectedGroup != "" && !slicesContainsFold(groups, selectedGroup) {
+			groups = append(groups, selectedGroup)
+		}
+	}
+	if len(groups) == 0 {
+		groups = append(groups, usingGroup)
+	}
+	return groups
 }
 
 func normalizeChannelAffinityUsingGroup(c *gin.Context, usingGroup string) string {
@@ -1012,7 +1137,7 @@ func IsResponsesStateResourceMismatchError(err *types.NewAPIError) bool {
 }
 
 func ClearChannelAffinityOnResponsesStateMismatch(c *gin.Context, err *types.NewAPIError) bool {
-	if !IsResponsesStateResourceMismatchError(err) {
+	if !IsResponsesStateResourceMismatchError(err) || ShouldProtectResponsesStateAffinity(c) {
 		return false
 	}
 	return ClearCurrentChannelAffinityCache(c)

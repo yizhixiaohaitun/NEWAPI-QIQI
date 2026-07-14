@@ -5208,6 +5208,8 @@
     "Zero retention": "零數據保留",
     "Zhipu": "智譜",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "Azure Responses resource affinity protection": "Azure Responses 資源親和保護",
+    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "優先將含有 previous_response_id 或 item_reference 的請求固定回建立該狀態的 Azure 資源，避免因使用不同的 Azure OpenAI 資源而發生 400 錯誤。原資源不可用時會安全失敗，而不會隨機跨資源。"
   }
 }

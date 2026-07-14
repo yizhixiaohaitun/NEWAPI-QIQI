@@ -48,6 +48,7 @@ import { useUpdateOption } from '@/features/system-settings/hooks/use-update-opt
 import { safeNumberFieldProps } from '@/features/system-settings/utils/numeric-field'
 
 import {
+  AZURE_RESPONSES_RESOURCE_AFFINITY_RULE,
   RESPONSES_MISSING_REASONING_ITEM_RULE,
   RESPONSES_STREAM_ERROR_RETRY_RULE,
 } from './enhanced-compatibility-rules'
@@ -60,6 +61,8 @@ const qiqiResponsesStreamErrorRetryOption =
   RESPONSES_STREAM_ERROR_RETRY_RULE.settingKey
 const qiqiResponsesStreamErrorRetryTimesOption =
   RESPONSES_STREAM_ERROR_RETRY_RULE.retryTimesSettingKey
+const qiqiAzureResponsesResourceAffinityOption =
+  AZURE_RESPONSES_RESOURCE_AFFINITY_RULE.settingKey
 
 const qiqiSettingsSchema = z.object({
   contextRequestLoggingEnabled: z.boolean(),
@@ -72,6 +75,7 @@ const qiqiSettingsSchema = z.object({
     .int('Retry attempts must be an integer from 0 to 5.')
     .min(0, 'Retry attempts must be an integer from 0 to 5.')
     .max(5, 'Retry attempts must be an integer from 0 to 5.'),
+  azureResponsesResourceAffinityEnabled: z.boolean(),
 })
 
 type QiqiSettingsFormValues = z.infer<typeof qiqiSettingsSchema>
@@ -82,6 +86,7 @@ type QiqiSettingsSectionProps = {
     [qiqiResponsesMissingReasoningItemRetryOption]: boolean
     [qiqiResponsesStreamErrorRetryOption]: boolean
     [qiqiResponsesStreamErrorRetryTimesOption]: number
+    [qiqiAzureResponsesResourceAffinityOption]?: boolean
   }
 }
 
@@ -98,6 +103,8 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
       props.defaultValues[qiqiResponsesStreamErrorRetryOption],
     responsesStreamErrorRetryTimes:
       props.defaultValues[qiqiResponsesStreamErrorRetryTimesOption],
+    azureResponsesResourceAffinityEnabled:
+      props.defaultValues[qiqiAzureResponsesResourceAffinityOption] ?? true,
   }
 
   const form = useForm<QiqiSettingsFormValues>({
@@ -111,6 +118,9 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
   )
   const responsesStreamErrorRetryEnabled = form.watch(
     'responsesStreamErrorRetryEnabled'
+  )
+  const azureResponsesResourceAffinityEnabled = form.watch(
+    'azureResponsesResourceAffinityEnabled'
   )
 
   useResetForm(form, formDefaults)
@@ -138,6 +148,12 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
         value: values.responsesStreamErrorRetryTimes,
         savedValue:
           props.defaultValues[qiqiResponsesStreamErrorRetryTimesOption],
+      },
+      {
+        key: qiqiAzureResponsesResourceAffinityOption,
+        value: values.azureResponsesResourceAffinityEnabled,
+        savedValue:
+          props.defaultValues[qiqiAzureResponsesResourceAffinityOption] ?? true,
       },
     ].filter((entry) => entry.value !== entry.savedValue)
 
@@ -347,6 +363,51 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
                     )}
                   />
                 </div>
+
+                <FormField
+                  control={form.control}
+                  name='azureResponsesResourceAffinityEnabled'
+                  render={({ field }) => (
+                    <SettingsSwitchItem className='bg-muted/30 items-start rounded-md px-3 py-3 sm:px-4'>
+                      <SettingsSwitchContent className='max-w-xl space-y-1'>
+                        <div className='flex flex-wrap items-center gap-2'>
+                          <Badge variant='outline' className='font-mono'>
+                            {AZURE_RESPONSES_RESOURCE_AFFINITY_RULE.id}
+                          </Badge>
+                          <FormLabel>
+                            {t(
+                              AZURE_RESPONSES_RESOURCE_AFFINITY_RULE.shortNameKey
+                            )}
+                          </FormLabel>
+                          <Badge variant='secondary'>
+                            {t(
+                              azureResponsesResourceAffinityEnabled
+                                ? 'Enabled'
+                                : 'Disabled'
+                            )}
+                          </Badge>
+                          {dirtyFields.azureResponsesResourceAffinityEnabled ? (
+                            <Badge variant='outline'>
+                              {t('Unsaved changes')}
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <FormDescription className='text-pretty'>
+                          {t(
+                            AZURE_RESPONSES_RESOURCE_AFFINITY_RULE.descriptionKey
+                          )}
+                        </FormDescription>
+                      </SettingsSwitchContent>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          disabled={updateOption.isPending || isSubmitting}
+                        />
+                      </FormControl>
+                    </SettingsSwitchItem>
+                  )}
+                />
               </div>
             </TabsContent>
           </Tabs>

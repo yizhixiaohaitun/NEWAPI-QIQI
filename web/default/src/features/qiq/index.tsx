@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { SettingsPage } from '@/features/system-settings/components/settings-page'
 
 import {
+  AZURE_RESPONSES_RESOURCE_AFFINITY_RULE,
   RESPONSES_MISSING_REASONING_ITEM_RULE,
   RESPONSES_STREAM_ERROR_RETRY_RULE,
 } from './enhanced-compatibility-rules'
@@ -29,6 +30,7 @@ type QiqiSettingsValues = {
   [RESPONSES_MISSING_REASONING_ITEM_RULE.settingKey]: boolean
   [RESPONSES_STREAM_ERROR_RETRY_RULE.settingKey]: boolean
   [RESPONSES_STREAM_ERROR_RETRY_RULE.retryTimesSettingKey]: number
+  [AZURE_RESPONSES_RESOURCE_AFFINITY_RULE.settingKey]: boolean
 }
 
 const defaultQiqiSettings: QiqiSettingsValues = {
@@ -36,6 +38,7 @@ const defaultQiqiSettings: QiqiSettingsValues = {
   [RESPONSES_MISSING_REASONING_ITEM_RULE.settingKey]: true,
   [RESPONSES_STREAM_ERROR_RETRY_RULE.settingKey]: true,
   [RESPONSES_STREAM_ERROR_RETRY_RULE.retryTimesSettingKey]: 2,
+  [AZURE_RESPONSES_RESOURCE_AFFINITY_RULE.settingKey]: true,
 }
 
 const QIQI_SECTION = 'qiq' as const
@@ -58,6 +61,8 @@ export function QiqiSettings() {
               settings[RESPONSES_STREAM_ERROR_RETRY_RULE.settingKey],
             [RESPONSES_STREAM_ERROR_RETRY_RULE.retryTimesSettingKey]:
               settings[RESPONSES_STREAM_ERROR_RETRY_RULE.retryTimesSettingKey],
+            [AZURE_RESPONSES_RESOURCE_AFFINITY_RULE.settingKey]:
+              settings[AZURE_RESPONSES_RESOURCE_AFFINITY_RULE.settingKey],
           }}
         />
       )}

@@ -15,6 +15,7 @@ const (
 type QiqiSetting struct {
 	ContextRequestLoggingEnabled              bool `json:"context_request_logging_enabled"`
 	ResponsesMissingReasoningItemRetryEnabled bool `json:"responses_missing_reasoning_item_retry_enabled"`
+	AzureResponsesResourceAffinityEnabled     bool `json:"azure_responses_resource_affinity_enabled"`
 	ResponsesStreamErrorRetryEnabled          bool `json:"responses_stream_error_retry_enabled"`
 	ResponsesStreamErrorRetryTimes            int  `json:"responses_stream_error_retry_times"`
 }
@@ -22,6 +23,7 @@ type QiqiSetting struct {
 var qiqiSetting = QiqiSetting{
 	ContextRequestLoggingEnabled:              false,
 	ResponsesMissingReasoningItemRetryEnabled: true,
+	AzureResponsesResourceAffinityEnabled:     true,
 	ResponsesStreamErrorRetryEnabled:          true,
 	ResponsesStreamErrorRetryTimes:            DefaultResponsesStreamErrorRetryTimes,
 }
@@ -40,6 +42,10 @@ func IsContextRequestLoggingEnabled() bool {
 
 func IsResponsesMissingReasoningItemRetryEnabled() bool {
 	return qiqiSetting.ResponsesMissingReasoningItemRetryEnabled
+}
+
+func IsAzureResponsesResourceAffinityEnabled() bool {
+	return qiqiSetting.AzureResponsesResourceAffinityEnabled
 }
 
 func IsResponsesStreamErrorRetryEnabled() bool {

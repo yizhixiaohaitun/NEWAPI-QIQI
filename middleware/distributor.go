@@ -126,9 +126,22 @@ func Distribute() func(c *gin.Context) {
 							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 						}
 					}
+					if !affinityUsable && service.ShouldProtectResponsesStateAffinity(c) {
+						abortWithOpenAiMessage(c, http.StatusServiceUnavailable,
+							fmt.Sprintf("Responses state affinity channel %d is unavailable; refusing cross-resource routing", preferredChannelID),
+							types.ErrorCodeGetChannelFailed)
+						return
+					}
 					if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
 						service.ClearCurrentChannelAffinityCache(c)
 					}
+				}
+
+				if service.ShouldRejectUnresolvedResponsesStateAffinity(c) {
+					abortWithOpenAiMessage(c, http.StatusServiceUnavailable,
+						"Unable to resolve the Azure OpenAI resource that created this Responses state; refusing cross-resource routing",
+						types.ErrorCodeGetChannelFailed)
+					return
 				}
 
 				if channel == nil {

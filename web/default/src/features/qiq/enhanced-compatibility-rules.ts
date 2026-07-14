@@ -66,9 +66,27 @@ export const RESPONSES_STREAM_ERROR_RETRY_RULE = {
   },
 } as const satisfies EnhancedCompatibilityRuleDefinition
 
+export const AZURE_RESPONSES_RESOURCE_AFFINITY_RULE = {
+  id: 'QIQI-EC-003',
+  key: 'azure_responses_resource_affinity',
+  settingKey: 'qiqi_setting.azure_responses_resource_affinity_enabled',
+  shortNameKey: 'Azure Responses resource affinity protection',
+  descriptionKey:
+    'Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.',
+  referenceKeys: {
+    recovered:
+      'Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.',
+    recommended:
+      'Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.',
+    attempted:
+      'Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.',
+  },
+} as const satisfies EnhancedCompatibilityRuleDefinition
+
 export const ENHANCED_COMPATIBILITY_RULES = [
   RESPONSES_MISSING_REASONING_ITEM_RULE,
   RESPONSES_STREAM_ERROR_RETRY_RULE,
+  AZURE_RESPONSES_RESOURCE_AFFINITY_RULE,
 ] as const satisfies readonly EnhancedCompatibilityRuleDefinition[]
 
 export function findEnhancedCompatibilityRule(event: {

@@ -336,6 +336,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if openaiErr == nil {
 		return false
 	}
+	if service.IsResponsesStateResourceMismatchError(openaiErr) && service.ShouldProtectResponsesStateAffinity(c) {
+		return false
+	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
