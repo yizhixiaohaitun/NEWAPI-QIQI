@@ -32,7 +32,16 @@ import type {
 } from './types'
 
 export async function getSystemOptions() {
-  const res = await api.get<SystemOptionsResponse>('/api/option/')
+  const res = await api.get<SystemOptionsResponse>('/api/option/', {
+    timeout: 15_000,
+    skipBusinessError: true,
+    skipErrorHandler: true,
+  })
+
+  if (!res.data.success) {
+    throw new Error(res.data.message || 'Request failed')
+  }
+
   return res.data
 }
 
