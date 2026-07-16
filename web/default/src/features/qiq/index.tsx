@@ -25,6 +25,8 @@ import {
 } from './enhanced-compatibility-rules'
 import { QiqiSettingsSection } from './qiqi-settings-section'
 
+export { ChannelPurity } from './channel-purity'
+
 type QiqiSettingsValues = {
   'qiqi_setting.context_request_logging_enabled': boolean
   [RESPONSES_MISSING_REASONING_ITEM_RULE.settingKey]: boolean

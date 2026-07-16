@@ -18,12 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
+import { ArrowRight, ShieldCheck } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
 
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -194,7 +197,30 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value='general' className='pt-4'>
+            <TabsContent value='general' className='space-y-3 pt-4'>
+              <div className='bg-muted/30 flex flex-col gap-3 rounded-md border px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4'>
+                <div className='flex items-start gap-3'>
+                  <ShieldCheck className='text-primary mt-0.5 size-5 shrink-0' />
+                  <div>
+                    <p className='text-sm font-medium'>{t('Channel purity')}</p>
+                    <p className='text-muted-foreground text-sm'>
+                      {t(
+                        'Scan channels for model identity risk and inspect supporting evidence.'
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type='button'
+                  variant='outline'
+                  className='shrink-0'
+                  render={<Link to='/qiq/channel-purity' />}
+                >
+                  {t('Open channel purity')}
+                  <ArrowRight />
+                </Button>
+              </div>
+
               <FormField
                 control={form.control}
                 name='contextRequestLoggingEnabled'
