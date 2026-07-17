@@ -72,6 +72,34 @@ func TestRemoveMissingResponsesReasoningItemsPreservesRecoverableReasoning(t *te
 	}
 }
 
+func TestRemoveUndecryptableResponsesReasoningItemsRemovesOnlyEncryptedReasoning(t *testing.T) {
+	body := []byte(`{
+		"input":[
+			{"type":"reasoning","id":"rs_bad","encrypted_content":"gAAAAA-secret","summary":[]},
+			{"type":"reasoning","id":"rs_plain","content":[{"type":"reasoning_text","text":"keep"}]},
+			{"type":"function_call","id":"fc_1","encrypted_content":"keep-tool-data"},
+			{"role":"user","content":"keep user content"}
+		]
+	}`)
+
+	normalized, removed, err := RemoveUndecryptableResponsesReasoningItems(body)
+	require.NoError(t, err)
+	require.Equal(t, 1, removed)
+	require.NotContains(t, string(normalized), "gAAAAA-secret")
+	require.Contains(t, string(normalized), "rs_plain")
+	require.Contains(t, string(normalized), "keep-tool-data")
+	require.Contains(t, string(normalized), "keep user content")
+}
+
+func TestRemoveUndecryptableResponsesReasoningItemsLeavesBodyWithoutEncryptedReasoningUnchanged(t *testing.T) {
+	body := []byte(`{"input":[{"type":"reasoning","id":"rs_plain","content":[]}]}`)
+
+	normalized, removed, err := RemoveUndecryptableResponsesReasoningItems(body)
+	require.NoError(t, err)
+	require.Zero(t, removed)
+	require.Equal(t, body, normalized)
+}
+
 func TestRemoveMissingResponsesReasoningItemsRejectsInvalidJSON(t *testing.T) {
 	body := []byte(`{"input":`)
 	normalized, removed, err := RemoveMissingResponsesReasoningItems(body, "rs_missing")

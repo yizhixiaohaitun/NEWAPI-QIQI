@@ -171,6 +171,27 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 				}
 			}
 			if newAPIError != nil {
+				retryResp, retryError, retried = retryUndecryptableResponsesReasoningContent(
+					c,
+					info,
+					requestBodyStorage,
+					newAPIError,
+					doResponsesRequest,
+				)
+				if retried {
+					if retryError != nil {
+						return retryError
+					}
+					httpResp = retryResp.(*http.Response)
+					if httpResp.StatusCode == http.StatusOK {
+						newAPIError = nil
+					} else {
+						newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+					}
+				}
+			}
+			if newAPIError != nil {
+				newAPIError = encryptedContentRecoveryUserError(newAPIError)
 				// reset status code 重置状态码
 				service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 				return newAPIError

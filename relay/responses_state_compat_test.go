@@ -15,6 +15,71 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestEncryptedContentVerificationErrorMatchesWithoutRetainingCiphertext(t *testing.T) {
+	ciphertext := "gAAAAABsecret-payload-that-must-not-be-returned"
+	upstreamError := types.WithOpenAIError(types.OpenAIError{
+		Message: "The encrypted content " + ciphertext + " could not be verified. Reason: Encrypted content could not be decrypted or parsed.",
+		Type:    "invalid_request_error",
+		Param:   "input",
+	}, http.StatusBadRequest)
+
+	require.True(t, isEncryptedContentVerificationError(upstreamError))
+	userError := encryptedContentRecoveryUserError(upstreamError)
+	require.Equal(t, http.StatusBadRequest, userError.StatusCode)
+	require.Contains(t, userError.Error(), "加密推理内容")
+	require.NotContains(t, userError.Error(), ciphertext)
+	require.True(t, types.IsSkipRetryError(userError))
+
+	unrelated := types.WithOpenAIError(types.OpenAIError{
+		Message: "The encrypted content is invalid",
+		Type:    "invalid_request_error",
+	}, http.StatusBadRequest)
+	require.False(t, isEncryptedContentVerificationError(unrelated))
+}
+
+func TestRetryUndecryptableResponsesReasoningContentRetriesOnlyOnce(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+	storage, err := common.CreateBodyStorage([]byte(`{"input":[{"type":"reasoning","id":"rs_bad","encrypted_content":"gAAAAA-private"},{"role":"user","content":"continue"}]}`))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = storage.Close() })
+
+	upstreamError := types.WithOpenAIError(types.OpenAIError{
+		Message: "The encrypted content gAAAAA-private could not be verified. Reason: Encrypted content could not be decrypted or parsed.",
+		Type:    "invalid_request_error",
+		Param:   "input",
+	}, http.StatusBadRequest)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 23}}
+	requestCount := 0
+	doRequest := func(reader io.Reader) (any, error) {
+		requestCount++
+		body, readErr := io.ReadAll(reader)
+		require.NoError(t, readErr)
+		require.NotContains(t, string(body), "gAAAAA-private")
+		require.Contains(t, string(body), "continue")
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	}
+
+	resp, retryErr, retried := retryUndecryptableResponsesReasoningContent(ctx, info, storage, upstreamError, doRequest)
+	require.True(t, retried)
+	require.Nil(t, retryErr)
+	require.NotNil(t, resp)
+	require.Equal(t, 1, requestCount)
+
+	_, _, retried = retryUndecryptableResponsesReasoningContent(ctx, info, storage, upstreamError, doRequest)
+	require.False(t, retried)
+	require.Equal(t, 1, requestCount)
+
+	adminInfo := map[string]interface{}{}
+	service.AppendRelayCompatibilityAdminInfo(ctx, adminInfo)
+	events, ok := adminInfo["compatibility_events"].([]service.RelayCompatibilityEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1)
+	require.Equal(t, service.ResponsesEncryptedContentRecoveryRule.ID, events[0].RuleID)
+	require.Equal(t, 1, events[0].Count)
+	require.True(t, events[0].Retried)
+}
+
 func TestMissingResponsesReasoningItemIDMatchesExactUpstreamError(t *testing.T) {
 	err := types.WithOpenAIError(types.OpenAIError{
 		Message: "Item with id 'rs_02698e67ed266c42006a4fe3f343ac819395bd611715dd4638' not found.",

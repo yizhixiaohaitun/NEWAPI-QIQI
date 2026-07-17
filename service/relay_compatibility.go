@@ -27,6 +27,11 @@ var ResponsesStreamErrorRetryRule = RelayCompatibilityRule{
 	SettingKey: "qiqi_setting.responses_stream_error_retry_enabled",
 }
 
+var ResponsesEncryptedContentRecoveryRule = RelayCompatibilityRule{
+	ID:  "QIQI-EC-004",
+	Key: "responses_encrypted_content_recovery",
+}
+
 type RelayCompatibilityEvent struct {
 	RuleID     string `json:"rule_id"`
 	Key        string `json:"key"`
