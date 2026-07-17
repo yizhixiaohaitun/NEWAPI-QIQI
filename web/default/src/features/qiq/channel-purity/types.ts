@@ -7,7 +7,12 @@ the Free Software Foundation, either version 3 of the License, or (at your optio
 */
 
 export type PurityRisk = 'low' | 'medium' | 'high' | 'unknown'
-export type PurityStatus = 'pending' | 'running' | 'completed' | 'failed'
+export type PurityStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'unknown'
 export type PurityEvidenceKind =
   | 'protocol'
   | 'declared_model'

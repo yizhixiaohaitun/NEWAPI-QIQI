@@ -24,6 +24,7 @@ const PURITY_STATUSES = new Set<PurityStatus>([
   'running',
   'completed',
   'failed',
+  'unknown',
 ])
 const PURITY_RISKS = new Set<PurityRisk>(['low', 'medium', 'high', 'unknown'])
 const EVIDENCE_KINDS = new Set<PurityEvidenceKind>([
@@ -54,10 +55,16 @@ function optionalText(value: unknown): string | undefined {
     : String(value)
 }
 
+function optionalIdentifier(value: unknown): string | number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') return value
+  return undefined
+}
+
 function normalizeStatus(value: unknown): PurityStatus {
   return PURITY_STATUSES.has(value as PurityStatus)
     ? (value as PurityStatus)
-    : 'pending'
+    : 'unknown'
 }
 
 function normalizeRisk(value: unknown): PurityRisk {
@@ -174,9 +181,10 @@ function normalizeResult(raw: Record<string, unknown>): PurityResult {
   const result = toRecord(raw.result)
   const channelID = Number(raw.channel_id ?? channel.id ?? 0)
   const model = String(raw.model ?? '-')
+  const scanID = optionalIdentifier(raw.scan_id ?? raw.id)
   return {
-    id: String(raw.id ?? raw.scan_id ?? `${channelID}-${model}`),
-    scan_id: (raw.scan_id ?? raw.id) as string | number,
+    id: scanID ?? `${channelID}-${model}`,
+    scan_id: scanID,
     channel_id: Number.isFinite(channelID) ? channelID : 0,
     channel_name: String(raw.channel_name ?? channel.name ?? '-'),
     model,
