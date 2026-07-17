@@ -1,5 +1,8 @@
 {
   "translation": {
+    "360": "360",
+    "1000": "1000",
+    "10000": "10000",
     "Channel purity": "渠道纯净度",
     "Start purity scan": "启动纯净度扫描",
     "Open channel purity": "打开渠道纯净度",
@@ -28,9 +31,6 @@
     "Purity status: running": "扫描中",
     "Purity status: completed": "已完成",
     "Purity status: failed": "失败",
-    "360": "360",
-    "1000": "1000",
-    "10000": "10000",
     "_copy": "_复制",
     "，": "，",
     ", and": "，和",

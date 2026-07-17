@@ -80,6 +80,40 @@ func TestRunQuickProbeBlocksCrossHostRedirect(t *testing.T) {
 	assert.Equal(t, model.ChannelPurityConclusionUnknown, outcome.Conclusion)
 }
 
+func TestBuildChatCompletionsEndpointPreservesQuery(t *testing.T) {
+	endpoint, err := buildChatCompletionsEndpoint("https://example.com/gateway/v1/?tenant=alpha#ignored")
+
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/gateway/v1/chat/completions?tenant=alpha", endpoint)
+}
+
+func TestRunQuickProbeAcceptsExplicitZeroUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-test","model":"gpt-test","choices":[{}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}`))
+	}))
+	defer server.Close()
+
+	outcome := RunQuickProbe(context.Background(), testChannel(server.URL), "gpt-test")
+
+	assert.Equal(t, model.ChannelPurityConclusionNoObviousRisk, outcome.Conclusion)
+	require.NotNil(t, outcome.Result)
+	assert.True(t, outcome.Result.HasUsage)
+}
+
+func TestRunQuickProbeRejectsInconsistentUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-test","model":"gpt-test","choices":[{}],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":3}}`))
+	}))
+	defer server.Close()
+
+	outcome := RunQuickProbe(context.Background(), testChannel(server.URL), "gpt-test")
+
+	assert.Equal(t, model.ChannelPurityConclusionRisk, outcome.Conclusion)
+	assert.Equal(t, "invalid_usage", outcome.ErrorClass)
+	require.NotNil(t, outcome.Result)
+	assert.False(t, outcome.Result.ProtocolValid)
+}
+
 func testChannel(baseURL string) *model.Channel {
 	return &model.Channel{
 		Id: 1, Type: constant.ChannelTypeOpenAI, Name: "test-channel", Key: "test-secret",

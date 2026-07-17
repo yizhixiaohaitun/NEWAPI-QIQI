@@ -20,6 +20,7 @@ type ChannelPurityEvidence struct {
 	Object           string             `json:"object,omitempty"`
 	ResponseIDPrefix string             `json:"response_id_prefix,omitempty"`
 	DeclaredModel    string             `json:"declared_model,omitempty"`
+	MappedModel      string             `json:"mapped_model,omitempty"`
 	HasModelField    bool               `json:"has_model_field"`
 	HasUsage         bool               `json:"has_usage"`
 	HasOutput        bool               `json:"has_output"`

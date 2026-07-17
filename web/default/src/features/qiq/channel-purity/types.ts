@@ -8,8 +8,17 @@ the Free Software Foundation, either version 3 of the License, or (at your optio
 
 export type PurityRisk = 'low' | 'medium' | 'high' | 'unknown'
 export type PurityStatus = 'pending' | 'running' | 'completed' | 'failed'
+export type PurityEvidenceKind =
+  | 'protocol'
+  | 'declared_model'
+  | 'usage'
+  | 'warning'
+  | 'operational'
+  | 'generic'
 
 export type PurityEvidence = {
+  id: string
+  kind: PurityEvidenceKind
   title?: string
   description?: string
   expected?: string

@@ -6,8 +6,9 @@ it under the terms of the GNU Affero General Public License as published by
 the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { TFunction } from 'i18next'
 import { RefreshCw, Search, ShieldAlert, ShieldCheck } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -40,32 +41,106 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { getChannels } from '@/features/channels/api'
 
-import { getPurityResults, getPurityScan, startPurityScan } from './api'
-import type { PurityResult, PurityRisk, PurityStatus } from './types'
+import {
+  getPurityEligibleChannels,
+  getPurityResults,
+  startPurityScan,
+} from './api'
+import type {
+  PurityEvidence,
+  PurityResult,
+  PurityRisk,
+  PurityStatus,
+} from './types'
 
 const resultKey = ['qiq', 'channel-purity', 'results'] as const
 
 function RiskBadge({ risk }: { risk: PurityRisk }) {
   const { t } = useTranslation()
-  const variant =
-    risk === 'high' ? 'destructive' : risk === 'low' ? 'secondary' : 'outline'
-  return <Badge variant={variant}>{t(`Purity risk: ${risk}`)}</Badge>
+  let variant: 'destructive' | 'secondary' | 'outline' = 'outline'
+  if (risk === 'high') variant = 'destructive'
+  if (risk === 'low') variant = 'secondary'
+  const label = {
+    high: t('Purity risk: high'),
+    medium: t('Purity risk: medium'),
+    low: t('Purity risk: low'),
+    unknown: t('Purity risk: unknown'),
+  }[risk]
+  return <Badge variant={variant}>{label}</Badge>
 }
 
 function StatusBadge({ status }: { status: PurityStatus }) {
   const { t } = useTranslation()
+  const label = {
+    pending: t('Purity status: pending'),
+    running: t('Purity status: running'),
+    completed: t('Purity status: completed'),
+    failed: t('Purity status: failed'),
+  }[status]
   return (
     <Badge variant={status === 'failed' ? 'destructive' : 'outline'}>
-      {t(`Purity status: ${status}`)}
+      {label}
     </Badge>
   )
 }
 
 function coveragePercent(value: number) {
-  const normalized = value <= 1 ? value * 100 : value
-  return Math.max(0, Math.min(100, Math.round(normalized)))
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(100, Math.round(value)))
+}
+
+function formatTimestamp(timestamp: string | number | undefined) {
+  if (timestamp === undefined || timestamp === '') return '—'
+  const normalized =
+    typeof timestamp === 'number' && timestamp < 1e12
+      ? timestamp * 1000
+      : timestamp
+  const date = new Date(normalized)
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString()
+}
+
+function evidenceTitle(t: TFunction, evidence: PurityEvidence) {
+  switch (evidence.kind) {
+    case 'protocol':
+      return t('Protocol response')
+    case 'declared_model':
+      return t('Declared model')
+    case 'usage':
+      return t('Usage metadata')
+    case 'warning':
+      return t('Warning')
+    case 'operational':
+      return t('Operational status')
+    default:
+      return evidence.title ?? t('Evidence item')
+  }
+}
+
+function evidenceText(t: TFunction, value: string) {
+  switch (value) {
+    case 'A successful OpenAI-compatible response with output':
+      return t('A successful OpenAI-compatible response with output')
+    case 'Consistent non-negative token usage when provided':
+      return t('Consistent non-negative token usage when provided')
+    case 'Not returned':
+      return t('Not returned')
+    case 'declared_model_differs_from_mapped_request':
+      return t('The declared model differs from the mapped request.')
+    default:
+      return value
+  }
+}
+
+function apiErrorMessage(error: unknown) {
+  if (error && typeof error === 'object' && 'response' in error) {
+    const response = (error as { response?: { data?: { message?: unknown } } })
+      .response
+    if (typeof response?.data?.message === 'string') {
+      return response.data.message
+    }
+  }
+  return error instanceof Error ? error.message : undefined
 }
 
 export function ChannelPurity() {
@@ -88,35 +163,36 @@ export function ChannelPurity() {
   })
   const channelsQuery = useQuery({
     queryKey: ['qiq', 'channel-purity', 'channels'],
-    queryFn: () => getChannels({ p: 1, page_size: 1000, status: 'enabled' }),
+    queryFn: getPurityEligibleChannels,
+    staleTime: 30_000,
   })
-  const channels = channelsQuery.data?.data?.items ?? []
+  const channels = channelsQuery.data ?? []
   const channel = channels.find((item) => String(item.id) === selectedChannel)
   const models = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (channel?.models ?? '')
-            .split(',')
-            .map((model) => model.trim())
-            .filter(Boolean)
-        )
+    () => [
+      ...new Set(
+        (channel?.models ?? '')
+          .split(',')
+          .map((model) => model.trim())
+          .filter(Boolean)
       ),
+    ],
     [channel?.models]
   )
 
   const scanMutation = useMutation({
     mutationFn: startPurityScan,
     onSuccess: async (response) => {
-      if (response.success === false) return
+      if (response.success === false) {
+        toast.error(response.message || t('Failed to start purity scan'))
+        return
+      }
       toast.success(t('Channel purity scan started'))
       setScanOpen(false)
-      const scan = response.data
-      const id = scan?.id ?? scan?.scan_id
-      if (id != null) await getPurityScan(String(id)).catch(() => undefined)
       await queryClient.invalidateQueries({ queryKey: resultKey })
     },
-    onError: () => toast.error(t('Failed to start purity scan')),
+    onError: (error) =>
+      toast.error(apiErrorMessage(error) || t('Failed to start purity scan')),
   })
 
   const results = resultsQuery.data ?? []
@@ -170,6 +246,29 @@ export function ChannelPurity() {
               </Button>
             </div>
           </div>
+
+          {resultsQuery.isError ? (
+            <div className='border-destructive/40 bg-destructive/5 flex flex-wrap items-center justify-between gap-3 rounded-md border px-4 py-3'>
+              <div>
+                <p className='text-destructive text-sm font-medium'>
+                  {t('Failed to load purity scan results.')}
+                </p>
+                {apiErrorMessage(resultsQuery.error) ? (
+                  <p className='text-muted-foreground mt-1 text-xs'>
+                    {apiErrorMessage(resultsQuery.error)}
+                  </p>
+                ) : null}
+              </div>
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                onClick={() => void resultsQuery.refetch()}
+              >
+                {t('Try again')}
+              </Button>
+            </div>
+          ) : null}
 
           <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
             <SummaryCard
@@ -236,14 +335,7 @@ export function ChannelPurity() {
                           <StatusBadge status={result.status} />
                         </TableCell>
                         <TableCell className='text-muted-foreground text-xs whitespace-nowrap'>
-                          {timestamp
-                            ? new Date(
-                                typeof timestamp === 'number' &&
-                                  timestamp < 1e12
-                                  ? timestamp * 1000
-                                  : timestamp
-                              ).toLocaleString()
-                            : '—'}
+                          {formatTimestamp(timestamp)}
                         </TableCell>
                         <TableCell className='text-right'>
                           <Button
@@ -257,7 +349,9 @@ export function ChannelPurity() {
                       </TableRow>
                     )
                   })}
-                  {!resultsQuery.isLoading && results.length === 0 ? (
+                  {!resultsQuery.isLoading &&
+                  !resultsQuery.isError &&
+                  results.length === 0 ? (
                     <TableRow>
                       <TableCell
                         colSpan={7}
@@ -295,24 +389,55 @@ export function ChannelPurity() {
           <div className='space-y-4'>
             <div className='space-y-2'>
               <Label>{t('Channel')}</Label>
-              <Select
-                value={selectedChannel}
-                onValueChange={(value) => {
-                  setSelectedChannel(value ?? '')
-                  setSelectedModel('')
-                }}
-              >
-                <SelectTrigger className='w-full'>
-                  <SelectValue placeholder={t('Select channel')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {channels.map((item) => (
-                    <SelectItem key={item.id} value={String(item.id)}>
-                      {item.name} (#{item.id})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {channelsQuery.isError ? (
+                <div className='border-destructive/40 rounded-md border p-3'>
+                  <p className='text-destructive text-sm'>
+                    {t('Failed to load enabled channels.')}
+                  </p>
+                  <Button
+                    type='button'
+                    size='sm'
+                    variant='outline'
+                    className='mt-2'
+                    onClick={() => void channelsQuery.refetch()}
+                  >
+                    {t('Try again')}
+                  </Button>
+                </div>
+              ) : (
+                <Select
+                  value={selectedChannel}
+                  onValueChange={(value) => {
+                    setSelectedChannel(value ?? '')
+                    setSelectedModel('')
+                  }}
+                  disabled={channelsQuery.isLoading || channels.length === 0}
+                >
+                  <SelectTrigger className='w-full'>
+                    <SelectValue
+                      placeholder={
+                        channelsQuery.isLoading
+                          ? t('Loading...')
+                          : t('Select channel')
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {channels.map((item) => (
+                      <SelectItem key={item.id} value={String(item.id)}>
+                        {item.name} (#{item.id})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {!channelsQuery.isLoading &&
+              !channelsQuery.isError &&
+              channels.length === 0 ? (
+                <p className='text-muted-foreground text-xs'>
+                  {t('No enabled channels are available for scanning.')}
+                </p>
+              ) : null}
             </div>
             <div className='space-y-2'>
               <Label>{t('Model')}</Label>
@@ -341,7 +466,10 @@ export function ChannelPurity() {
             <Button
               onClick={beginScan}
               disabled={
-                !selectedChannel || !selectedModel || scanMutation.isPending
+                !selectedChannel ||
+                !selectedModel ||
+                channelsQuery.isError ||
+                scanMutation.isPending
               }
             >
               {scanMutation.isPending ? t('Starting...') : t('Start scan')}
@@ -363,29 +491,27 @@ export function ChannelPurity() {
             </DialogDescription>
           </DialogHeader>
           <div className='max-h-[60vh] space-y-3 overflow-y-auto'>
-            {detail?.evidence?.map((evidence, index) => (
+            {detail?.evidence?.map((evidence) => (
               <div
-                key={`${evidence.title ?? 'evidence'}-${index}`}
+                key={evidence.id}
                 className='bg-muted/40 rounded-lg border p-3'
               >
-                <p className='font-medium'>
-                  {evidence.title ?? t('Evidence item')}
-                </p>
+                <p className='font-medium'>{evidenceTitle(t, evidence)}</p>
                 {evidence.description ? (
                   <p className='text-muted-foreground mt-1 text-sm'>
-                    {evidence.description}
+                    {evidenceText(t, evidence.description)}
                   </p>
                 ) : null}
                 {evidence.expected ? (
                   <p className='mt-2 text-xs'>
                     <span className='font-medium'>{t('Expected')}:</span>{' '}
-                    {evidence.expected}
+                    {evidenceText(t, evidence.expected)}
                   </p>
                 ) : null}
                 {evidence.actual ? (
                   <p className='mt-1 text-xs'>
                     <span className='font-medium'>{t('Observed')}:</span>{' '}
-                    {evidence.actual}
+                    {evidenceText(t, evidence.actual)}
                   </p>
                 ) : null}
               </div>
@@ -409,7 +535,7 @@ function SummaryCard({
 }: {
   title: string
   value: string | number
-  icon: React.ReactNode
+  icon: ReactNode
 }) {
   return (
     <Card>
