@@ -74,15 +74,17 @@ func RunQuickProbe(ctx context.Context, channel *model.Channel, requestedModel s
 	}()
 
 	if !supportsOpenAIChat(channel.Type) {
+		outcome.Status = model.ChannelPurityStatusFailed
 		outcome.ErrorClass = "unsupported_channel_type"
-		outcome.Summary = "Quick probe does not support this channel protocol; conclusion unknown"
+		outcome.Summary = "Quick probe does not support this channel protocol"
 		return outcome
 	}
 
 	endpoint, err := buildChatCompletionsEndpoint(channel.GetBaseURL())
 	if err != nil {
+		outcome.Status = model.ChannelPurityStatusFailed
 		outcome.ErrorClass = "invalid_base_url"
-		outcome.Summary = "Channel base URL is invalid; conclusion unknown"
+		outcome.Summary = "Channel base URL is invalid"
 		return outcome
 	}
 	upstreamModel := mapModel(requestedModel, channel.GetModelMapping())
@@ -97,18 +99,23 @@ func RunQuickProbe(ctx context.Context, channel *model.Channel, requestedModel s
 		"stream":      false,
 	})
 	if err != nil {
+		outcome.Status = model.ChannelPurityStatusFailed
 		outcome.ErrorClass = "request_build_error"
+		outcome.Summary = "Probe request could not be built"
 		return outcome
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
+		outcome.Status = model.ChannelPurityStatusFailed
 		outcome.ErrorClass = "request_build_error"
+		outcome.Summary = "Probe request could not be built"
 		return outcome
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
 	key, _, keyErr := channel.GetNextEnabledKey()
 	if keyErr != nil || strings.TrimSpace(key) == "" {
+		outcome.Status = model.ChannelPurityStatusFailed
 		outcome.ErrorClass = "credential_unavailable"
 		outcome.Summary = "Channel credential is unavailable; probe was not sent"
 		return outcome
@@ -117,8 +124,9 @@ func RunQuickProbe(ctx context.Context, channel *model.Channel, requestedModel s
 
 	response, err := newProbeHTTPClient().Do(request)
 	if err != nil {
+		outcome.Status = model.ChannelPurityStatusFailed
 		outcome.ErrorClass = classifyTransportError(err)
-		outcome.Summary = "Probe request failed; conclusion unknown"
+		outcome.Summary = "Probe request failed before a usable upstream response was received"
 		return outcome
 	}
 	defer response.Body.Close()
@@ -126,15 +134,19 @@ func RunQuickProbe(ctx context.Context, channel *model.Channel, requestedModel s
 	evidence.ContentType = response.Header.Get("Content-Type")
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
+		outcome.Status = model.ChannelPurityStatusFailed
 		outcome.ErrorClass = "response_read_error"
+		outcome.Summary = "Upstream response could not be read"
 		return outcome
 	}
 	if len(data) > maxResponseBytes {
+		outcome.Status = model.ChannelPurityStatusFailed
 		outcome.ErrorClass = "response_too_large"
-		outcome.Summary = "Upstream response exceeded the probe limit; conclusion unknown"
+		outcome.Summary = "Upstream response exceeded the probe limit"
 		return outcome
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		outcome.Status = model.ChannelPurityStatusFailed
 		outcome.ErrorClass = classifyHTTPError(response.StatusCode)
 		outcome.Summary = "Upstream returned an operational error; no purity risk was inferred"
 		return outcome

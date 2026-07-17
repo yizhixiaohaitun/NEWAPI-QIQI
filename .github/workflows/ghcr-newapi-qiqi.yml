@@ -49,6 +49,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=main
+            type=raw,value=local-riskfix-final-20260718
             type=raw,value=${{ steps.version.outputs.version }}
             type=raw,value=sha-${{ steps.version.outputs.short_sha }}
 

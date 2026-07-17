@@ -35,7 +35,7 @@ func TestRunQuickProbeSuccessfulStructure(t *testing.T) {
 	assert.NotContains(t, outcome.Result.EvidenceJSON, "test-secret")
 }
 
-func TestRunQuickProbeOperationalErrorRemainsUnknown(t *testing.T) {
+func TestRunQuickProbeOperationalErrorFailsWithoutRiskConclusion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = w.Write([]byte(`{"error":{"type":"rate_limit"}}`))
@@ -44,8 +44,18 @@ func TestRunQuickProbeOperationalErrorRemainsUnknown(t *testing.T) {
 
 	outcome := RunQuickProbe(context.Background(), testChannel(server.URL), "gpt-test")
 
+	assert.Equal(t, model.ChannelPurityStatusFailed, outcome.Status)
 	assert.Equal(t, "rate_limit", outcome.ErrorClass)
 	assert.Equal(t, model.ChannelPurityConclusionUnknown, outcome.Conclusion)
+	assert.Equal(t, model.ChannelPurityRiskUnknown, outcome.Risk)
+}
+
+func TestRunQuickProbeInvalidBaseURLFails(t *testing.T) {
+	outcome := RunQuickProbe(context.Background(), testChannel("123"), "gpt-test")
+
+	assert.Equal(t, model.ChannelPurityStatusFailed, outcome.Status)
+	assert.Equal(t, "invalid_base_url", outcome.ErrorClass)
+	assert.Equal(t, 0, outcome.Coverage)
 	assert.Equal(t, model.ChannelPurityRiskUnknown, outcome.Risk)
 }
 

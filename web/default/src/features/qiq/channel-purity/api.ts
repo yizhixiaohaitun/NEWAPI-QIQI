@@ -192,6 +192,7 @@ function normalizeResult(raw: Record<string, unknown>): PurityResult {
     coverage: Number(raw.coverage ?? raw.coverage_rate ?? 0),
     status: normalizeStatus(raw.status),
     summary: optionalText(raw.summary),
+    error_class: optionalText(raw.error_class ?? result.error_class),
     created_at: (raw.created_at ?? raw.created_time) as
       | string
       | number

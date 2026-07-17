@@ -2069,7 +2069,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Related Projects",
     "footer.defaultCopyright": "All rights reserved.",
-    "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
+    "footer.newapi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
     "For private deployments, format: https://fastgpt.run/api/openapi": "For private deployments, format: https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "Force a syntactically valid JSON response",
@@ -5247,6 +5247,14 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "Azure Responses resource affinity protection": "Azure Responses resource affinity protection",
-    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources."
+    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.",
+    "Risk not determined": "Risk not determined",
+    "Invalid channel base URL": "Invalid channel base URL",
+    "Channel credential is unavailable": "Channel credential is unavailable",
+    "Unsupported channel type": "Unsupported channel type",
+    "Upstream rate limit": "Upstream rate limit",
+    "Upstream authentication failed": "Upstream authentication failed",
+    "Upstream request timed out": "Upstream request timed out",
+    "Scan failed before risk could be determined": "Scan failed before risk could be determined"
   }
 }

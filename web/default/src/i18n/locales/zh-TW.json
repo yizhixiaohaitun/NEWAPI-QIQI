@@ -2069,7 +2069,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相關項目",
     "footer.defaultCopyright": "版權所有。",
-    "footer.new\u0061pi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
+    "footer.newapi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "對於 2025 年 5 月 10 日之後新增的渠道，在部署時無需從模型名稱中移除 \".\"",
     "For private deployments, format: https://fastgpt.run/api/openapi": "對於私有部署，格式為：https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "強制返回語法合法的 JSON",
@@ -5247,6 +5247,14 @@
     "Zhipu V4": "智譜 V4",
     "Zoom": "縮放",
     "Azure Responses resource affinity protection": "Azure Responses 資源親和保護",
-    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "優先將含有 previous_response_id 或 item_reference 的請求固定回建立該狀態的 Azure 資源，避免因使用不同的 Azure OpenAI 資源而發生 400 錯誤。原資源不可用時會安全失敗，而不會隨機跨資源。"
+    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "優先將含有 previous_response_id 或 item_reference 的請求固定回建立該狀態的 Azure 資源，避免因使用不同的 Azure OpenAI 資源而發生 400 錯誤。原資源不可用時會安全失敗，而不會隨機跨資源。",
+    "Risk not determined": "無法判定風險",
+    "Invalid channel base URL": "渠道 Base URL 無效",
+    "Channel credential is unavailable": "渠道憑證不可用",
+    "Unsupported channel type": "不支援的渠道類型",
+    "Upstream rate limit": "上游觸發限流",
+    "Upstream authentication failed": "上游驗證失敗",
+    "Upstream request timed out": "上游請求逾時",
+    "Scan failed before risk could be determined": "掃描失敗，無法判定風險"
   }
 }

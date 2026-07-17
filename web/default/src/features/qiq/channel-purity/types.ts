@@ -40,6 +40,7 @@ export type PurityResult = {
   coverage: number
   status: PurityStatus
   summary?: string
+  error_class?: string
   evidence?: PurityEvidence[]
   created_at?: string | number
   updated_at?: string | number

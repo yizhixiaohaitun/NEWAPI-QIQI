@@ -93,6 +93,25 @@ function coveragePercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)))
 }
 
+function operationalErrorLabel(t: TFunction, errorClass?: string) {
+  switch (errorClass) {
+    case 'invalid_base_url':
+      return t('Invalid channel base URL')
+    case 'credential_unavailable':
+      return t('Channel credential is unavailable')
+    case 'unsupported_channel_type':
+      return t('Unsupported channel type')
+    case 'rate_limit':
+      return t('Upstream rate limit')
+    case 'authentication_error':
+      return t('Upstream authentication failed')
+    case 'timeout':
+      return t('Upstream request timed out')
+    default:
+      return errorClass || t('Scan failed before risk could be determined')
+  }
+}
+
 function formatTimestamp(timestamp: string | number | undefined) {
   if (timestamp === undefined || timestamp === '') return '—'
   const normalized =
@@ -262,7 +281,9 @@ export function ChannelPurity() {
 
   const results = resultsQuery.data ?? []
   const highRisk = results.filter((item) => item.risk === 'high').length
-  const completed = results.filter((item) => item.status === 'completed')
+  const completed = results.filter(
+    (item) => item.status === 'completed' && item.coverage > 0
+  )
   const averageCoverage = completed.length
     ? Math.round(
         completed.reduce(
@@ -386,6 +407,15 @@ export function ChannelPurity() {
                   {results.map((result) => {
                     const coverage = coveragePercent(result.coverage)
                     const timestamp = result.updated_at ?? result.created_at
+                    // Older scans could be persisted as completed even though the
+                    // probe failed before any response was received. Treat these
+                    // operational errors as failed when rendering legacy rows.
+                    const displayStatus =
+                      result.status === 'completed' &&
+                      result.error_class &&
+                      coverage === 0
+                        ? 'failed'
+                        : result.status
                     return (
                       <TableRow key={result.id}>
                         <TableCell className='font-medium'>
@@ -395,16 +425,33 @@ export function ChannelPurity() {
                           {result.model}
                         </TableCell>
                         <TableCell>
-                          <RiskBadge risk={result.risk} />
+                          {displayStatus === 'failed' ? (
+                            <div className='space-y-1'>
+                              <Badge variant='destructive'>
+                                {t('Risk not determined')}
+                              </Badge>
+                              <p className='text-destructive max-w-52 text-xs'>
+                                {operationalErrorLabel(t, result.error_class)}
+                              </p>
+                            </div>
+                          ) : (
+                            <RiskBadge risk={result.risk} />
+                          )}
                         </TableCell>
                         <TableCell>
-                          <div className='flex min-w-28 items-center gap-2'>
-                            <Progress value={coverage} />
-                            <span className='text-xs'>{coverage}%</span>
-                          </div>
+                          {displayStatus === 'failed' ? (
+                            <span className='text-muted-foreground text-xs'>
+                              {t('Not available')}
+                            </span>
+                          ) : (
+                            <div className='flex min-w-28 items-center gap-2'>
+                              <Progress value={coverage} />
+                              <span className='text-xs'>{coverage}%</span>
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell>
-                          <StatusBadge status={result.status} />
+                          <StatusBadge status={displayStatus} />
                         </TableCell>
                         <TableCell className='text-muted-foreground text-xs whitespace-nowrap'>
                           {formatTimestamp(timestamp)}
