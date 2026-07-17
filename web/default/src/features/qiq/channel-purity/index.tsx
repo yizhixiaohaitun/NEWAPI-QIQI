@@ -456,210 +456,215 @@ export function ChannelPurity() {
             </CardContent>
           </Card>
         </div>
-      </SectionPageLayout.Content>
 
-      <Dialog open={scanOpen} onOpenChange={setScanOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('Start purity scan')}</DialogTitle>
-            <DialogDescription>
-              {t('Select an enabled channel and one of its configured models.')}
-            </DialogDescription>
-          </DialogHeader>
-          <div className='space-y-4'>
-            <div className='space-y-2'>
-              <Label>{t('Channel')}</Label>
-              {channelsQuery.isError ? (
+        <Dialog open={scanOpen} onOpenChange={setScanOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t('Start purity scan')}</DialogTitle>
+              <DialogDescription>
+                {t(
+                  'Select an enabled channel and one of its configured models.'
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <div className='space-y-4'>
+              <div className='space-y-2'>
+                <Label>{t('Channel')}</Label>
+                {channelsQuery.isError ? (
+                  <div className='border-destructive/40 rounded-md border p-3'>
+                    <p className='text-destructive text-sm'>
+                      {channelsUnauthorized
+                        ? t('Your session has expired. Please sign in again.')
+                        : t('Failed to load enabled channels.')}
+                    </p>
+                    {apiErrorMessage(channelsQuery.error) ? (
+                      <p className='text-muted-foreground mt-1 text-xs'>
+                        {apiErrorMessage(channelsQuery.error)}
+                      </p>
+                    ) : null}
+                    <div className='mt-2 flex gap-2'>
+                      {channelsUnauthorized ? <SignInAction /> : null}
+                      <Button
+                        type='button'
+                        size='sm'
+                        variant='outline'
+                        onClick={() => void channelsQuery.refetch()}
+                      >
+                        {t('Try again')}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Select
+                    value={selectedChannel}
+                    onValueChange={(value) => {
+                      setSelectedChannel(value ?? '')
+                      setSelectedModel('')
+                    }}
+                    disabled={channelsQuery.isLoading || channels.length === 0}
+                  >
+                    <SelectTrigger className='w-full'>
+                      <SelectValue
+                        placeholder={
+                          channelsQuery.isLoading
+                            ? t('Loading...')
+                            : t('Select channel')
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {channels.map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          {item.name} (#{item.id})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {!channelsQuery.isLoading &&
+                !channelsQuery.isError &&
+                channels.length === 0 ? (
+                  <p className='text-muted-foreground text-xs'>
+                    {t('No enabled channels are available for scanning.')}
+                  </p>
+                ) : null}
+              </div>
+              <div className='space-y-2'>
+                <Label>{t('Model')}</Label>
+                <Select
+                  value={selectedModel}
+                  onValueChange={(value) => setSelectedModel(value ?? '')}
+                  disabled={!selectedChannel || models.length === 0}
+                >
+                  <SelectTrigger className='w-full'>
+                    <SelectValue placeholder={t('Select model')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {models.map((model) => (
+                      <SelectItem key={model} value={model}>
+                        {model}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedChannelHasNoModels ? (
+                  <p className='text-destructive text-xs'>
+                    {t('This channel has no configured models.')}
+                  </p>
+                ) : null}
+              </div>
+              {scanDisabledReason ? (
+                <p className='text-muted-foreground text-xs' role='status'>
+                  {scanDisabledReason}
+                </p>
+              ) : null}
+              {scanMutation.isError &&
+              isUnauthorizedError(scanMutation.error) ? (
+                <div className='space-y-2'>
+                  <p className='text-destructive text-xs'>
+                    {t('Your session has expired. Please sign in again.')}
+                  </p>
+                  <SignInAction />
+                </div>
+              ) : null}
+            </div>
+            <DialogFooter>
+              <Button variant='outline' onClick={() => setScanOpen(false)}>
+                {t('Cancel')}
+              </Button>
+              <Button
+                onClick={beginScan}
+                disabled={Boolean(scanDisabledReason) || scanMutation.isPending}
+              >
+                {scanMutation.isPending ? t('Starting...') : t('Start scan')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={detail !== null}
+          onOpenChange={(open) => !open && setDetail(null)}
+        >
+          <DialogContent className='sm:max-w-2xl'>
+            <DialogHeader>
+              <DialogTitle>{t('Purity evidence')}</DialogTitle>
+              <DialogDescription>
+                {detailResult?.summary ||
+                  t('Signals and observations collected during this scan.')}
+              </DialogDescription>
+            </DialogHeader>
+            <div className='max-h-[60vh] space-y-3 overflow-y-auto'>
+              {detailQuery.isLoading ? (
+                <p className='text-muted-foreground py-8 text-center text-sm'>
+                  {t('Loading...')}
+                </p>
+              ) : null}
+              {detailQuery.isError ? (
                 <div className='border-destructive/40 rounded-md border p-3'>
                   <p className='text-destructive text-sm'>
-                    {channelsUnauthorized
+                    {detailUnauthorized
                       ? t('Your session has expired. Please sign in again.')
-                      : t('Failed to load enabled channels.')}
+                      : t('Failed to load purity scan details.')}
                   </p>
-                  {apiErrorMessage(channelsQuery.error) ? (
+                  {apiErrorMessage(detailQuery.error) ? (
                     <p className='text-muted-foreground mt-1 text-xs'>
-                      {apiErrorMessage(channelsQuery.error)}
+                      {apiErrorMessage(detailQuery.error)}
                     </p>
                   ) : null}
                   <div className='mt-2 flex gap-2'>
-                    {channelsUnauthorized ? <SignInAction /> : null}
+                    {detailUnauthorized ? <SignInAction /> : null}
                     <Button
                       type='button'
                       size='sm'
                       variant='outline'
-                      onClick={() => void channelsQuery.refetch()}
+                      onClick={() => void detailQuery.refetch()}
                     >
                       {t('Try again')}
                     </Button>
                   </div>
                 </div>
-              ) : (
-                <Select
-                  value={selectedChannel}
-                  onValueChange={(value) => {
-                    setSelectedChannel(value ?? '')
-                    setSelectedModel('')
-                  }}
-                  disabled={channelsQuery.isLoading || channels.length === 0}
-                >
-                  <SelectTrigger className='w-full'>
-                    <SelectValue
-                      placeholder={
-                        channelsQuery.isLoading
-                          ? t('Loading...')
-                          : t('Select channel')
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {channels.map((item) => (
-                      <SelectItem key={item.id} value={String(item.id)}>
-                        {item.name} (#{item.id})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              {!channelsQuery.isLoading &&
-              !channelsQuery.isError &&
-              channels.length === 0 ? (
-                <p className='text-muted-foreground text-xs'>
-                  {t('No enabled channels are available for scanning.')}
+              ) : null}
+              {!detailQuery.isLoading && !detailQuery.isError
+                ? detailResult?.evidence?.map((evidence) => (
+                    <div
+                      key={evidence.id}
+                      className='bg-muted/40 rounded-lg border p-3'
+                    >
+                      <p className='font-medium'>
+                        {evidenceTitle(t, evidence)}
+                      </p>
+                      {evidence.description ? (
+                        <p className='text-muted-foreground mt-1 text-sm'>
+                          {evidenceText(t, evidence.description)}
+                        </p>
+                      ) : null}
+                      {evidence.expected ? (
+                        <p className='mt-2 text-xs'>
+                          <span className='font-medium'>{t('Expected')}:</span>{' '}
+                          {evidenceText(t, evidence.expected)}
+                        </p>
+                      ) : null}
+                      {evidence.actual ? (
+                        <p className='mt-1 text-xs'>
+                          <span className='font-medium'>{t('Observed')}:</span>{' '}
+                          {evidenceText(t, evidence.actual)}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))
+                : null}
+              {!detailQuery.isLoading &&
+              !detailQuery.isError &&
+              !detailResult?.evidence?.length ? (
+                <p className='text-muted-foreground py-8 text-center text-sm'>
+                  {t('No evidence was returned for this scan.')}
                 </p>
               ) : null}
             </div>
-            <div className='space-y-2'>
-              <Label>{t('Model')}</Label>
-              <Select
-                value={selectedModel}
-                onValueChange={(value) => setSelectedModel(value ?? '')}
-                disabled={!selectedChannel || models.length === 0}
-              >
-                <SelectTrigger className='w-full'>
-                  <SelectValue placeholder={t('Select model')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {models.map((model) => (
-                    <SelectItem key={model} value={model}>
-                      {model}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {selectedChannelHasNoModels ? (
-                <p className='text-destructive text-xs'>
-                  {t('This channel has no configured models.')}
-                </p>
-              ) : null}
-            </div>
-            {scanDisabledReason ? (
-              <p className='text-muted-foreground text-xs' role='status'>
-                {scanDisabledReason}
-              </p>
-            ) : null}
-            {scanMutation.isError && isUnauthorizedError(scanMutation.error) ? (
-              <div className='space-y-2'>
-                <p className='text-destructive text-xs'>
-                  {t('Your session has expired. Please sign in again.')}
-                </p>
-                <SignInAction />
-              </div>
-            ) : null}
-          </div>
-          <DialogFooter>
-            <Button variant='outline' onClick={() => setScanOpen(false)}>
-              {t('Cancel')}
-            </Button>
-            <Button
-              onClick={beginScan}
-              disabled={Boolean(scanDisabledReason) || scanMutation.isPending}
-            >
-              {scanMutation.isPending ? t('Starting...') : t('Start scan')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={detail !== null}
-        onOpenChange={(open) => !open && setDetail(null)}
-      >
-        <DialogContent className='sm:max-w-2xl'>
-          <DialogHeader>
-            <DialogTitle>{t('Purity evidence')}</DialogTitle>
-            <DialogDescription>
-              {detailResult?.summary ||
-                t('Signals and observations collected during this scan.')}
-            </DialogDescription>
-          </DialogHeader>
-          <div className='max-h-[60vh] space-y-3 overflow-y-auto'>
-            {detailQuery.isLoading ? (
-              <p className='text-muted-foreground py-8 text-center text-sm'>
-                {t('Loading...')}
-              </p>
-            ) : null}
-            {detailQuery.isError ? (
-              <div className='border-destructive/40 rounded-md border p-3'>
-                <p className='text-destructive text-sm'>
-                  {detailUnauthorized
-                    ? t('Your session has expired. Please sign in again.')
-                    : t('Failed to load purity scan details.')}
-                </p>
-                {apiErrorMessage(detailQuery.error) ? (
-                  <p className='text-muted-foreground mt-1 text-xs'>
-                    {apiErrorMessage(detailQuery.error)}
-                  </p>
-                ) : null}
-                <div className='mt-2 flex gap-2'>
-                  {detailUnauthorized ? <SignInAction /> : null}
-                  <Button
-                    type='button'
-                    size='sm'
-                    variant='outline'
-                    onClick={() => void detailQuery.refetch()}
-                  >
-                    {t('Try again')}
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            {!detailQuery.isLoading && !detailQuery.isError
-              ? detailResult?.evidence?.map((evidence) => (
-                  <div
-                    key={evidence.id}
-                    className='bg-muted/40 rounded-lg border p-3'
-                  >
-                    <p className='font-medium'>{evidenceTitle(t, evidence)}</p>
-                    {evidence.description ? (
-                      <p className='text-muted-foreground mt-1 text-sm'>
-                        {evidenceText(t, evidence.description)}
-                      </p>
-                    ) : null}
-                    {evidence.expected ? (
-                      <p className='mt-2 text-xs'>
-                        <span className='font-medium'>{t('Expected')}:</span>{' '}
-                        {evidenceText(t, evidence.expected)}
-                      </p>
-                    ) : null}
-                    {evidence.actual ? (
-                      <p className='mt-1 text-xs'>
-                        <span className='font-medium'>{t('Observed')}:</span>{' '}
-                        {evidenceText(t, evidence.actual)}
-                      </p>
-                    ) : null}
-                  </div>
-                ))
-              : null}
-            {!detailQuery.isLoading &&
-            !detailQuery.isError &&
-            !detailResult?.evidence?.length ? (
-              <p className='text-muted-foreground py-8 text-center text-sm'>
-                {t('No evidence was returned for this scan.')}
-              </p>
-            ) : null}
-          </div>
-        </DialogContent>
-      </Dialog>
+          </DialogContent>
+        </Dialog>
+      </SectionPageLayout.Content>
     </SectionPageLayout>
   )
 }
