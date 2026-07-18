@@ -28,3 +28,19 @@ func TestResponsesStreamErrorRetryTimesValidationAndBounds(t *testing.T) {
 	setting.ResponsesStreamErrorRetryTimes = MaxResponsesStreamErrorRetryTimes + 1
 	assert.Equal(t, MaxResponsesStreamErrorRetryTimes, GetResponsesStreamErrorRetryTimes())
 }
+
+func TestChannelPurityInspectionIntervalValidationAndFallback(t *testing.T) {
+	require.NoError(t, ValidateChannelPurityInspectionIntervalMinutes("15"))
+	require.NoError(t, ValidateChannelPurityInspectionIntervalMinutes("360"))
+	require.NoError(t, ValidateChannelPurityInspectionIntervalMinutes("10080"))
+	require.Error(t, ValidateChannelPurityInspectionIntervalMinutes("14"))
+	require.Error(t, ValidateChannelPurityInspectionIntervalMinutes("10081"))
+	require.Error(t, ValidateChannelPurityInspectionIntervalMinutes("daily"))
+
+	setting := GetQiqiSetting()
+	original := *setting
+	t.Cleanup(func() { *setting = original })
+
+	setting.ChannelPurityInspectionIntervalMinutes = 0
+	assert.Equal(t, DefaultChannelPurityInspectionIntervalMinutes, GetChannelPurityInspectionIntervalMinutes())
+}

@@ -10,6 +10,10 @@ import (
 const (
 	DefaultResponsesStreamErrorRetryTimes = 2
 	MaxResponsesStreamErrorRetryTimes     = 5
+
+	DefaultChannelPurityInspectionIntervalMinutes = 360
+	MinChannelPurityInspectionIntervalMinutes     = 15
+	MaxChannelPurityInspectionIntervalMinutes     = 10080
 )
 
 type QiqiSetting struct {
@@ -18,6 +22,8 @@ type QiqiSetting struct {
 	AzureResponsesResourceAffinityEnabled     bool `json:"azure_responses_resource_affinity_enabled"`
 	ResponsesStreamErrorRetryEnabled          bool `json:"responses_stream_error_retry_enabled"`
 	ResponsesStreamErrorRetryTimes            int  `json:"responses_stream_error_retry_times"`
+	ChannelPurityInspectionEnabled            bool `json:"channel_purity_inspection_enabled"`
+	ChannelPurityInspectionIntervalMinutes    int  `json:"channel_purity_inspection_interval_minutes"`
 }
 
 var qiqiSetting = QiqiSetting{
@@ -26,6 +32,8 @@ var qiqiSetting = QiqiSetting{
 	AzureResponsesResourceAffinityEnabled:     true,
 	ResponsesStreamErrorRetryEnabled:          true,
 	ResponsesStreamErrorRetryTimes:            DefaultResponsesStreamErrorRetryTimes,
+	ChannelPurityInspectionEnabled:            false,
+	ChannelPurityInspectionIntervalMinutes:    DefaultChannelPurityInspectionIntervalMinutes,
 }
 
 func init() {
@@ -67,6 +75,26 @@ func ValidateResponsesStreamErrorRetryTimes(value string) error {
 	retryTimes, err := strconv.Atoi(value)
 	if err != nil || retryTimes < 0 || retryTimes > MaxResponsesStreamErrorRetryTimes {
 		return fmt.Errorf("Responses stream error retry times must be an integer from 0 to %d", MaxResponsesStreamErrorRetryTimes)
+	}
+	return nil
+}
+
+func IsChannelPurityInspectionEnabled() bool {
+	return qiqiSetting.ChannelPurityInspectionEnabled
+}
+
+func GetChannelPurityInspectionIntervalMinutes() int {
+	minutes := qiqiSetting.ChannelPurityInspectionIntervalMinutes
+	if minutes < MinChannelPurityInspectionIntervalMinutes || minutes > MaxChannelPurityInspectionIntervalMinutes {
+		return DefaultChannelPurityInspectionIntervalMinutes
+	}
+	return minutes
+}
+
+func ValidateChannelPurityInspectionIntervalMinutes(value string) error {
+	minutes, err := strconv.Atoi(value)
+	if err != nil || minutes < MinChannelPurityInspectionIntervalMinutes || minutes > MaxChannelPurityInspectionIntervalMinutes {
+		return fmt.Errorf("Channel purity inspection interval must be an integer from %d to %d minutes", MinChannelPurityInspectionIntervalMinutes, MaxChannelPurityInspectionIntervalMinutes)
 	}
 	return nil
 }

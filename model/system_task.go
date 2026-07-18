@@ -21,6 +21,7 @@ const (
 	SystemTaskTypeModelUpdate    = "model_update"
 	SystemTaskTypeMidjourneyPoll = "midjourney_poll"
 	SystemTaskTypeAsyncTaskPoll  = "async_task_poll"
+	SystemTaskTypeChannelPurity  = "channel_purity_inspection"
 )
 
 var ErrSystemTaskLockLost = errors.New("system task lock lost")
@@ -193,6 +194,19 @@ func ListSystemTasks(limit int) ([]*SystemTask, error) {
 func GetLatestSystemTask(taskType string) (*SystemTask, error) {
 	var task SystemTask
 	err := DB.Where("type = ?", taskType).Order("id desc").First(&task).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &task, nil
+}
+
+func GetLatestFinishedSystemTask(taskType string) (*SystemTask, error) {
+	var task SystemTask
+	err := DB.Where("type = ? AND status IN ?", taskType, []SystemTaskStatus{SystemTaskStatusSucceeded, SystemTaskStatusFailed}).
+		Order("id desc").First(&task).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

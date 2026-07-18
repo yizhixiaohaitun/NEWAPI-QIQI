@@ -5255,6 +5255,26 @@
     "Upstream rate limit": "Upstream rate limit",
     "Upstream authentication failed": "Upstream authentication failed",
     "Upstream request timed out": "Upstream request timed out",
-    "Scan failed before risk could be determined": "Scan failed before risk could be determined"
+    "Scan failed before risk could be determined": "Scan failed before risk could be determined",
+    "Automatically inspect every enabled channel and configured model, then review failures and supporting evidence.": "Automatically inspect every enabled channel and configured model, then review failures and supporting evidence.",
+    "Scan all now": "Scan all now",
+    "Full scan in progress": "Full scan in progress",
+    "Failed to start full purity scan": "Failed to start full purity scan",
+    "Full channel purity scan started": "Full channel purity scan started",
+    "Automatic inspection": "Automatic inspection",
+    "Enable scheduled inspection": "Enable scheduled inspection",
+    "Run a full inspection automatically at the configured interval.": "Run a full inspection automatically at the configured interval.",
+    "Inspection interval": "Inspection interval",
+    "Last run": "Last run",
+    "Next run": "Next run",
+    "Inspection progress and coverage": "Inspection progress and coverage",
+    "Enabled channels": "Enabled channels",
+    "Model combinations": "Model combinations",
+    "Inspection failed": "Inspection failed",
+    "Automatic inspection settings updated": "Automatic inspection settings updated",
+    "Failed to update automatic inspection settings": "Failed to update automatic inspection settings",
+    "Failed to load automatic inspection settings.": "Failed to load automatic inspection settings.",
+    "Failed to load automatic inspection status.": "Failed to load automatic inspection status.",
+    "{{count}} minutes": "{{count}} minutes"
   }
 }

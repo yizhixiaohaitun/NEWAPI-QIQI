@@ -1,6 +1,9 @@
 package model
 
-import "gorm.io/gorm"
+import (
+	"github.com/QuantumNous/new-api/common"
+	"gorm.io/gorm"
+)
 
 const (
 	ChannelPurityStatusPending   = "pending"
@@ -116,4 +119,15 @@ func ListChannelPurityScans(offset, limit int) ([]ChannelPurityScan, int64, erro
 
 func ListChannelPurityResults(offset, limit int) ([]ChannelPurityScan, int64, error) {
 	return ListChannelPurityScans(offset, limit)
+}
+
+// ListEnabledChannelsForPurityInspection loads only the fields required by the
+// embedded probe. Keys are used in memory and must never be copied to scan rows,
+// task state, results, responses, or logs.
+func ListEnabledChannelsForPurityInspection() ([]*Channel, error) {
+	var channels []*Channel
+	err := DB.Where("status = ?", common.ChannelStatusEnabled).
+		Order("id asc").
+		Find(&channels).Error
+	return channels, err
 }

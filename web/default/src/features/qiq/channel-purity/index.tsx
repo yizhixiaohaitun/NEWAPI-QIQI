@@ -8,8 +8,8 @@ the Free Software Foundation, either version 3 of the License, or (at your optio
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import type { TFunction } from 'i18next'
-import { RefreshCw, Search, ShieldAlert, ShieldCheck } from 'lucide-react'
-import { useMemo, useState, type ReactNode } from 'react'
+import { Clock, RefreshCw, Search, ShieldAlert } from 'lucide-react'
+import { type ReactNode, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -21,11 +21,9 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import {
   Select,
@@ -34,6 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -44,46 +43,52 @@ import {
 } from '@/components/ui/table'
 
 import {
-  getPurityEligibleChannels,
   getPurityResults,
+  getPurityRunStatus,
   getPurityScan,
-  startPurityScan,
+  getPuritySettings,
+  startPurityFullScan,
+  updatePuritySettings,
 } from './api'
 import type {
   PurityEvidence,
   PurityResult,
   PurityRisk,
+  PuritySettings,
   PurityStatus,
 } from './types'
 
 const resultKey = ['qiq', 'channel-purity', 'results'] as const
+const statusKey = ['qiq', 'channel-purity', 'status'] as const
+const settingsKey = ['qiq', 'channel-purity', 'settings'] as const
+const intervalOptions = [15, 60, 360, 720, 1440, 10080]
 
-function RiskBadge({ risk }: { risk: PurityRisk }) {
+function RiskBadge(props: { risk: PurityRisk }) {
   const { t } = useTranslation()
   let variant: 'destructive' | 'secondary' | 'outline' = 'outline'
-  if (risk === 'high') variant = 'destructive'
-  if (risk === 'low') variant = 'secondary'
-  const label = {
+  if (props.risk === 'high' || props.risk === 'medium') variant = 'destructive'
+  if (props.risk === 'low') variant = 'secondary'
+  const labels = {
     high: t('Purity risk: high'),
     medium: t('Purity risk: medium'),
     low: t('Purity risk: low'),
     unknown: t('Purity risk: unknown'),
-  }[risk]
-  return <Badge variant={variant}>{label}</Badge>
+  }
+  return <Badge variant={variant}>{labels[props.risk]}</Badge>
 }
 
-function StatusBadge({ status }: { status: PurityStatus }) {
+function StatusBadge(props: { status: PurityStatus }) {
   const { t } = useTranslation()
-  const label = {
+  const labels = {
     pending: t('Purity status: pending'),
     running: t('Purity status: running'),
     completed: t('Purity status: completed'),
     failed: t('Purity status: failed'),
     unknown: t('Purity status: unknown'),
-  }[status]
+  }
   return (
-    <Badge variant={status === 'failed' ? 'destructive' : 'outline'}>
-      {label}
+    <Badge variant={props.status === 'failed' ? 'destructive' : 'outline'}>
+      {labels[props.status]}
     </Badge>
   )
 }
@@ -91,25 +96,6 @@ function StatusBadge({ status }: { status: PurityStatus }) {
 function coveragePercent(value: number) {
   if (!Number.isFinite(value)) return 0
   return Math.max(0, Math.min(100, Math.round(value)))
-}
-
-function operationalErrorLabel(t: TFunction, errorClass?: string) {
-  switch (errorClass) {
-    case 'invalid_base_url':
-      return t('Invalid channel base URL')
-    case 'credential_unavailable':
-      return t('Channel credential is unavailable')
-    case 'unsupported_channel_type':
-      return t('Unsupported channel type')
-    case 'rate_limit':
-      return t('Upstream rate limit')
-    case 'authentication_error':
-      return t('Upstream authentication failed')
-    case 'timeout':
-      return t('Upstream request timed out')
-    default:
-      return errorClass || t('Scan failed before risk could be determined')
-  }
 }
 
 function formatTimestamp(timestamp: string | number | undefined) {
@@ -120,38 +106,6 @@ function formatTimestamp(timestamp: string | number | undefined) {
       : timestamp
   const date = new Date(normalized)
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString()
-}
-
-function evidenceTitle(t: TFunction, evidence: PurityEvidence) {
-  switch (evidence.kind) {
-    case 'protocol':
-      return t('Protocol response')
-    case 'declared_model':
-      return t('Declared model')
-    case 'usage':
-      return t('Usage metadata')
-    case 'warning':
-      return t('Warning')
-    case 'operational':
-      return t('Operational status')
-    default:
-      return evidence.title ?? t('Evidence item')
-  }
-}
-
-function evidenceText(t: TFunction, value: string) {
-  switch (value) {
-    case 'A successful OpenAI-compatible response with output':
-      return t('A successful OpenAI-compatible response with output')
-    case 'Consistent non-negative token usage when provided':
-      return t('Consistent non-negative token usage when provided')
-    case 'Not returned':
-      return t('Not returned')
-    case 'declared_model_differs_from_mapped_request':
-      return t('The declared model differs from the mapped request.')
-    default:
-      return value
-  }
 }
 
 function apiErrorMessage(error: unknown) {
@@ -167,8 +121,11 @@ function apiErrorMessage(error: unknown) {
 
 function isUnauthorizedError(error: unknown) {
   if (error && typeof error === 'object' && 'response' in error) {
-    const response = (error as { response?: { status?: number } }).response
-    if (response?.status === 401) return true
+    if (
+      (error as { response?: { status?: number } }).response?.status === 401
+    ) {
+      return true
+    }
   }
   return (
     error instanceof Error && /\b(?:401|unauthorized)\b/i.test(error.message)
@@ -190,28 +147,90 @@ function SignInAction() {
   )
 }
 
+function ErrorPanel(props: {
+  error: unknown
+  fallback: string
+  onRetry: () => void
+}) {
+  const { t } = useTranslation()
+  const unauthorized = isUnauthorizedError(props.error)
+  return (
+    <div className='border-destructive/40 bg-destructive/5 flex flex-wrap items-center justify-between gap-3 rounded-md border px-4 py-3'>
+      <div>
+        <p className='text-destructive text-sm font-medium'>
+          {unauthorized
+            ? t('Your session has expired. Please sign in again.')
+            : props.fallback}
+        </p>
+        {apiErrorMessage(props.error) ? (
+          <p className='text-muted-foreground mt-1 text-xs'>
+            {apiErrorMessage(props.error)}
+          </p>
+        ) : null}
+      </div>
+      <div className='flex gap-2'>
+        {unauthorized ? <SignInAction /> : null}
+        <Button
+          type='button'
+          size='sm'
+          variant='outline'
+          onClick={props.onRetry}
+        >
+          {t('Try again')}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function operationalErrorLabel(t: TFunction, errorClass?: string) {
+  const labels: Record<string, string> = {
+    invalid_base_url: t('Invalid channel base URL'),
+    credential_unavailable: t('Channel credential is unavailable'),
+    unsupported_channel_type: t('Unsupported channel type'),
+    rate_limit: t('Upstream rate limit'),
+    authentication_error: t('Upstream authentication failed'),
+    timeout: t('Upstream request timed out'),
+  }
+  return (
+    (errorClass && labels[errorClass]) ||
+    errorClass ||
+    t('Scan failed before risk could be determined')
+  )
+}
+
+function evidenceTitle(t: TFunction, evidence: PurityEvidence) {
+  const labels = {
+    protocol: t('Protocol response'),
+    declared_model: t('Declared model'),
+    usage: t('Usage metadata'),
+    warning: t('Warning'),
+    operational: t('Operational status'),
+    generic: evidence.title ?? t('Evidence item'),
+  }
+  return labels[evidence.kind]
+}
+
 export function ChannelPurity() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [scanOpen, setScanOpen] = useState(false)
-  const [selectedChannel, setSelectedChannel] = useState('')
-  const [selectedModel, setSelectedModel] = useState('')
   const [detail, setDetail] = useState<PurityResult | null>(null)
 
   const resultsQuery = useQuery({
     queryKey: resultKey,
     queryFn: getPurityResults,
-    refetchInterval: (query) =>
-      query.state.data?.some(
-        (item) => item.status === 'pending' || item.status === 'running'
-      )
-        ? 5000
-        : false,
   })
-  const channelsQuery = useQuery({
-    queryKey: ['qiq', 'channel-purity', 'channels'],
-    queryFn: getPurityEligibleChannels,
-    staleTime: 30_000,
+  const settingsQuery = useQuery({
+    queryKey: settingsKey,
+    queryFn: getPuritySettings,
+  })
+  const statusQuery = useQuery({
+    queryKey: statusKey,
+    queryFn: getPurityRunStatus,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      return status === 'pending' || status === 'running' ? 3000 : 30_000
+    },
   })
   const detailScanId = detail?.scan_id
   const detailQuery = useQuery({
@@ -220,91 +239,57 @@ export function ChannelPurity() {
     enabled: detailScanId !== undefined,
     retry: false,
   })
-  const channels = channelsQuery.data ?? []
-  const channel = channels.find((item) => String(item.id) === selectedChannel)
-  const models = useMemo(
-    () => [
-      ...new Set(
-        (channel?.models ?? '')
-          .split(',')
-          .map((model) => model.trim())
-          .filter(Boolean)
-      ),
-    ],
-    [channel?.models]
-  )
 
-  const resultsUnauthorized = isUnauthorizedError(resultsQuery.error)
-  const channelsUnauthorized = isUnauthorizedError(channelsQuery.error)
-  const detailUnauthorized = isUnauthorizedError(detailQuery.error)
-  const selectedChannelUnavailable = Boolean(selectedChannel) && !channel
-  const selectedChannelHasNoModels = Boolean(channel) && models.length === 0
-  let scanDisabledReason: string | undefined
-  if (channelsQuery.isLoading) {
-    scanDisabledReason = t('Loading enabled channels...')
-  } else if (channelsUnauthorized) {
-    scanDisabledReason = t('Your session has expired. Please sign in again.')
-  } else if (channelsQuery.isError) {
-    scanDisabledReason = t('Enabled channels could not be loaded.')
-  } else if (channels.length === 0) {
-    scanDisabledReason = t('No enabled channels are available for scanning.')
-  } else if (!selectedChannel) {
-    scanDisabledReason = t('Select a channel to continue.')
-  } else if (selectedChannelUnavailable) {
-    scanDisabledReason = t(
-      'The selected channel is no longer available. Select another channel.'
-    )
-  } else if (selectedChannelHasNoModels) {
-    scanDisabledReason = t('This channel has no configured models.')
-  } else if (!selectedModel) {
-    scanDisabledReason = t('Select a model to continue.')
+  const refreshAll = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: resultKey }),
+      queryClient.invalidateQueries({ queryKey: statusKey }),
+    ])
   }
-
-  const scanMutation = useMutation({
-    mutationFn: startPurityScan,
+  const fullScanMutation = useMutation({
+    mutationFn: startPurityFullScan,
     onSuccess: async (response) => {
       if (response.success === false) {
-        toast.error(response.message || t('Failed to start purity scan'))
+        toast.error(response.message || t('Failed to start full purity scan'))
         return
       }
-      toast.success(t('Channel purity scan started'))
-      setScanOpen(false)
-      await queryClient.invalidateQueries({ queryKey: resultKey })
+      toast.success(t('Full channel purity scan started'))
+      await refreshAll()
     },
     onError: (error) =>
       toast.error(
         isUnauthorizedError(error)
           ? t('Your session has expired. Please sign in again.')
-          : apiErrorMessage(error) || t('Failed to start purity scan')
+          : apiErrorMessage(error) || t('Failed to start full purity scan')
+      ),
+  })
+  const settingsMutation = useMutation({
+    mutationFn: updatePuritySettings,
+    onSuccess: (settings) => {
+      queryClient.setQueryData(settingsKey, settings)
+      toast.success(t('Automatic inspection settings updated'))
+    },
+    onError: (error) =>
+      toast.error(
+        isUnauthorizedError(error)
+          ? t('Your session has expired. Please sign in again.')
+          : apiErrorMessage(error) ||
+              t('Failed to update automatic inspection settings')
       ),
   })
 
-  const results = resultsQuery.data ?? []
-  const highRisk = results.filter((item) => item.risk === 'high').length
-  const completed = results.filter(
-    (item) => item.status === 'completed' && item.coverage > 0
-  )
-  const averageCoverage = completed.length
-    ? Math.round(
-        completed.reduce(
-          (sum, item) => sum + coveragePercent(item.coverage),
-          0
-        ) / completed.length
-      )
-    : 0
-  const active = results.filter(
-    (item) => item.status === 'pending' || item.status === 'running'
-  ).length
-
-  const detailResult = detailQuery.data ?? detail
-
-  const beginScan = () => {
-    if (!channel || !selectedModel) return
-    scanMutation.mutate({
-      channel_id: channel.id,
-      model: selectedModel,
-    })
+  const settings = settingsQuery.data
+  const run = statusQuery.data
+  const running = run?.status === 'pending' || run?.status === 'running'
+  const total = run?.model_combinations ?? 0
+  const processed = Math.min(total, run?.completed ?? 0)
+  const progress = total > 0 ? Math.round((processed / total) * 100) : 0
+  const updateSettings = (patch: Partial<PuritySettings>) => {
+    if (!settings) return
+    settingsMutation.mutate({ ...settings, ...patch })
   }
+  const results = resultsQuery.data ?? []
+  const detailResult = detailQuery.data ?? detail
 
   return (
     <SectionPageLayout>
@@ -314,76 +299,168 @@ export function ChannelPurity() {
           <div className='flex flex-wrap items-center justify-between gap-3'>
             <p className='text-muted-foreground max-w-2xl text-sm'>
               {t(
-                'Inspect whether channel responses match the selected model and review supporting evidence.'
+                'Automatically inspect every enabled channel and configured model, then review failures and supporting evidence.'
               )}
             </p>
             <div className='flex gap-2'>
-              <Button
-                variant='outline'
-                onClick={() => resultsQuery.refetch()}
-                disabled={resultsQuery.isFetching}
-              >
+              <Button variant='outline' onClick={() => void refreshAll()}>
                 <RefreshCw
-                  className={resultsQuery.isFetching ? 'animate-spin' : ''}
+                  className={statusQuery.isFetching ? 'animate-spin' : ''}
                 />
                 {t('Refresh')}
               </Button>
-              <Button onClick={() => setScanOpen(true)}>
+              <Button
+                onClick={() => fullScanMutation.mutate()}
+                disabled={running || fullScanMutation.isPending}
+              >
                 <Search />
-                {t('Start purity scan')}
+                {running || fullScanMutation.isPending
+                  ? t('Full scan in progress')
+                  : t('Scan all now')}
               </Button>
             </div>
           </div>
 
           {resultsQuery.isError ? (
-            <div className='border-destructive/40 bg-destructive/5 flex flex-wrap items-center justify-between gap-3 rounded-md border px-4 py-3'>
-              <div>
-                <p className='text-destructive text-sm font-medium'>
-                  {resultsUnauthorized
-                    ? t('Your session has expired. Please sign in again.')
-                    : t('Failed to load purity scan results.')}
-                </p>
-                {apiErrorMessage(resultsQuery.error) ? (
-                  <p className='text-muted-foreground mt-1 text-xs'>
-                    {apiErrorMessage(resultsQuery.error)}
-                  </p>
-                ) : null}
-              </div>
-              <div className='flex gap-2'>
-                {resultsUnauthorized ? <SignInAction /> : null}
-                <Button
-                  type='button'
-                  size='sm'
-                  variant='outline'
-                  onClick={() => void resultsQuery.refetch()}
-                >
-                  {t('Try again')}
-                </Button>
-              </div>
-            </div>
+            <ErrorPanel
+              error={resultsQuery.error}
+              fallback={t('Failed to load purity scan results.')}
+              onRetry={() => void resultsQuery.refetch()}
+            />
+          ) : null}
+          {statusQuery.isError ? (
+            <ErrorPanel
+              error={statusQuery.error}
+              fallback={t('Failed to load automatic inspection status.')}
+              onRetry={() => void statusQuery.refetch()}
+            />
           ) : null}
 
-          <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
-            <SummaryCard
-              title={t('Scans')}
-              value={results.length}
-              icon={<Search className='size-4' />}
-            />
-            <SummaryCard
-              title={t('High risk')}
-              value={highRisk}
-              icon={<ShieldAlert className='size-4' />}
-            />
-            <SummaryCard
-              title={t('Average coverage')}
-              value={`${averageCoverage}%`}
-              icon={<ShieldCheck className='size-4' />}
-            />
-            <SummaryCard
-              title={t('Active scans')}
-              value={active}
-              icon={<RefreshCw className='size-4' />}
-            />
+          <div className='grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]'>
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('Automatic inspection')}</CardTitle>
+              </CardHeader>
+              <CardContent className='space-y-5'>
+                {settingsQuery.isError ? (
+                  <ErrorPanel
+                    error={settingsQuery.error}
+                    fallback={t(
+                      'Failed to load automatic inspection settings.'
+                    )}
+                    onRetry={() => void settingsQuery.refetch()}
+                  />
+                ) : (
+                  <>
+                    <div className='flex items-center justify-between gap-3'>
+                      <div>
+                        <p className='text-sm font-medium'>
+                          {t('Enable scheduled inspection')}
+                        </p>
+                        <p className='text-muted-foreground text-xs'>
+                          {t(
+                            'Run a full inspection automatically at the configured interval.'
+                          )}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={settings?.enabled ?? false}
+                        disabled={!settings || settingsMutation.isPending}
+                        onCheckedChange={(checked) =>
+                          updateSettings({ enabled: checked })
+                        }
+                        aria-label={t('Enable scheduled inspection')}
+                      />
+                    </div>
+                    <div className='space-y-2'>
+                      <p className='text-sm font-medium'>
+                        {t('Inspection interval')}
+                      </p>
+                      <Select
+                        value={String(settings?.interval_minutes ?? 1440)}
+                        disabled={!settings || settingsMutation.isPending}
+                        onValueChange={(value) =>
+                          updateSettings({ interval_minutes: Number(value) })
+                        }
+                      >
+                        <SelectTrigger className='w-full'>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {intervalOptions.map((minutes) => (
+                            <SelectItem key={minutes} value={String(minutes)}>
+                              {t('{{count}} minutes', { count: minutes })}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className='grid grid-cols-2 gap-3 text-sm'>
+                      <div>
+                        <p className='text-muted-foreground'>{t('Last run')}</p>
+                        <p>{formatTimestamp(run?.last_run_at)}</p>
+                      </div>
+                      <div>
+                        <p className='text-muted-foreground'>{t('Next run')}</p>
+                        <p>
+                          {settings?.enabled
+                            ? formatTimestamp(run?.next_run_at)
+                            : t('Disabled')}
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('Inspection progress and coverage')}</CardTitle>
+              </CardHeader>
+              <CardContent className='space-y-4'>
+                <div className='flex items-center justify-between gap-3'>
+                  <StatusBadge status={run?.status ?? 'unknown'} />
+                  <span className='text-muted-foreground text-sm'>
+                    {processed}/{total}
+                  </span>
+                </div>
+                <Progress value={progress} />
+                <div className='grid gap-3 sm:grid-cols-4'>
+                  <SummaryCard
+                    title={t('Enabled channels')}
+                    value={run?.enabled_channels ?? 0}
+                    icon={<ShieldAlert className='size-4' />}
+                  />
+                  <SummaryCard
+                    title={t('Model combinations')}
+                    value={total}
+                    icon={<Search className='size-4' />}
+                  />
+                  <SummaryCard
+                    title={t('Completed')}
+                    value={run?.completed ?? 0}
+                    icon={<RefreshCw className='size-4' />}
+                  />
+                  <SummaryCard
+                    title={t('Failed')}
+                    value={run?.failed ?? 0}
+                    icon={<Clock className='size-4' />}
+                    danger={Boolean(run?.failed)}
+                  />
+                </div>
+                {run?.error ? (
+                  <div className='border-destructive/40 bg-destructive/5 rounded-md border p-3'>
+                    <p className='text-destructive text-sm font-medium'>
+                      {t('Inspection failed')}
+                    </p>
+                    <p className='text-muted-foreground mt-1 text-xs'>
+                      {run.error}
+                    </p>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
           </div>
 
           <Card>
@@ -406,16 +483,8 @@ export function ChannelPurity() {
                 <TableBody>
                   {results.map((result) => {
                     const coverage = coveragePercent(result.coverage)
-                    const timestamp = result.updated_at ?? result.created_at
-                    // Older scans could be persisted as completed even though the
-                    // probe failed before any response was received. Treat these
-                    // operational errors as failed when rendering legacy rows.
-                    const displayStatus =
-                      result.status === 'completed' &&
-                      result.error_class &&
-                      coverage === 0
-                        ? 'failed'
-                        : result.status
+                    const failed =
+                      result.status === 'failed' || Boolean(result.error_class)
                     return (
                       <TableRow key={result.id}>
                         <TableCell className='font-medium'>
@@ -425,7 +494,7 @@ export function ChannelPurity() {
                           {result.model}
                         </TableCell>
                         <TableCell>
-                          {displayStatus === 'failed' ? (
+                          {failed ? (
                             <div className='space-y-1'>
                               <Badge variant='destructive'>
                                 {t('Risk not determined')}
@@ -439,7 +508,7 @@ export function ChannelPurity() {
                           )}
                         </TableCell>
                         <TableCell>
-                          {displayStatus === 'failed' ? (
+                          {failed ? (
                             <span className='text-muted-foreground text-xs'>
                               {t('Not available')}
                             </span>
@@ -451,23 +520,20 @@ export function ChannelPurity() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <StatusBadge status={displayStatus} />
+                          <StatusBadge
+                            status={failed ? 'failed' : result.status}
+                          />
                         </TableCell>
                         <TableCell className='text-muted-foreground text-xs whitespace-nowrap'>
-                          {formatTimestamp(timestamp)}
+                          {formatTimestamp(
+                            result.updated_at ?? result.created_at
+                          )}
                         </TableCell>
                         <TableCell className='text-right'>
                           <Button
                             size='sm'
                             variant='ghost'
                             disabled={result.scan_id === undefined}
-                            title={
-                              result.scan_id === undefined
-                                ? t(
-                                    'Evidence details are unavailable for this scan.'
-                                  )
-                                : undefined
-                            }
                             onClick={() => setDetail(result)}
                           >
                             {t('View evidence')}
@@ -504,131 +570,6 @@ export function ChannelPurity() {
           </Card>
         </div>
 
-        <Dialog open={scanOpen} onOpenChange={setScanOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>{t('Start purity scan')}</DialogTitle>
-              <DialogDescription>
-                {t(
-                  'Select an enabled channel and one of its configured models.'
-                )}
-              </DialogDescription>
-            </DialogHeader>
-            <div className='space-y-4'>
-              <div className='space-y-2'>
-                <Label>{t('Channel')}</Label>
-                {channelsQuery.isError ? (
-                  <div className='border-destructive/40 rounded-md border p-3'>
-                    <p className='text-destructive text-sm'>
-                      {channelsUnauthorized
-                        ? t('Your session has expired. Please sign in again.')
-                        : t('Failed to load enabled channels.')}
-                    </p>
-                    {apiErrorMessage(channelsQuery.error) ? (
-                      <p className='text-muted-foreground mt-1 text-xs'>
-                        {apiErrorMessage(channelsQuery.error)}
-                      </p>
-                    ) : null}
-                    <div className='mt-2 flex gap-2'>
-                      {channelsUnauthorized ? <SignInAction /> : null}
-                      <Button
-                        type='button'
-                        size='sm'
-                        variant='outline'
-                        onClick={() => void channelsQuery.refetch()}
-                      >
-                        {t('Try again')}
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <Select
-                    value={selectedChannel}
-                    onValueChange={(value) => {
-                      setSelectedChannel(value ?? '')
-                      setSelectedModel('')
-                    }}
-                    disabled={channelsQuery.isLoading || channels.length === 0}
-                  >
-                    <SelectTrigger className='w-full'>
-                      <SelectValue
-                        placeholder={
-                          channelsQuery.isLoading
-                            ? t('Loading...')
-                            : t('Select channel')
-                        }
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {channels.map((item) => (
-                        <SelectItem key={item.id} value={String(item.id)}>
-                          {item.name} (#{item.id})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-                {!channelsQuery.isLoading &&
-                !channelsQuery.isError &&
-                channels.length === 0 ? (
-                  <p className='text-muted-foreground text-xs'>
-                    {t('No enabled channels are available for scanning.')}
-                  </p>
-                ) : null}
-              </div>
-              <div className='space-y-2'>
-                <Label>{t('Model')}</Label>
-                <Select
-                  value={selectedModel}
-                  onValueChange={(value) => setSelectedModel(value ?? '')}
-                  disabled={!selectedChannel || models.length === 0}
-                >
-                  <SelectTrigger className='w-full'>
-                    <SelectValue placeholder={t('Select model')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {models.map((model) => (
-                      <SelectItem key={model} value={model}>
-                        {model}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedChannelHasNoModels ? (
-                  <p className='text-destructive text-xs'>
-                    {t('This channel has no configured models.')}
-                  </p>
-                ) : null}
-              </div>
-              {scanDisabledReason ? (
-                <p className='text-muted-foreground text-xs' role='status'>
-                  {scanDisabledReason}
-                </p>
-              ) : null}
-              {scanMutation.isError &&
-              isUnauthorizedError(scanMutation.error) ? (
-                <div className='space-y-2'>
-                  <p className='text-destructive text-xs'>
-                    {t('Your session has expired. Please sign in again.')}
-                  </p>
-                  <SignInAction />
-                </div>
-              ) : null}
-            </div>
-            <DialogFooter>
-              <Button variant='outline' onClick={() => setScanOpen(false)}>
-                {t('Cancel')}
-              </Button>
-              <Button
-                onClick={beginScan}
-                disabled={Boolean(scanDisabledReason) || scanMutation.isPending}
-              >
-                {scanMutation.isPending ? t('Starting...') : t('Start scan')}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
         <Dialog
           open={detail !== null}
           onOpenChange={(open) => !open && setDetail(null)}
@@ -648,29 +589,11 @@ export function ChannelPurity() {
                 </p>
               ) : null}
               {detailQuery.isError ? (
-                <div className='border-destructive/40 rounded-md border p-3'>
-                  <p className='text-destructive text-sm'>
-                    {detailUnauthorized
-                      ? t('Your session has expired. Please sign in again.')
-                      : t('Failed to load purity scan details.')}
-                  </p>
-                  {apiErrorMessage(detailQuery.error) ? (
-                    <p className='text-muted-foreground mt-1 text-xs'>
-                      {apiErrorMessage(detailQuery.error)}
-                    </p>
-                  ) : null}
-                  <div className='mt-2 flex gap-2'>
-                    {detailUnauthorized ? <SignInAction /> : null}
-                    <Button
-                      type='button'
-                      size='sm'
-                      variant='outline'
-                      onClick={() => void detailQuery.refetch()}
-                    >
-                      {t('Try again')}
-                    </Button>
-                  </div>
-                </div>
+                <ErrorPanel
+                  error={detailQuery.error}
+                  fallback={t('Failed to load purity scan details.')}
+                  onRetry={() => void detailQuery.refetch()}
+                />
               ) : null}
               {!detailQuery.isLoading && !detailQuery.isError
                 ? detailResult?.evidence?.map((evidence) => (
@@ -683,19 +606,19 @@ export function ChannelPurity() {
                       </p>
                       {evidence.description ? (
                         <p className='text-muted-foreground mt-1 text-sm'>
-                          {evidenceText(t, evidence.description)}
+                          {evidence.description}
                         </p>
                       ) : null}
                       {evidence.expected ? (
                         <p className='mt-2 text-xs'>
                           <span className='font-medium'>{t('Expected')}:</span>{' '}
-                          {evidenceText(t, evidence.expected)}
+                          {evidence.expected}
                         </p>
                       ) : null}
                       {evidence.actual ? (
                         <p className='mt-1 text-xs'>
                           <span className='font-medium'>{t('Observed')}:</span>{' '}
-                          {evidenceText(t, evidence.actual)}
+                          {evidence.actual}
                         </p>
                       ) : null}
                     </div>
@@ -716,24 +639,27 @@ export function ChannelPurity() {
   )
 }
 
-function SummaryCard({
-  title,
-  value,
-  icon,
-}: {
+function SummaryCard(props: {
   title: string
   value: string | number
   icon: ReactNode
+  danger?: boolean
 }) {
   return (
-    <Card>
-      <CardContent className='flex items-center justify-between p-4'>
-        <div>
-          <p className='text-muted-foreground text-sm'>{title}</p>
-          <p className='mt-1 text-2xl font-semibold'>{value}</p>
-        </div>
-        <div className='bg-muted rounded-full p-2'>{icon}</div>
-      </CardContent>
-    </Card>
+    <div className='bg-muted/30 flex items-center justify-between rounded-lg border p-3'>
+      <div>
+        <p className='text-muted-foreground text-xs'>{props.title}</p>
+        <p
+          className={
+            props.danger
+              ? 'text-destructive mt-1 text-xl font-semibold'
+              : 'mt-1 text-xl font-semibold'
+          }
+        >
+          {props.value}
+        </p>
+      </div>
+      <div className='bg-muted rounded-full p-2'>{props.icon}</div>
+    </div>
   )
 }

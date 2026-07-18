@@ -11,10 +11,13 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
-	channelpurity "github.com/QuantumNous/new-api/service/channel_purity"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"gorm.io/gorm"
 )
 
@@ -61,20 +64,15 @@ func StartChannelPurityScan(c *gin.Context) {
 }
 
 func runChannelPurityScan(scan *model.ChannelPurityScan, channel *model.Channel) {
+	defer func() { <-channelPuritySlots }()
+	executeChannelPurityScan(context.Background(), scan, channel, scan.CreatedBy)
+}
+
+func executeChannelPurityScan(parent context.Context, scan *model.ChannelPurityScan, channel *model.Channel, testUserID int) {
 	defer func() {
-		<-channelPuritySlots
 		if recovered := recover(); recovered != nil {
 			common.SysError(fmt.Sprintf("channel purity scan panic: %v\n%s", recovered, debug.Stack()))
-			now := time.Now().Unix()
-			scan.Status = model.ChannelPurityStatusFailed
-			scan.Conclusion = model.ChannelPurityConclusionUnknown
-			scan.Risk = model.ChannelPurityRiskUnknown
-			scan.Summary = "Quick probe failed internally; conclusion unknown"
-			scan.ErrorClass = "internal_panic"
-			scan.CompletedAt = now
-			if err := model.FinishChannelPurityScan(scan, nil); err != nil {
-				common.SysError("failed to persist channel purity panic state: " + err.Error())
-			}
+			finishChannelPurityOperationalFailure(scan, "internal_panic", "Probe failed internally; risk could not be determined")
 		}
 	}()
 
@@ -82,19 +80,205 @@ func runChannelPurityScan(scan *model.ChannelPurityScan, channel *model.Channel)
 	if err := model.MarkChannelPurityScanRunning(scan.ID, scan.StartedAt); err != nil {
 		common.SysError("failed to mark channel purity scan running: " + err.Error())
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+	if testUserID <= 0 {
+		resolved, err := resolveChannelTestUserID(nil)
+		if err != nil {
+			finishChannelPurityOperationalFailure(scan, "test_user_unavailable", "Inspection identity is unavailable; risk could not be determined")
+			return
+		}
+		testUserID = resolved
+	}
+
+	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
 	defer cancel()
-	outcome := channelpurity.RunQuickProbe(ctx, channel, scan.RequestedModel)
-	scan.Status = outcome.Status
-	scan.Conclusion = outcome.Conclusion
-	scan.Risk = outcome.Risk
-	scan.Coverage = outcome.Coverage
-	scan.Summary = outcome.Summary
-	scan.ErrorClass = outcome.ErrorClass
+	endpointType := purityEndpointType(channel, scan.RequestedModel)
+	probe := testChannelWithOptions(ctx, channel, testUserID, scan.RequestedModel, endpointType,
+		shouldUseStreamForAutomaticChannelTest(channel), channelTestOptions{
+			recordConsumeLog:  false,
+			captureResponse:   true,
+			allowMissingUsage: true,
+		})
+	applyChannelTestProbe(scan, probe)
 	scan.CompletedAt = time.Now().Unix()
-	if err := model.FinishChannelPurityScan(scan, outcome.Result); err != nil {
+	if err := model.FinishChannelPurityScan(scan, probeResult(scan, probe)); err != nil {
 		common.SysError("failed to finish channel purity scan: " + err.Error())
 	}
+}
+
+func finishChannelPurityOperationalFailure(scan *model.ChannelPurityScan, errorClass, summary string) {
+	scan.Status = model.ChannelPurityStatusFailed
+	scan.Conclusion = model.ChannelPurityConclusionUnknown
+	scan.Risk = model.ChannelPurityRiskUnknown
+	scan.Coverage = 0
+	scan.ErrorClass = errorClass
+	scan.Summary = summary
+	scan.CompletedAt = time.Now().Unix()
+	if err := model.FinishChannelPurityScan(scan, nil); err != nil {
+		common.SysError("failed to finish channel purity scan: " + err.Error())
+	}
+}
+
+func purityEndpointType(channel *model.Channel, modelName string) string {
+	lower := strings.ToLower(strings.TrimSpace(modelName))
+	if strings.HasSuffix(modelName, ratio_setting.CompactModelSuffix) {
+		return string(constant.EndpointTypeOpenAIResponseCompact)
+	}
+	if channel != nil && channel.Type == constant.ChannelTypeCodex {
+		return string(constant.EndpointTypeOpenAIResponse)
+	}
+	if strings.Contains(lower, "rerank") || (channel != nil && channel.Type == constant.ChannelTypeJina) {
+		return string(constant.EndpointTypeJinaRerank)
+	}
+	if strings.Contains(lower, "embedding") || strings.Contains(lower, "embed") || strings.HasPrefix(lower, "m3e") || strings.Contains(lower, "bge-") {
+		return string(constant.EndpointTypeEmbeddings)
+	}
+	if common.IsImageGenerationModel(modelName) {
+		return string(constant.EndpointTypeImageGeneration)
+	}
+	if common.IsOpenAIResponseOnlyModel(modelName) {
+		return string(constant.EndpointTypeOpenAIResponse)
+	}
+	if channel != nil {
+		switch channel.Type {
+		case constant.ChannelTypeAws, constant.ChannelTypeAnthropic:
+			return string(constant.EndpointTypeAnthropic)
+		case constant.ChannelTypeVertexAi, constant.ChannelTypeGemini:
+			return string(constant.EndpointTypeGemini)
+		}
+	}
+	return ""
+}
+
+func applyChannelTestProbe(scan *model.ChannelPurityScan, probe testResult) {
+	scan.Protocol = string(probe.protocol)
+	if scan.Protocol == "" {
+		scan.Protocol = "unknown"
+	}
+	if probe.localErr != nil || probe.newAPIError != nil {
+		scan.Status = model.ChannelPurityStatusFailed
+		scan.Conclusion = model.ChannelPurityConclusionUnknown
+		scan.Risk = model.ChannelPurityRiskUnknown
+		scan.Coverage = 0
+		scan.ErrorClass = classifyPurityProbeError(probe)
+		scan.Summary = "Probe failed operationally; risk could not be determined"
+		return
+	}
+
+	hasOutput := purityResponseHasOutput(probe.protocol, probe.responseBody)
+	scan.Status = model.ChannelPurityStatusCompleted
+	scan.Coverage = 100
+	if !hasOutput {
+		scan.Conclusion = model.ChannelPurityConclusionRisk
+		scan.Risk = model.ChannelPurityRiskMedium
+		scan.ErrorClass = "missing_output"
+		scan.Summary = "Successful response lacks protocol output; structural risk detected"
+		return
+	}
+	declared := purityDeclaredModel(probe.responseBody)
+	if declared != "" && probe.mappedModel != "" && !samePurityModelFamily(probe.mappedModel, declared) {
+		scan.Conclusion = model.ChannelPurityConclusionUnknown
+		scan.Risk = model.ChannelPurityRiskUnknown
+		scan.Coverage = 75
+		scan.Summary = "Declared model differs from the mapped request; identity remains unproven"
+		return
+	}
+	if declared == "" || !probe.usagePresent {
+		scan.Conclusion = model.ChannelPurityConclusionUnknown
+		scan.Risk = model.ChannelPurityRiskUnknown
+		scan.Coverage = 75
+		scan.Summary = "Probe succeeded, but optional identity evidence is incomplete"
+		return
+	}
+	scan.Conclusion = model.ChannelPurityConclusionNoObviousRisk
+	scan.Risk = model.ChannelPurityRiskLow
+	scan.Summary = "Probe found no obvious structural risk; model identity is not proven"
+}
+
+func probeResult(scan *model.ChannelPurityScan, probe testResult) *model.ChannelPurityResult {
+	if probe.localErr != nil || probe.newAPIError != nil {
+		return nil
+	}
+	declared := purityDeclaredModel(probe.responseBody)
+	result := &model.ChannelPurityResult{
+		ChannelID: scan.ChannelID, DeclaredModel: declared,
+		HTTPStatus: probe.httpStatus, LatencyMS: probe.latencyMS,
+		HasModelField: declared != "", HasUsage: probe.usagePresent,
+		HasOutput: purityResponseHasOutput(probe.protocol, probe.responseBody), CreatedAt: time.Now().Unix(),
+	}
+	result.ProtocolValid = result.HasOutput
+	if probe.usage != nil {
+		result.PromptTokens = probe.usage.PromptTokens
+		result.CompletionTokens = probe.usage.CompletionTokens
+		result.TotalTokens = probe.usage.TotalTokens
+	}
+	evidence := dto.ChannelPurityEvidence{
+		HTTPStatus: result.HTTPStatus, ContentType: probe.contentType, DeclaredModel: result.DeclaredModel,
+		MappedModel: probe.mappedModel, HasModelField: result.HasModelField, HasUsage: result.HasUsage,
+		HasOutput: result.HasOutput, HasChoices: gjson.GetBytes(probe.responseBody, "choices.#").Int() > 0,
+		Usage: dto.ChannelPurityUsage{PromptTokens: result.PromptTokens, CompletionTokens: result.CompletionTokens, TotalTokens: result.TotalTokens},
+	}
+	if result.DeclaredModel != "" && probe.mappedModel != "" && !samePurityModelFamily(probe.mappedModel, result.DeclaredModel) {
+		evidence.Warnings = append(evidence.Warnings, "declared_model_differs_from_mapped_request")
+	}
+	if encoded, err := common.Marshal(evidence); err == nil {
+		result.EvidenceJSON = string(encoded)
+	} else {
+		result.EvidenceJSON = "{}"
+	}
+	return result
+}
+
+func purityResponseHasOutput(protocol types.RelayFormat, body []byte) bool {
+	paths := []string{"choices.#", "output.#", "content.#", "candidates.#", "data.#", "results.#"}
+	if protocol == types.RelayFormatOpenAIResponsesCompaction {
+		paths = append(paths, "compact.#")
+	}
+	for _, path := range paths {
+		if gjson.GetBytes(body, path).Int() > 0 {
+			return true
+		}
+	}
+	return strings.TrimSpace(gjson.GetBytes(body, "output_text").String()) != ""
+}
+
+func purityDeclaredModel(body []byte) string {
+	for _, path := range []string{"model", "modelVersion", "model_version"} {
+		if value := strings.TrimSpace(gjson.GetBytes(body, path).String()); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func samePurityModelFamily(expected, actual string) bool {
+	normalize := func(value string) string {
+		value = strings.ToLower(strings.TrimSpace(value))
+		return strings.TrimPrefix(value, "models/")
+	}
+	expected, actual = normalize(expected), normalize(actual)
+	return expected == actual || strings.HasPrefix(actual, expected+"-") || strings.HasPrefix(expected, actual+"-")
+}
+
+func classifyPurityProbeError(probe testResult) string {
+	status := probe.httpStatus
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "authentication_error"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+		return "timeout"
+	}
+	if errors.Is(probe.localErr, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if status >= 500 {
+		return "upstream_server_error"
+	}
+	if status >= 400 {
+		return "upstream_request_error"
+	}
+	return "probe_error"
 }
 
 func ListChannelPurityResults(c *gin.Context) {

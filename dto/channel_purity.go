@@ -6,6 +6,24 @@ type ChannelPurityQuickScanRequest struct {
 	Model     string `json:"model" binding:"required"`
 }
 
+// ChannelPurityInspectionSettings is the persistent scheduler configuration.
+type ChannelPurityInspectionSettings struct {
+	Enabled         bool `json:"enabled"`
+	IntervalMinutes int  `json:"interval_minutes"`
+}
+
+// ChannelPurityInspectionStatus combines persistent settings with task state.
+type ChannelPurityInspectionStatus struct {
+	Enabled           bool  `json:"enabled"`
+	IntervalMinutes   int   `json:"interval_minutes"`
+	Running           bool  `json:"running"`
+	EnabledChannels   int   `json:"enabled_channels"`
+	ModelCombinations int   `json:"model_combinations"`
+	LastRunAt         int64 `json:"last_run_at,omitempty"`
+	NextRunAt         int64 `json:"next_run_at,omitempty"`
+	Task              any   `json:"task,omitempty"`
+}
+
 // ChannelPurityUsage is the normalized, non-sensitive usage subset retained by a scan.
 type ChannelPurityUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`

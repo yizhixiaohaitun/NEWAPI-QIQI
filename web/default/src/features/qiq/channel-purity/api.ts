@@ -5,17 +5,17 @@ This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published by
 the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 */
-import { getChannels } from '@/features/channels/api'
-import type { Channel } from '@/features/channels/types'
 import { api } from '@/lib/api'
 
 import type {
   ApiEnvelope,
   PurityEvidence,
   PurityEvidenceKind,
+  PurityFullScanResponse,
   PurityResult,
   PurityRisk,
-  PurityScanRequest,
+  PurityRunStatus,
+  PuritySettings,
   PurityStatus,
 } from './types'
 
@@ -228,14 +228,99 @@ export async function getPurityResults(): Promise<PurityResult[]> {
   return records.map((record) => normalizeResult(toRecord(record)))
 }
 
-export async function startPurityScan(
-  input: PurityScanRequest
-): Promise<ApiEnvelope<{ id?: string | number; scan_id?: string | number }>> {
-  const response = await api.post('/api/channel/purity/scans', input, {
+export async function startPurityFullScan(): Promise<
+  ApiEnvelope<PurityFullScanResponse>
+> {
+  const response = await api.post(
+    '/api/channel/purity/inspections',
+    {},
+    { skipBusinessError: true, skipErrorHandler: true }
+  )
+  return response.data
+}
+
+export async function getPuritySettings(): Promise<PuritySettings> {
+  const response = await api.get('/api/channel/purity/inspection/settings', {
     skipBusinessError: true,
     skipErrorHandler: true,
   })
-  return response.data
+  const envelope = response.data as ApiEnvelope<Record<string, unknown>>
+  assertSuccess(envelope, 'Failed to load automatic inspection settings')
+  const payload = toRecord(unwrap(envelope))
+  return {
+    enabled: Boolean(payload.enabled),
+    interval_minutes: Math.max(1, Number(payload.interval_minutes ?? 1440)),
+  }
+}
+
+export async function updatePuritySettings(
+  settings: PuritySettings
+): Promise<PuritySettings> {
+  const response = await api.put(
+    '/api/channel/purity/inspection/settings',
+    settings,
+    {
+      skipBusinessError: true,
+      skipErrorHandler: true,
+    }
+  )
+  const envelope = response.data as ApiEnvelope<Record<string, unknown>>
+  assertSuccess(envelope, 'Failed to update automatic inspection settings')
+  const payload = toRecord(unwrap(envelope))
+  return {
+    enabled: Boolean(payload.enabled ?? settings.enabled),
+    interval_minutes: Math.max(
+      1,
+      Number(payload.interval_minutes ?? settings.interval_minutes)
+    ),
+  }
+}
+
+export async function getPurityRunStatus(): Promise<PurityRunStatus> {
+  const response = await api.get('/api/channel/purity/inspection/status', {
+    skipBusinessError: true,
+    skipErrorHandler: true,
+  })
+  const envelope = response.data as ApiEnvelope<Record<string, unknown>>
+  assertSuccess(envelope, 'Failed to load automatic inspection status')
+  const payload = toRecord(unwrap(envelope))
+  const task = toRecord(payload.task)
+  const state = toRecord(task.state)
+  const result = toRecord(task.result)
+  const rawStatus = String(
+    task.status ?? (payload.running ? 'running' : 'unknown')
+  )
+  let status = normalizeStatus(rawStatus)
+  if (rawStatus === 'succeeded') status = 'completed'
+  if (rawStatus === 'failed') status = 'failed'
+  const total = Math.max(
+    0,
+    Number(result.total ?? state.total ?? payload.model_combinations ?? 0)
+  )
+  const completed = Math.max(
+    0,
+    Number(
+      result.completed ??
+        state.processed ??
+        (status === 'completed' ? total : 0)
+    )
+  )
+  return {
+    status,
+    run_id: optionalIdentifier(task.task_id ?? task.id),
+    enabled_channels: Math.max(0, Number(payload.enabled_channels ?? 0)),
+    model_combinations: total,
+    completed,
+    failed: Math.max(0, Number(result.failed ?? 0)),
+    last_run_at: payload.last_run_at as string | number | undefined,
+    next_run_at: payload.next_run_at as string | number | undefined,
+    started_at: task.created_at as string | number | undefined,
+    finished_at:
+      status === 'completed' || status === 'failed'
+        ? (task.updated_at as string | number | undefined)
+        : undefined,
+    error: optionalText(task.error ?? payload.error),
+  }
 }
 
 export async function getPurityScan(id: string): Promise<PurityResult> {
@@ -246,32 +331,4 @@ export async function getPurityScan(id: string): Promise<PurityResult> {
   const envelope = response.data as ApiEnvelope<Record<string, unknown>>
   assertSuccess(envelope, 'Failed to load purity scan')
   return normalizeResult(unwrap(envelope))
-}
-
-export async function getPurityEligibleChannels(): Promise<Channel[]> {
-  const pageSize = 100
-  const first = await getChannels({
-    p: 1,
-    page_size: pageSize,
-    status: 'enabled',
-  })
-  if (!first.success || !first.data) {
-    throw new Error(first.message || 'Failed to load enabled channels')
-  }
-
-  const channels = [...first.data.items]
-  const pageCount = Math.ceil(first.data.total / pageSize)
-  for (let page = 2; page <= pageCount; page += 1) {
-    const response = await getChannels({
-      p: page,
-      page_size: pageSize,
-      status: 'enabled',
-    })
-    if (!response.success || !response.data) {
-      throw new Error(response.message || 'Failed to load enabled channels')
-    }
-    channels.push(...response.data.items)
-  }
-
-  return [...new Map(channels.map((channel) => [channel.id, channel])).values()]
 }

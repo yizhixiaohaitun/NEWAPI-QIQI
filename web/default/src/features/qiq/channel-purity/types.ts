@@ -46,9 +46,28 @@ export type PurityResult = {
   updated_at?: string | number
 }
 
-export type PurityScanRequest = {
-  channel_id: number
-  model: string
+export type PuritySettings = {
+  enabled: boolean
+  interval_minutes: number
+}
+
+export type PurityRunStatus = {
+  status: PurityStatus
+  run_id?: string | number
+  enabled_channels: number
+  model_combinations: number
+  completed: number
+  failed: number
+  last_run_at?: string | number
+  next_run_at?: string | number
+  started_at?: string | number
+  finished_at?: string | number
+  error?: string
+}
+
+export type PurityFullScanResponse = {
+  run_id?: string | number
+  status?: PurityStatus
 }
 
 export type ApiEnvelope<T> = {

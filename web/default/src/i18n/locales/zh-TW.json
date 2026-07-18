@@ -5255,6 +5255,26 @@
     "Upstream rate limit": "上游觸發限流",
     "Upstream authentication failed": "上游驗證失敗",
     "Upstream request timed out": "上游請求逾時",
-    "Scan failed before risk could be determined": "掃描失敗，無法判定風險"
+    "Scan failed before risk could be determined": "掃描失敗，無法判定風險",
+    "Automatically inspect every enabled channel and configured model, then review failures and supporting evidence.": "自動巡檢所有啟用渠道及其設定模型，並查看失敗原因和支持證據。",
+    "Scan all now": "立即全量掃描",
+    "Full scan in progress": "全量掃描進行中",
+    "Failed to start full purity scan": "啟動全量純淨度掃描失敗",
+    "Full channel purity scan started": "渠道純淨度全量掃描已啟動",
+    "Automatic inspection": "自動巡檢",
+    "Enable scheduled inspection": "啟用定時巡檢",
+    "Run a full inspection automatically at the configured interval.": "按設定的間隔自動執行全量巡檢。",
+    "Inspection interval": "巡檢間隔",
+    "Last run": "上次執行",
+    "Next run": "下次執行",
+    "Inspection progress and coverage": "巡檢進度與掃描覆蓋",
+    "Enabled channels": "啟用渠道數",
+    "Model combinations": "模型組合數",
+    "Inspection failed": "巡檢失敗",
+    "Automatic inspection settings updated": "自動巡檢設定已更新",
+    "Failed to update automatic inspection settings": "更新自動巡檢設定失敗",
+    "Failed to load automatic inspection settings.": "載入自動巡檢設定失敗。",
+    "Failed to load automatic inspection status.": "載入自動巡檢狀態失敗。",
+    "{{count}} minutes": "{{count}} 分鐘"
   }
 }
