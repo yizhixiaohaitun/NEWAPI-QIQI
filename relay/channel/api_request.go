@@ -335,16 +335,21 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
-	if info != nil && info.PurityResponseObserver != nil {
+	if info != nil && (info.PurityResponseObserver != nil || (!info.PurityDetectionRequest && info.ChannelMeta != nil)) {
 		channelpurity.ObserveResponse(resp, channelpurity.FeatureSinkFunc(func(features channelpurity.AnonymousFeatures) {
 			defer func() { _ = recover() }()
-			info.PurityResponseObserver(common.PurityObservation{
-				Protocol: features.Protocol, StatusCode: features.StatusCode, ModelFamily: features.ModelFamily,
-				FieldPaths: features.FieldPaths, EventSequence: features.EventSequence, FinishReasons: features.FinishReasons,
-				ProviderInput: features.ProviderUsage.Input, ProviderOutput: features.ProviderUsage.Output, ProviderTotal: features.ProviderUsage.Total,
-				UnifiedTokenCount: features.UnifiedTokenCount, HeaderPresence: features.HeaderPresence,
-				HasSignatureID: features.HasSignatureID, Truncated: features.Truncated,
-			})
+			if info.PurityResponseObserver != nil {
+				info.PurityResponseObserver(common.PurityObservation{
+					Protocol: features.Protocol, StatusCode: features.StatusCode, ModelFamily: features.ModelFamily,
+					FieldPaths: features.FieldPaths, EventSequence: features.EventSequence, FinishReasons: features.FinishReasons,
+					ProviderInput: features.ProviderUsage.Input, ProviderOutput: features.ProviderUsage.Output, ProviderTotal: features.ProviderUsage.Total,
+					UnifiedTokenCount: features.UnifiedTokenCount, HeaderPresence: features.HeaderPresence,
+					HasSignatureID: features.HasSignatureID, Truncated: features.Truncated,
+				})
+			}
+			if !info.PurityDetectionRequest && info.ChannelMeta != nil {
+				_ = channelpurity.RecordPassiveObservation(info.ChannelId, info.UpstreamModelName, info.RequestId, features)
+			}
 		}), channelpurity.DefaultObservationLimit)
 	}
 	return resp, nil

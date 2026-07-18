@@ -50,9 +50,12 @@ type testResult struct {
 }
 
 type channelTestOptions struct {
-	recordConsumeLog  bool
-	captureResponse   bool
-	allowMissingUsage bool
+	recordConsumeLog       bool
+	captureResponse        bool
+	allowMissingUsage      bool
+	purityDetectionRequest bool
+	purityPairID           string
+	purityObserver         func(relaycommon.PurityObservation)
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
@@ -265,6 +268,9 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 	}
 
 	info.IsChannelTest = true
+	info.PurityDetectionRequest = options.purityDetectionRequest
+	info.PurityPairID = options.purityPairID
+	info.PurityResponseObserver = options.purityObserver
 	info.InitChannelMeta(c)
 
 	err = attachTestBillingRequestInput(info, request)

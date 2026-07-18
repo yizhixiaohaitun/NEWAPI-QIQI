@@ -4,11 +4,20 @@ type ChannelPurityGroupMemberRequest struct {
 	ChannelID  int  `json:"channel_id"`
 	IsBaseline bool `json:"is_baseline"`
 }
+type ChannelPuritySamplingRequest struct {
+	WindowMinutes       int `json:"window_minutes"`
+	MinimumSamples      int `json:"minimum_samples"`
+	MaxSamplesPerWindow int `json:"max_samples_per_window"`
+}
 type ChannelPurityGroupRequest struct {
-	Name            string                            `json:"name"`
-	Enabled         bool                              `json:"enabled"`
-	IntervalMinutes int                               `json:"interval_minutes"`
-	Members         []ChannelPurityGroupMemberRequest `json:"members"`
+	Name                 string                            `json:"name"`
+	Enabled              bool                              `json:"enabled"`
+	IntervalMinutes      int                               `json:"interval_minutes"`
+	RandomPairingEnabled bool                              `json:"random_pairing_enabled"`
+	ChannelIDs           []int                             `json:"channel_ids"`
+	BaselineChannelID    int                               `json:"baseline_channel_id"`
+	Sampling             ChannelPuritySamplingRequest      `json:"sampling"`
+	Members              []ChannelPurityGroupMemberRequest `json:"members,omitempty"`
 }
 type ChannelPuritySampleRequest struct {
 	GroupID            uint   `json:"group_id"`

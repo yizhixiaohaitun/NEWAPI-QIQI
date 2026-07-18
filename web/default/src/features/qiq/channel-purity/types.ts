@@ -71,9 +71,12 @@ export type PurityGroup = {
   random_pairing_enabled: boolean
   sampling: SamplingSettings
   results: TargetResult[]
+  last_run_at?: string | number
+  next_run_at?: string | number
+  last_error?: string
   updated_at?: string | number
 }
-export type PurityGroupInput = Omit<PurityGroup, 'id' | 'results' | 'updated_at'>
+export type PurityGroupInput = Omit<PurityGroup, 'id' | 'results' | 'last_run_at' | 'next_run_at' | 'last_error' | 'updated_at'>
 export type ChannelOption = { id: number; name: string; models?: string[] }
 export type QuickProbeInput = { channel_id: number; model?: string }
 export type QuickProbeResult = {

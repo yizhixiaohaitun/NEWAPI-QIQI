@@ -61,7 +61,17 @@ func AggregatePairWindow(groupID uint, targetChannelID int, actualModel string, 
 	if encoded, e := common.Marshal(evidence); e == nil {
 		evidenceJSON = string(encoded)
 	}
-	run := model.ChannelPurityPairRun{GroupID: groupID, BaselineChannelID: baselineID, TargetChannelID: targetChannelID, ActualModel: actualModel, WindowStartedAt: windowStart, WindowEndedAt: windowEnd, BaselineSampleCount: len(baseline), TargetSampleCount: len(target), StructureSimilarity: structure, TokenSimilarity: token, AnomalyEvidenceJSON: evidenceJSON, Confidence: confidence, State: next.State, CreatedAt: now}
+	baselineMin, baselineMax := tokenBounds(baseline)
+	targetMin, targetMax := tokenBounds(target)
+	pairedCount := pairedSampleCount(baseline, target)
+	deviationRate := tokenDeviationRate(baselineMin, baselineMax, target)
+	run := model.ChannelPurityPairRun{
+		GroupID: groupID, BaselineChannelID: baselineID, TargetChannelID: targetChannelID, ActualModel: actualModel,
+		WindowStartedAt: windowStart, WindowEndedAt: windowEnd, BaselineSampleCount: len(baseline), TargetSampleCount: len(target),
+		PairedSampleCount: pairedCount, StructureSimilarity: structure, TokenSimilarity: token,
+		BaselineTokenMin: baselineMin, BaselineTokenMax: baselineMax, TargetTokenMin: targetMin, TargetTokenMax: targetMax,
+		TokenDeviationRate: deviationRate, AnomalyEvidenceJSON: evidenceJSON, Confidence: confidence, State: next.State, CreatedAt: now,
+	}
 	err = model.DB.Transaction(func(tx *gorm.DB) error {
 		if e := tx.Create(&run).Error; e != nil {
 			return e
@@ -87,4 +97,57 @@ func AggregatePairWindow(groupID uint, targetChannelID int, actualModel string, 
 		return nil, err
 	}
 	return &next, nil
+}
+
+func tokenBounds(samples []model.ChannelPuritySample) (int, int) {
+	minimum, maximum := 0, 0
+	for _, sample := range samples {
+		if !sample.Valid || sample.TotalTokens < 0 {
+			continue
+		}
+		if minimum == 0 || sample.TotalTokens < minimum {
+			minimum = sample.TotalTokens
+		}
+		if sample.TotalTokens > maximum {
+			maximum = sample.TotalTokens
+		}
+	}
+	return minimum, maximum
+}
+
+func pairedSampleCount(baseline, target []model.ChannelPuritySample) int {
+	baselineKeys := map[string]int{}
+	for _, sample := range baseline {
+		if sample.Valid && sample.RunKey != "" {
+			baselineKeys[sample.RunKey]++
+		}
+	}
+	count := 0
+	for _, sample := range target {
+		if sample.Valid && baselineKeys[sample.RunKey] > 0 {
+			count++
+			baselineKeys[sample.RunKey]--
+		}
+	}
+	return count
+}
+
+func tokenDeviationRate(minimum, maximum int, target []model.ChannelPuritySample) float64 {
+	if len(target) == 0 || maximum < minimum {
+		return 0
+	}
+	valid, outside := 0, 0
+	for _, sample := range target {
+		if !sample.Valid {
+			continue
+		}
+		valid++
+		if sample.TotalTokens < minimum || sample.TotalTokens > maximum {
+			outside++
+		}
+	}
+	if valid == 0 {
+		return 0
+	}
+	return float64(outside) / float64(valid)
 }

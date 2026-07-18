@@ -10,6 +10,7 @@ import (
 const (
 	ChannelPurityStateBaselineUnavailable = "BASELINE_UNAVAILABLE"
 	ChannelPurityStateLowSample           = "LOW_SAMPLE"
+	ChannelPurityStateNoTraffic           = "NO_TRAFFIC"
 	ChannelPurityStateWarmingUp           = "WARMING_UP"
 	ChannelPurityStateHealthy             = "HEALTHY"
 	ChannelPurityStateSuspect             = "SUSPECT"
@@ -19,13 +20,20 @@ const (
 
 // ChannelPurityGroup is the isolation boundary for baseline comparison.
 type ChannelPurityGroup struct {
-	ID              uint                  `json:"id" gorm:"primaryKey"`
-	Name            string                `json:"name" gorm:"type:varchar(255);not null;uniqueIndex"`
-	Enabled         bool                  `json:"enabled" gorm:"not null;default:true"`
-	IntervalMinutes int                   `json:"interval_minutes" gorm:"not null;default:5"`
-	CreatedAt       int64                 `json:"created_at" gorm:"bigint;not null"`
-	UpdatedAt       int64                 `json:"updated_at" gorm:"bigint;not null"`
-	Members         []ChannelPurityMember `json:"members,omitempty" gorm:"foreignKey:GroupID;constraint:OnDelete:CASCADE"`
+	ID                   uint                  `json:"id" gorm:"primaryKey"`
+	Name                 string                `json:"name" gorm:"type:varchar(255);not null;uniqueIndex"`
+	Enabled              bool                  `json:"enabled" gorm:"not null;default:true"`
+	IntervalMinutes      int                   `json:"interval_minutes" gorm:"not null;default:5"`
+	RandomPairingEnabled bool                  `json:"random_pairing_enabled" gorm:"not null;default:false"`
+	WindowMinutes        int                   `json:"window_minutes" gorm:"not null;default:30"`
+	MinimumSamples       int                   `json:"minimum_samples" gorm:"not null;default:5"`
+	MaxSamplesPerWindow  int                   `json:"max_samples_per_window" gorm:"not null;default:200"`
+	LastRunAt            int64                 `json:"last_run_at" gorm:"bigint;not null;default:0"`
+	NextRunAt            int64                 `json:"next_run_at" gorm:"bigint;not null;default:0;index"`
+	LastError            string                `json:"last_error,omitempty" gorm:"type:varchar(512)"`
+	CreatedAt            int64                 `json:"created_at" gorm:"bigint;not null"`
+	UpdatedAt            int64                 `json:"updated_at" gorm:"bigint;not null"`
+	Members              []ChannelPurityMember `json:"members,omitempty" gorm:"foreignKey:GroupID;constraint:OnDelete:CASCADE"`
 }
 
 func (ChannelPurityGroup) TableName() string { return "qiqi_channel_purity_groups" }
@@ -49,6 +57,8 @@ type ChannelPuritySample struct {
 	GroupID            uint   `json:"group_id" gorm:"not null;index:idx_purity_sample_window,priority:1"`
 	ChannelID          int    `json:"channel_id" gorm:"not null;index:idx_purity_sample_window,priority:2"`
 	ActualModel        string `json:"actual_model" gorm:"type:varchar(255);not null;index:idx_purity_sample_window,priority:3"`
+	RunKey             string `json:"run_key" gorm:"type:varchar(64);not null;index"`
+	Protocol           string `json:"protocol" gorm:"type:varchar(32);not null"`
 	StructureSignature string `json:"structure_signature" gorm:"type:varchar(512);not null"`
 	PromptTokens       int    `json:"prompt_tokens"`
 	CompletionTokens   int    `json:"completion_tokens"`
@@ -70,8 +80,14 @@ type ChannelPurityPairRun struct {
 	WindowEndedAt       int64   `json:"window_ended_at" gorm:"bigint;not null;index:idx_purity_pair_history,priority:4,sort:desc"`
 	BaselineSampleCount int     `json:"baseline_sample_count"`
 	TargetSampleCount   int     `json:"target_sample_count"`
+	PairedSampleCount   int     `json:"paired_sample_count"`
 	StructureSimilarity float64 `json:"structure_similarity"`
 	TokenSimilarity     float64 `json:"token_similarity"`
+	BaselineTokenMin    int     `json:"baseline_token_min"`
+	BaselineTokenMax    int     `json:"baseline_token_max"`
+	TargetTokenMin      int     `json:"target_token_min"`
+	TargetTokenMax      int     `json:"target_token_max"`
+	TokenDeviationRate  float64 `json:"token_deviation_rate"`
 	AnomalyEvidenceJSON string  `json:"-" gorm:"type:text;not null"`
 	Confidence          float64 `json:"confidence"`
 	State               string  `json:"state" gorm:"type:varchar(32);not null"`
@@ -111,11 +127,32 @@ func (ChannelPurityAlert) TableName() string { return "qiqi_channel_purity_alert
 
 func ValidateChannelPurityGroup(group *ChannelPurityGroup) error {
 	group.Name = strings.TrimSpace(group.Name)
+	if group.IntervalMinutes == 0 {
+		group.IntervalMinutes = 5
+	}
+	if group.WindowMinutes == 0 {
+		group.WindowMinutes = 30
+	}
+	if group.MinimumSamples == 0 {
+		group.MinimumSamples = 5
+	}
+	if group.MaxSamplesPerWindow == 0 {
+		group.MaxSamplesPerWindow = 200
+	}
 	if group.Name == "" {
 		return errors.New("group name is required")
 	}
-	if group.IntervalMinutes < 5 || group.IntervalMinutes > 10 {
-		return errors.New("interval_minutes must be between 5 and 10")
+	if group.IntervalMinutes != 5 && group.IntervalMinutes != 10 {
+		return errors.New("interval_minutes must be 5 or 10")
+	}
+	if group.WindowMinutes < group.IntervalMinutes || group.WindowMinutes > 1440 {
+		return errors.New("window_minutes must be between interval_minutes and 1440")
+	}
+	if group.MinimumSamples < 1 || group.MinimumSamples > 1000 {
+		return errors.New("minimum_samples must be between 1 and 1000")
+	}
+	if group.MaxSamplesPerWindow < group.MinimumSamples || group.MaxSamplesPerWindow > 5000 {
+		return errors.New("max_samples_per_window must be between minimum_samples and 5000")
 	}
 	if len(group.Members) < 2 {
 		return errors.New("a group requires at least two channels")
@@ -152,7 +189,12 @@ func UpdatePurityGroup(group *ChannelPurityGroup) error {
 		return err
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&ChannelPurityGroup{}).Where("id = ?", group.ID).Updates(map[string]any{"name": group.Name, "enabled": group.Enabled, "interval_minutes": group.IntervalMinutes, "updated_at": group.UpdatedAt}).Error; err != nil {
+		if err := tx.Model(&ChannelPurityGroup{}).Where("id = ?", group.ID).Updates(map[string]any{
+			"name": group.Name, "enabled": group.Enabled, "interval_minutes": group.IntervalMinutes,
+			"random_pairing_enabled": group.RandomPairingEnabled, "window_minutes": group.WindowMinutes,
+			"minimum_samples": group.MinimumSamples, "max_samples_per_window": group.MaxSamplesPerWindow,
+			"next_run_at": group.NextRunAt, "updated_at": group.UpdatedAt,
+		}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("group_id = ?", group.ID).Delete(&ChannelPurityMember{}).Error; err != nil {
@@ -175,8 +217,72 @@ func ListPurityGroups() ([]ChannelPurityGroup, error) {
 	err := DB.Preload("Members").Order("id asc").Find(&v).Error
 	return v, err
 }
-func DeletePurityGroup(id uint) error                      { return DB.Delete(&ChannelPurityGroup{}, id).Error }
+func DeletePurityGroup(id uint) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var assessmentIDs []uint
+		if err := tx.Model(&ChannelPurityAssessment{}).Where("group_id = ?", id).Pluck("id", &assessmentIDs).Error; err != nil {
+			return err
+		}
+		if len(assessmentIDs) > 0 {
+			if err := tx.Where("assessment_id IN ?", assessmentIDs).Delete(&ChannelPurityAlert{}).Error; err != nil {
+				return err
+			}
+		}
+		for _, target := range []any{&ChannelPurityAssessment{}, &ChannelPurityPairRun{}, &ChannelPuritySample{}, &ChannelPurityMember{}} {
+			if err := tx.Where("group_id = ?", id).Delete(target).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Delete(&ChannelPurityGroup{}, id).Error
+	})
+}
 func CreatePuritySample(sample *ChannelPuritySample) error { return DB.Create(sample).Error }
+func ListPurityGroupIDsForChannel(channelID int) ([]uint, error) {
+	var groupIDs []uint
+	err := DB.Table("qiqi_channel_purity_members AS members").
+		Joins("JOIN qiqi_channel_purity_groups AS groups ON groups.id = members.group_id").
+		Where("members.channel_id = ? AND groups.enabled = ?", channelID, true).
+		Order("members.group_id ASC").Pluck("members.group_id", &groupIDs).Error
+	return groupIDs, err
+}
+func ListDuePurityGroups(now int64) ([]ChannelPurityGroup, error) {
+	var groups []ChannelPurityGroup
+	err := DB.Preload("Members").Where("enabled = ? AND (next_run_at = 0 OR next_run_at <= ?)", true, now).Order("id asc").Find(&groups).Error
+	return groups, err
+}
+func MarkPurityGroupRun(id uint, lastRunAt, nextRunAt int64, lastError string) error {
+	return DB.Model(&ChannelPurityGroup{}).Where("id = ?", id).Updates(map[string]any{
+		"last_run_at": lastRunAt, "next_run_at": nextRunAt, "last_error": lastError, "updated_at": lastRunAt,
+	}).Error
+}
+func HasEnabledPurityGroups() bool {
+	var count int64
+	return DB.Model(&ChannelPurityGroup{}).Where("enabled = ?", true).Limit(1).Count(&count).Error == nil && count > 0
+}
+func ListPurityAssessments(groupID uint) ([]ChannelPurityAssessment, error) {
+	var values []ChannelPurityAssessment
+	err := DB.Where("group_id = ?", groupID).Order("target_channel_id asc, actual_model asc").Find(&values).Error
+	return values, err
+}
+func GetPurityPairRun(id uint) (*ChannelPurityPairRun, error) {
+	var value ChannelPurityPairRun
+	err := DB.First(&value, id).Error
+	return &value, err
+}
+func ListRecentPurityPairRuns(groupID uint, targetID int, actualModel string, limit int) ([]ChannelPurityPairRun, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	var values []ChannelPurityPairRun
+	err := DB.Where("group_id = ? AND target_channel_id = ? AND actual_model = ?", groupID, targetID, actualModel).
+		Order("window_ended_at desc, id desc").Limit(limit).Find(&values).Error
+	return values, err
+}
+func ListOpenPurityAlerts(assessmentID uint) ([]ChannelPurityAlert, error) {
+	var values []ChannelPurityAlert
+	err := DB.Where("assessment_id = ? AND status = ?", assessmentID, "OPEN").Order("opened_at desc").Find(&values).Error
+	return values, err
+}
 func GetLatestPurityAssessment(groupID uint, targetID int, actualModel string) (*ChannelPurityAssessment, error) {
 	var v ChannelPurityAssessment
 	err := DB.Where("group_id = ? AND target_channel_id = ? AND actual_model = ?", groupID, targetID, actualModel).First(&v).Error

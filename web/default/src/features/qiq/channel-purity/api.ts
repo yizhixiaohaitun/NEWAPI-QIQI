@@ -92,6 +92,9 @@ function normalizeGroup(value: unknown): PurityGroup {
     interval_minutes: interval === 10 ? 10 : 5, random_pairing_enabled: Boolean(item.random_pairing_enabled),
     sampling: { window_minutes: number(sampling.window_minutes, 30), minimum_samples: number(sampling.minimum_samples, 20), max_samples_per_window: number(sampling.max_samples_per_window, 200) },
     results: array(item.results ?? item.targets).map((result) => normalizeResult(result, item)),
+    last_run_at: item.last_run_at as string | number | undefined,
+    next_run_at: item.next_run_at as string | number | undefined,
+    last_error: item.last_error == null ? undefined : String(item.last_error),
     updated_at: item.updated_at as string | number | undefined,
   }
 }

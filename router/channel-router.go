@@ -48,6 +48,8 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/purity/groups/:group_id", permission: authz.ChannelRead, handler: controller.GetChannelPurityGroup},
 	{method: http.MethodPut, path: "/purity/groups/:group_id", permission: authz.ChannelWrite, handler: controller.UpdateChannelPurityGroup},
 	{method: http.MethodDelete, path: "/purity/groups/:group_id", permission: authz.ChannelSensitiveWrite, handler: controller.DeleteChannelPurityGroup},
+	{method: http.MethodPost, path: "/purity/groups/:group_id/run", permission: authz.ChannelOperate, handler: controller.StartChannelPurityGroupDetection},
+	{method: http.MethodPost, path: "/purity/quick-probe", permission: authz.ChannelOperate, handler: controller.RunChannelPurityQuickProbe},
 	{method: http.MethodPost, path: "/purity/samples", permission: authz.ChannelOperate, handler: controller.CreateChannelPuritySample},
 	{method: http.MethodGet, path: "/purity/groups/:group_id/latest", permission: authz.ChannelRead, handler: controller.GetLatestChannelPurityAssessment},
 	{method: http.MethodGet, path: "/purity/groups/:group_id/history", permission: authz.ChannelRead, handler: controller.ListChannelPurityHistory},
