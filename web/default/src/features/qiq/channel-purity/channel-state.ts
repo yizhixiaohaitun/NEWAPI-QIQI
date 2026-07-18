@@ -51,3 +51,12 @@ export function enabledBaselineChannels(input: PurityGroupInput, channels: Chann
 export function channelDisplayLabel(channel: ChannelOption): string {
   return `${channel.name} #${channel.id}`
 }
+
+export function shouldContinueChannelPages(pageItemCount: number, collectedCount: number, total?: number): boolean {
+  if (pageItemCount === 0) return false
+  return total === undefined ? true : collectedCount < total
+}
+
+export function deduplicateChannels(channels: ChannelOption[]): ChannelOption[] {
+  return [...new Map(channels.filter((channel) => channel.id > 0).map((channel) => [channel.id, channel])).values()]
+}

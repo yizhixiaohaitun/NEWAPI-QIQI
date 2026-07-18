@@ -176,13 +176,25 @@ func runPurityGroupDetection(ctx context.Context, group *model.ChannelPurityGrou
 	if err != nil {
 		return 0, fmt.Errorf("load baseline channel: %w", err)
 	}
+	if baseline.Status != common.ChannelStatusEnabled {
+		return 0, fmt.Errorf("purity detection refused: baseline channel %d is disabled", baselineID)
+	}
 	targets := make([]*model.Channel, 0, len(targetIDs))
+	disabledTargetIDs := make([]int, 0)
 	for _, targetID := range targetIDs {
 		target, targetErr := model.GetChannelById(targetID, true)
 		if targetErr != nil {
 			return 0, fmt.Errorf("load target channel %d: %w", targetID, targetErr)
 		}
+		if target.Status != common.ChannelStatusEnabled {
+			disabledTargetIDs = append(disabledTargetIDs, targetID)
+			continue
+		}
 		targets = append(targets, target)
+	}
+	if len(disabledTargetIDs) > 0 {
+		sort.Ints(disabledTargetIDs)
+		return 0, fmt.Errorf("purity detection refused: target channels are disabled: %v", disabledTargetIDs)
 	}
 	if group.RandomPairingEnabled {
 		rand.Shuffle(len(targets), func(i, j int) { targets[i], targets[j] = targets[j], targets[i] })

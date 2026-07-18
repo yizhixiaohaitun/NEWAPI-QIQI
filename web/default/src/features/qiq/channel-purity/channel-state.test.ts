@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { ALL_CHANNEL_GROUPS, enabledBaselineChannels, filterChannelsByGroup, normalizeChannelGroups, partitionChannels, selectedUnavailableIds, setGroupChannelsSelected } from './channel-state.ts'
+import { ALL_CHANNEL_GROUPS, deduplicateChannels, enabledBaselineChannels, filterChannelsByGroup, normalizeChannelGroups, partitionChannels, selectedUnavailableIds, setGroupChannelsSelected, shouldContinueChannelPages } from './channel-state.ts'
 import type { ChannelOption, PurityGroupInput } from './types.ts'
 
 const channels: ChannelOption[] = [
@@ -32,5 +32,11 @@ describe('channel state', () => {
   test('surfaces disabled and missing legacy selections', () => {
     assert.deepEqual(selectedUnavailableIds(input(), channels), [2, 99])
     assert.deepEqual(enabledBaselineChannels(input(), channels).map(({ id }) => id), [1])
+  })
+  test('continues short pages when total says more rows exist and deduplicates ids', () => {
+    assert.equal(shouldContinueChannelPages(2, 2, 5), true)
+    assert.equal(shouldContinueChannelPages(1, 5, 5), false)
+    assert.equal(shouldContinueChannelPages(0, 2, 5), false)
+    assert.deepEqual(deduplicateChannels([channels[0], { ...channels[0], name: 'Latest' }, channels[1]]).map(({ id, name }) => [id, name]), [[1, 'Latest'], [2, 'Disabled prod']])
   })
 })

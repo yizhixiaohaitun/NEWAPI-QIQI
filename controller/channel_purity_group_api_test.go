@@ -196,3 +196,73 @@ func TestChannelPurityQuickProbeValidationIsVisible(t *testing.T) {
 	assert.Equal(t, false, response["success"])
 	assert.Contains(t, response["message"], "channel_id")
 }
+
+func TestChannelPurityFormalDetectionRejectsDisabledBaselineAndTarget(t *testing.T) {
+	setupPurityAPITestDB(t)
+	channels := []model.Channel{
+		{Id: 301, Name: "baseline", Models: "gpt-4o", Status: common.ChannelStatusEnabled},
+		{Id: 302, Name: "target", Models: "gpt-4o", Status: common.ChannelStatusEnabled},
+	}
+	require.NoError(t, model.DB.Create(&channels).Error)
+	group := &model.ChannelPurityGroup{ID: 41, Members: []model.ChannelPurityMember{
+		{ChannelID: 301, IsBaseline: true}, {ChannelID: 302},
+	}}
+
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 301).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	pairs, err := runPurityGroupDetection(context.Background(), group, 1)
+	require.Error(t, err)
+	assert.Zero(t, pairs)
+	assert.Contains(t, err.Error(), "baseline channel 301 is disabled")
+
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 301).Update("status", common.ChannelStatusEnabled).Error)
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 302).Update("status", common.ChannelStatusAutoDisabled).Error)
+	pairs, err = runPurityGroupDetection(context.Background(), group, 1)
+	require.Error(t, err)
+	assert.Zero(t, pairs)
+	assert.Contains(t, err.Error(), "target channels are disabled: [302]")
+}
+
+func TestChannelPurityQuickProbeRejectsDisabledChannel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPurityAPITestDB(t)
+	require.NoError(t, model.DB.Create(&model.Channel{Id: 401, Name: "disabled", Models: "gpt-4o", Status: common.ChannelStatusManuallyDisabled}).Error)
+
+	recorder := purityRequest(t, http.MethodPost, "/api/channel/purity/quick-probe", `{"channel_id":401}`, RunChannelPurityQuickProbe)
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	response := decodeEnvelope(t, recorder)
+	assert.Equal(t, false, response["success"])
+	assert.Contains(t, response["message"], "disabled")
+}
+
+func TestChannelPurityOldGroupWithDisabledOrMissingMembersRemainsReadable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPurityAPITestDB(t)
+	require.NoError(t, model.DB.Create(&model.Channel{Id: 501, Name: "old-disabled", Models: "gpt-4o", Status: common.ChannelStatusManuallyDisabled}).Error)
+	group := &model.ChannelPurityGroup{
+		Name: "legacy-visible", Enabled: true, IntervalMinutes: 5, WindowMinutes: 30, MinimumSamples: 1, MaxSamplesPerWindow: 10,
+		Members: []model.ChannelPurityMember{{ChannelID: 501, IsBaseline: true}, {ChannelID: 599}},
+	}
+	require.NoError(t, model.CreatePurityGroup(group))
+
+	recorder := purityRequest(t, http.MethodGet, fmt.Sprintf("/api/channel/purity/groups/%d", group.ID), "", GetChannelPurityGroup, gin.Param{Key: "group_id", Value: fmt.Sprint(group.ID)})
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	data := decodeEnvelope(t, recorder)["data"].(map[string]any)
+	assert.ElementsMatch(t, []any{float64(501), float64(599)}, data["channel_ids"].([]any))
+	assert.Equal(t, "old-disabled", data["baseline_channel_name"])
+}
+
+func TestChannelPurityCreateRejectsDisabledMember(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPurityAPITestDB(t)
+	require.NoError(t, model.DB.Create(&[]model.Channel{
+		{Id: 601, Name: "enabled", Models: "gpt-4o", Status: common.ChannelStatusEnabled},
+		{Id: 602, Name: "disabled", Models: "gpt-4o", Status: common.ChannelStatusManuallyDisabled},
+	}).Error)
+
+	recorder := purityRequest(t, http.MethodPost, "/api/channel/purity/groups", `{
+		"name":"invalid-disabled","enabled":true,"channel_ids":[601,602],"baseline_channel_id":601,
+		"interval_minutes":5,"sampling":{"window_minutes":30,"minimum_samples":1,"max_samples_per_window":10}
+	}`, CreateChannelPurityGroup)
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	assert.Contains(t, decodeEnvelope(t, recorder)["message"], "disabled")
+}

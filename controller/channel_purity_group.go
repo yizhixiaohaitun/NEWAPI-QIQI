@@ -36,6 +36,31 @@ func purityGroupFromRequest(r dto.ChannelPurityGroupRequest) *model.ChannelPurit
 	return g
 }
 
+func validatePurityGroupChannelsEnabled(group *model.ChannelPurityGroup) error {
+	if err := model.ValidateChannelPurityGroup(group); err != nil {
+		return err
+	}
+	disabledIDs := make([]int, 0)
+	missingIDs := make([]int, 0)
+	for _, member := range group.Members {
+		channel, err := model.GetChannelById(member.ChannelID, true)
+		if err != nil || channel == nil {
+			missingIDs = append(missingIDs, member.ChannelID)
+			continue
+		}
+		if channel.Status != common.ChannelStatusEnabled {
+			disabledIDs = append(disabledIDs, member.ChannelID)
+		}
+	}
+	if len(missingIDs) > 0 {
+		return fmt.Errorf("purity group channels do not exist: %v", missingIDs)
+	}
+	if len(disabledIDs) > 0 {
+		return fmt.Errorf("purity group channels are disabled: %v", disabledIDs)
+	}
+	return nil
+}
+
 func CreateChannelPurityGroup(c *gin.Context) {
 	var request dto.ChannelPurityGroupRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -47,6 +72,10 @@ func CreateChannelPurityGroup(c *gin.Context) {
 	group.CreatedAt, group.UpdatedAt = now, now
 	if group.Enabled {
 		group.NextRunAt = now
+	}
+	if err := validatePurityGroupChannelsEnabled(group); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
 	}
 	if err := model.CreatePurityGroup(group); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
@@ -113,6 +142,10 @@ func UpdateChannelPurityGroup(c *gin.Context) {
 	group.UpdatedAt = time.Now().Unix()
 	if group.Enabled {
 		group.NextRunAt = group.UpdatedAt
+	}
+	if err = validatePurityGroupChannelsEnabled(group); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
 	}
 	if err = model.UpdatePurityGroup(group); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
@@ -194,6 +227,10 @@ func RunChannelPurityQuickProbe(c *gin.Context) {
 	channel, err := model.GetChannelById(request.ChannelID, true)
 	if err != nil {
 		writeChannelPurityLookupError(c, err, "channel not found")
+		return
+	}
+	if channel.Status != common.ChannelStatusEnabled {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": fmt.Sprintf("channel %d is disabled and cannot run Quick Probe", request.ChannelID)})
 		return
 	}
 	modelName := strings.TrimSpace(request.Model)
