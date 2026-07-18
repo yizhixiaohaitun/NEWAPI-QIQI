@@ -9,6 +9,7 @@
 %GOCACHE%
 %TMP%
 .local-tests
+.tmp
 _reports
 web/node_modules
 web/default/node_modules
