@@ -30,11 +30,11 @@ func TestResponsesStreamErrorRetryTimesValidationAndBounds(t *testing.T) {
 }
 
 func TestChannelPurityInspectionIntervalValidationAndFallback(t *testing.T) {
-	require.NoError(t, ValidateChannelPurityInspectionIntervalMinutes("15"))
-	require.NoError(t, ValidateChannelPurityInspectionIntervalMinutes("360"))
-	require.NoError(t, ValidateChannelPurityInspectionIntervalMinutes("10080"))
-	require.Error(t, ValidateChannelPurityInspectionIntervalMinutes("14"))
-	require.Error(t, ValidateChannelPurityInspectionIntervalMinutes("10081"))
+	require.NoError(t, ValidateChannelPurityInspectionIntervalMinutes("5"))
+	require.NoError(t, ValidateChannelPurityInspectionIntervalMinutes("8"))
+	require.NoError(t, ValidateChannelPurityInspectionIntervalMinutes("10"))
+	require.Error(t, ValidateChannelPurityInspectionIntervalMinutes("4"))
+	require.Error(t, ValidateChannelPurityInspectionIntervalMinutes("11"))
 	require.Error(t, ValidateChannelPurityInspectionIntervalMinutes("daily"))
 
 	setting := GetQiqiSetting()

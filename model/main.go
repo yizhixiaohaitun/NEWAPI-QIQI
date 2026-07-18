@@ -300,6 +300,12 @@ func migrateDB() error {
 		&SystemTaskLock{},
 		&ChannelPurityScan{},
 		&ChannelPurityResult{},
+		&ChannelPurityGroup{},
+		&ChannelPurityMember{},
+		&ChannelPuritySample{},
+		&ChannelPurityPairRun{},
+		&ChannelPurityAssessment{},
+		&ChannelPurityAlert{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -357,6 +363,12 @@ func migrateDBFast() error {
 		{&SystemTaskLock{}, "SystemTaskLock"},
 		{&ChannelPurityScan{}, "ChannelPurityScan"},
 		{&ChannelPurityResult{}, "ChannelPurityResult"},
+		{&ChannelPurityGroup{}, "ChannelPurityGroup"},
+		{&ChannelPurityMember{}, "ChannelPurityMember"},
+		{&ChannelPuritySample{}, "ChannelPuritySample"},
+		{&ChannelPurityPairRun{}, "ChannelPurityPairRun"},
+		{&ChannelPurityAssessment{}, "ChannelPurityAssessment"},
+		{&ChannelPurityAlert{}, "ChannelPurityAlert"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

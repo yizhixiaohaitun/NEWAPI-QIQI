@@ -11,9 +11,9 @@ const (
 	DefaultResponsesStreamErrorRetryTimes = 2
 	MaxResponsesStreamErrorRetryTimes     = 5
 
-	DefaultChannelPurityInspectionIntervalMinutes = 360
-	MinChannelPurityInspectionIntervalMinutes     = 15
-	MaxChannelPurityInspectionIntervalMinutes     = 10080
+	DefaultChannelPurityInspectionIntervalMinutes = 5
+	MinChannelPurityInspectionIntervalMinutes     = 5
+	MaxChannelPurityInspectionIntervalMinutes     = 10
 )
 
 type QiqiSetting struct {
