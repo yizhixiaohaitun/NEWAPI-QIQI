@@ -166,7 +166,7 @@ function ResultCard({ result, onOpen }: { result: TargetResult; onOpen: () => vo
   </Card>
 }
 
-function GroupForm({ open, group, channels, saving, onOpenChange, onSave }: {
+function GroupForm({ open, group, channels, channelsLoading, channelsError, saving, saveError, onRetryChannels, onOpenChange, onSave }: {
   open: boolean
   group: PurityGroup | null
   channels: ChannelOption[]
