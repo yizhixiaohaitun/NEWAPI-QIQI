@@ -6,329 +6,126 @@ it under the terms of the GNU Affero General Public License as published by
 the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 */
 import { api } from '@/lib/api'
-
 import type {
   ApiEnvelope,
+  ChannelOption,
+  DetectorStatus,
   PurityEvidence,
-  PurityEvidenceKind,
-  PurityFullScanResponse,
-  PurityResult,
-  PurityRisk,
-  PurityRunStatus,
-  PuritySettings,
-  PurityStatus,
+  PurityGroup,
+  PurityGroupInput,
+  QuickProbeInput,
+  QuickProbeResult,
+  TargetResult,
+  TokenRange,
+  TrendPoint,
 } from './types'
 
-const PURITY_STATUSES = new Set<PurityStatus>([
-  'pending',
-  'running',
-  'completed',
-  'failed',
-  'unknown',
+// Backend contract is intentionally isolated here. The UI only consumes normalized types.
+const ROOT = '/api/channel/purity/groups'
+const STATUSES = new Set<DetectorStatus>([
+  'BASELINE_UNAVAILABLE', 'LOW_SAMPLE', 'NO_TRAFFIC', 'WARMING_UP',
+  'HEALTHY', 'SUSPECT', 'ALERT', 'DETECTOR_ERROR',
 ])
-const PURITY_RISKS = new Set<PurityRisk>(['low', 'medium', 'high', 'unknown'])
-const EVIDENCE_KINDS = new Set<PurityEvidenceKind>([
-  'protocol',
-  'declared_model',
-  'usage',
-  'warning',
-  'operational',
-  'generic',
-])
-
-function unwrap<T>(payload: ApiEnvelope<T> | T): T {
-  if (payload && typeof payload === 'object' && 'data' in payload) {
-    return (payload as ApiEnvelope<T>).data as T
-  }
-  return payload as T
+const record = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+const array = (value: unknown): unknown[] => Array.isArray(value) ? value : []
+const number = (value: unknown, fallback = 0) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
 }
-
-function toRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
+const optionalNumber = (value: unknown) => value === null || value === undefined || value === '' ? undefined : number(value)
+const status = (value: unknown): DetectorStatus => STATUSES.has(value as DetectorStatus) ? value as DetectorStatus : 'WARMING_UP'
+function unwrap(payload: unknown): unknown {
+  const envelope = record(payload)
+  if (envelope.success === false) throw new Error(String(envelope.message || 'Request failed'))
+  return 'data' in envelope ? envelope.data : payload
 }
-
-function optionalText(value: unknown): string | undefined {
-  return value === undefined || value === null || value === ''
-    ? undefined
-    : String(value)
+function range(value: unknown): TokenRange | undefined {
+  const item = record(value)
+  if (item.min === undefined || item.max === undefined) return undefined
+  return { min: number(item.min), max: number(item.max), p50: optionalNumber(item.p50), p95: optionalNumber(item.p95) }
 }
-
-function optionalIdentifier(value: unknown): string | number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim() !== '') return value
-  return undefined
-}
-
-function normalizeStatus(value: unknown): PurityStatus {
-  return PURITY_STATUSES.has(value as PurityStatus)
-    ? (value as PurityStatus)
-    : 'unknown'
-}
-
-function normalizeRisk(value: unknown): PurityRisk {
-  return PURITY_RISKS.has(value as PurityRisk)
-    ? (value as PurityRisk)
-    : 'unknown'
-}
-
-function normalizeEvidenceArray(source: unknown[]): PurityEvidence[] {
-  return source.map((item, index) => {
-    const record = toRecord(item)
-    const kind = EVIDENCE_KINDS.has(record.kind as PurityEvidenceKind)
-      ? (record.kind as PurityEvidenceKind)
-      : 'generic'
-    return {
-      id: String(
-        record.id ??
-          `${kind}-${index}-${String(record.title ?? record.description ?? '')}`
-      ),
-      kind,
-      title: optionalText(record.title),
-      description: optionalText(record.description),
-      expected: optionalText(record.expected),
-      actual: optionalText(record.actual),
-    }
-  })
-}
-
-function normalizeEvidence(
-  raw: Record<string, unknown>,
-  result: Record<string, unknown>
-): PurityEvidence[] {
-  const source = result.evidence ?? raw.evidence ?? raw.evidences
-  if (Array.isArray(source)) return normalizeEvidenceArray(source)
-
-  const evidence = toRecord(source)
-  const items: PurityEvidence[] = []
-  const httpStatus = Number(result.http_status ?? evidence.http_status ?? 0)
-  const responseReceived = Number.isFinite(httpStatus) && httpStatus > 0
-  const object = evidence.object
-  const hasOutput = evidence.has_output
-  const hasChoices = evidence.has_choices
-
-  if (responseReceived) {
-    items.push({
-      id: 'protocol',
-      kind: 'protocol',
-      expected: 'A successful OpenAI-compatible response with output',
-      actual: [
-        `HTTP ${httpStatus}`,
-        object === undefined ? null : `object=${String(object)}`,
-        hasOutput === undefined ? null : `output=${String(hasOutput)}`,
-        hasChoices === undefined ? null : `choices=${String(hasChoices)}`,
-      ]
-        .filter(Boolean)
-        .join(', '),
-    })
-  }
-
-  const declaredModel = result.declared_model ?? evidence.declared_model
-  if (responseReceived && httpStatus >= 200 && httpStatus < 300) {
-    items.push({
-      id: 'declared-model',
-      kind: 'declared_model',
-      expected: String(evidence.mapped_model ?? raw.model ?? '-'),
-      actual:
-        declaredModel === undefined || declaredModel === ''
-          ? 'Not returned'
-          : String(declaredModel),
-    })
-  }
-
-  const usage = toRecord(result.usage ?? evidence.usage)
-  if (responseReceived && httpStatus >= 200 && httpStatus < 300) {
-    items.push({
-      id: 'usage',
-      kind: 'usage',
-      expected: 'Consistent non-negative token usage when provided',
-      actual:
-        evidence.has_usage === false
-          ? 'Not returned'
-          : [
-              `prompt=${String(usage.prompt_tokens ?? 0)}`,
-              `completion=${String(usage.completion_tokens ?? 0)}`,
-              `total=${String(usage.total_tokens ?? 0)}`,
-            ].join(', '),
-    })
-  }
-
-  const warnings = evidence.warnings
-  if (Array.isArray(warnings)) {
-    warnings.forEach((warning, index) => {
-      items.push({
-        id: `warning-${index}-${String(warning)}`,
-        kind: 'warning',
-        description: String(warning),
-      })
-    })
-  }
-
-  const errorClass = raw.error_class ?? result.error_class
-  if (errorClass) {
-    items.push({
-      id: 'operational-status',
-      kind: 'operational',
-      description: String(errorClass),
-    })
-  }
-  return items
-}
-
-function normalizeResult(raw: Record<string, unknown>): PurityResult {
-  const channel = toRecord(raw.channel)
-  const result = toRecord(raw.result)
-  const channelID = Number(raw.channel_id ?? channel.id ?? 0)
-  const model = String(raw.model ?? '-')
-  const scanID = optionalIdentifier(raw.scan_id ?? raw.id)
+function evidence(value: unknown, index: number): PurityEvidence {
+  const item = record(value)
   return {
-    id: scanID ?? `${channelID}-${model}`,
-    scan_id: scanID,
-    channel_id: Number.isFinite(channelID) ? channelID : 0,
-    channel_name: String(raw.channel_name ?? channel.name ?? '-'),
-    model,
-    risk: normalizeRisk(raw.risk ?? raw.risk_level),
-    coverage: Number(raw.coverage ?? raw.coverage_rate ?? 0),
-    status: normalizeStatus(raw.status),
-    summary: optionalText(raw.summary),
-    error_class: optionalText(raw.error_class ?? result.error_class),
-    created_at: (raw.created_at ?? raw.created_time) as
-      | string
-      | number
-      | undefined,
-    updated_at: (raw.updated_at ??
-      raw.updated_time ??
-      raw.completed_at ??
-      raw.started_at) as string | number | undefined,
-    evidence: normalizeEvidence(raw, result),
+    id: String(item.id ?? index), occurred_at: item.occurred_at as string | number ?? '',
+    kind: String(item.kind ?? 'observation'), summary: String(item.summary ?? item.description ?? ''),
+    baseline_value: item.baseline_value == null ? undefined : String(item.baseline_value),
+    target_value: item.target_value == null ? undefined : String(item.target_value),
+    request_id: item.request_id == null ? undefined : String(item.request_id),
   }
 }
-
-function assertSuccess<T>(payload: ApiEnvelope<T>, fallback: string): void {
-  if (payload.success === false) {
-    throw new Error(payload.message || fallback)
-  }
+function trend(value: unknown): TrendPoint[] {
+  return array(value).map((raw) => { const item = record(raw); return {
+    at: item.at as string | number, status: status(item.status),
+    field_similarity: optionalNumber(item.field_similarity), token_similarity: optionalNumber(item.token_similarity),
+    confidence: optionalNumber(item.confidence),
+  } })
 }
-
-export async function getPurityResults(): Promise<PurityResult[]> {
-  const response = await api.get('/api/channel/purity/results', {
-    params: { p: 1, page_size: 100 },
-    skipBusinessError: true,
-    skipErrorHandler: true,
-  })
-  const envelope = response.data as ApiEnvelope<unknown>
-  assertSuccess(envelope, 'Failed to load purity scan results')
-  const payload = unwrap<unknown>(envelope)
-  const records = Array.isArray(payload)
-    ? payload
-    : (((payload as Record<string, unknown>)?.items ??
-        (payload as Record<string, unknown>)?.results ??
-        []) as unknown[])
-  return records.map((record) => normalizeResult(toRecord(record)))
-}
-
-export async function startPurityFullScan(): Promise<
-  ApiEnvelope<PurityFullScanResponse>
-> {
-  const response = await api.post(
-    '/api/channel/purity/inspections',
-    {},
-    { skipBusinessError: true, skipErrorHandler: true }
-  )
-  return response.data
-}
-
-export async function getPuritySettings(): Promise<PuritySettings> {
-  const response = await api.get('/api/channel/purity/inspection/settings', {
-    skipBusinessError: true,
-    skipErrorHandler: true,
-  })
-  const envelope = response.data as ApiEnvelope<Record<string, unknown>>
-  assertSuccess(envelope, 'Failed to load automatic inspection settings')
-  const payload = toRecord(unwrap(envelope))
+function normalizeResult(value: unknown, group: Record<string, unknown>): TargetResult {
+  const item = record(value)
+  const evidenceItems = array(item.evidence).map(evidence)
+  const field = record(item.field_similarity ?? item.structure_similarity)
+  const token = record(item.token_similarity ?? item.token_range_similarity)
   return {
-    enabled: Boolean(payload.enabled),
-    interval_minutes: Math.max(1, Number(payload.interval_minutes ?? 1440)),
+    id: String(item.id ?? `${group.id}-${item.target_channel_id}-${item.model}`), group_id: String(group.id),
+    target_channel_id: number(item.target_channel_id), target_channel_name: String(item.target_channel_name ?? `#${item.target_channel_id}`),
+    baseline_channel_id: number(item.baseline_channel_id ?? group.baseline_channel_id),
+    baseline_channel_name: String(item.baseline_channel_name ?? group.baseline_channel_name ?? `#${group.baseline_channel_id}`),
+    model: String(item.model ?? '—'), status: status(item.status), samples: number(item.samples ?? item.sample_count),
+    field_similarity: { value: optionalNumber(field.value ?? item.field_similarity), sample_size: number(field.sample_size ?? item.samples) },
+    token_similarity: { value: optionalNumber(token.value ?? item.token_similarity), sample_size: number(token.sample_size ?? item.samples) },
+    confidence: optionalNumber(item.confidence), baseline_token_range: range(item.baseline_token_range),
+    target_token_range: range(item.target_token_range), deviation_rate: optionalNumber(item.deviation_rate),
+    latest_evidence: item.latest_evidence ? evidence(item.latest_evidence, -1) : evidenceItems[0], evidence: evidenceItems,
+    alerts: array(item.alerts).map(String), trend: trend(item.trend ?? item.history),
+    updated_at: item.updated_at as string | number | undefined,
   }
 }
-
-export async function updatePuritySettings(
-  settings: PuritySettings
-): Promise<PuritySettings> {
-  const response = await api.put(
-    '/api/channel/purity/inspection/settings',
-    settings,
-    {
-      skipBusinessError: true,
-      skipErrorHandler: true,
-    }
-  )
-  const envelope = response.data as ApiEnvelope<Record<string, unknown>>
-  assertSuccess(envelope, 'Failed to update automatic inspection settings')
-  const payload = toRecord(unwrap(envelope))
+function normalizeGroup(value: unknown): PurityGroup {
+  const item = record(value)
+  const sampling = record(item.sampling)
+  const interval = number(item.interval_minutes, 5)
   return {
-    enabled: Boolean(payload.enabled ?? settings.enabled),
-    interval_minutes: Math.max(
-      1,
-      Number(payload.interval_minutes ?? settings.interval_minutes)
-    ),
+    id: String(item.id), name: String(item.name ?? 'Untitled group'), enabled: item.enabled !== false,
+    channel_ids: array(item.channel_ids).map(Number), baseline_channel_id: number(item.baseline_channel_id),
+    interval_minutes: interval === 10 ? 10 : 5, random_pairing_enabled: Boolean(item.random_pairing_enabled),
+    sampling: { window_minutes: number(sampling.window_minutes, 30), minimum_samples: number(sampling.minimum_samples, 20), max_samples_per_window: number(sampling.max_samples_per_window, 200) },
+    results: array(item.results ?? item.targets).map((result) => normalizeResult(result, item)),
+    updated_at: item.updated_at as string | number | undefined,
   }
 }
-
-export async function getPurityRunStatus(): Promise<PurityRunStatus> {
-  const response = await api.get('/api/channel/purity/inspection/status', {
-    skipBusinessError: true,
-    skipErrorHandler: true,
-  })
-  const envelope = response.data as ApiEnvelope<Record<string, unknown>>
-  assertSuccess(envelope, 'Failed to load automatic inspection status')
-  const payload = toRecord(unwrap(envelope))
-  const task = toRecord(payload.task)
-  const state = toRecord(task.state)
-  const result = toRecord(task.result)
-  const rawStatus = String(
-    task.status ?? (payload.running ? 'running' : 'unknown')
-  )
-  let status = normalizeStatus(rawStatus)
-  if (rawStatus === 'succeeded') status = 'completed'
-  if (rawStatus === 'failed') status = 'failed'
-  const total = Math.max(
-    0,
-    Number(result.total ?? state.total ?? payload.model_combinations ?? 0)
-  )
-  const completed = Math.max(
-    0,
-    Number(
-      result.completed ??
-        state.processed ??
-        (status === 'completed' ? total : 0)
-    )
-  )
-  return {
-    status,
-    run_id: optionalIdentifier(task.task_id ?? task.id),
-    enabled_channels: Math.max(0, Number(payload.enabled_channels ?? 0)),
-    model_combinations: total,
-    completed,
-    failed: Math.max(0, Number(result.failed ?? 0)),
-    last_run_at: payload.last_run_at as string | number | undefined,
-    next_run_at: payload.next_run_at as string | number | undefined,
-    started_at: task.created_at as string | number | undefined,
-    finished_at:
-      status === 'completed' || status === 'failed'
-        ? (task.updated_at as string | number | undefined)
-        : undefined,
-    error: optionalText(task.error ?? payload.error),
-  }
+const config = { skipBusinessError: true, skipErrorHandler: true }
+export async function listPurityGroups(): Promise<PurityGroup[]> {
+  const response = await api.get(ROOT, config)
+  const payload = unwrap(response.data)
+  return array(Array.isArray(payload) ? payload : record(payload).items).map(normalizeGroup)
 }
-
-export async function getPurityScan(id: string): Promise<PurityResult> {
-  const response = await api.get(`/api/channel/purity/scans/${id}`, {
-    skipBusinessError: true,
-    skipErrorHandler: true,
-  })
-  const envelope = response.data as ApiEnvelope<Record<string, unknown>>
-  assertSuccess(envelope, 'Failed to load purity scan')
-  return normalizeResult(unwrap(envelope))
+export async function getPurityGroup(id: string): Promise<PurityGroup> {
+  const response = await api.get(`${ROOT}/${id}`, config)
+  return normalizeGroup(unwrap(response.data))
 }
+export async function createPurityGroup(input: PurityGroupInput): Promise<PurityGroup> {
+  const response = await api.post(ROOT, input, config)
+  return normalizeGroup(unwrap(response.data))
+}
+export async function updatePurityGroup(id: string, input: PurityGroupInput): Promise<PurityGroup> {
+  const response = await api.put(`${ROOT}/${id}`, input, config)
+  return normalizeGroup(unwrap(response.data))
+}
+export async function deletePurityGroup(id: string): Promise<void> {
+  const response = await api.delete(`${ROOT}/${id}`, config)
+  unwrap(response.data)
+}
+export async function listChannelOptions(): Promise<ChannelOption[]> {
+  const response = await api.get('/api/channel/search', { params: { p: 1, page_size: 1000 }, ...config })
+  const payload = unwrap(response.data)
+  const items = array(Array.isArray(payload) ? payload : record(payload).items ?? record(payload).data)
+  return items.map((raw) => { const item = record(raw); return { id: number(item.id), name: String(item.name ?? `#${item.id}`), models: typeof item.models === 'string' ? item.models.split(',') : array(item.models).map(String) } })
+}
+export async function runQuickProbe(input: QuickProbeInput): Promise<QuickProbeResult> {
+  const response = await api.post('/api/channel/purity/quick-probe', input, config)
+  const item = record(unwrap(response.data))
+  return { ok: Boolean(item.ok ?? item.success), latency_ms: optionalNumber(item.latency_ms), message: String(item.message ?? ''), checked_at: item.checked_at as string | number | undefined }
+}
+export type { ApiEnvelope }

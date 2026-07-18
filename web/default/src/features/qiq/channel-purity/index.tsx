@@ -6,10 +6,16 @@ it under the terms of the GNU Affero General Public License as published by
 the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
-import type { TFunction } from 'i18next'
-import { Clock, RefreshCw, Search, ShieldAlert } from 'lucide-react'
-import { type ReactNode, useState } from 'react'
+import {
+  Activity,
+  AlertTriangle,
+  FlaskConical,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -17,14 +23,17 @@ import { SectionPageLayout } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Progress } from '@/components/ui/progress'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -43,623 +52,199 @@ import {
 } from '@/components/ui/table'
 
 import {
-  getPurityResults,
-  getPurityRunStatus,
-  getPurityScan,
-  getPuritySettings,
-  startPurityFullScan,
-  updatePuritySettings,
+  createPurityGroup,
+  deletePurityGroup,
+  listChannelOptions,
+  listPurityGroups,
+  runQuickProbe,
+  updatePurityGroup,
 } from './api'
 import type {
-  PurityEvidence,
-  PurityResult,
-  PurityRisk,
-  PuritySettings,
-  PurityStatus,
+  ChannelOption,
+  DetectorStatus,
+  PurityGroup,
+  PurityGroupInput,
+  QuickProbeResult,
+  TargetResult,
+  TokenRange,
 } from './types'
 
-const resultKey = ['qiq', 'channel-purity', 'results'] as const
-const statusKey = ['qiq', 'channel-purity', 'status'] as const
-const settingsKey = ['qiq', 'channel-purity', 'settings'] as const
-const intervalOptions = [15, 60, 360, 720, 1440, 10080]
+const groupsKey = ['qiq', 'channel-purity', 'groups'] as const
+const emptyInput = (): PurityGroupInput => ({
+  name: '',
+  enabled: true,
+  channel_ids: [],
+  baseline_channel_id: 0,
+  interval_minutes: 5,
+  random_pairing_enabled: false,
+  sampling: { window_minutes: 30, minimum_samples: 20, max_samples_per_window: 200 },
+})
 
-function RiskBadge(props: { risk: PurityRisk }) {
+const statusStyle: Record<DetectorStatus, string> = {
+  BASELINE_UNAVAILABLE: 'border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-300',
+  LOW_SAMPLE: 'border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  NO_TRAFFIC: 'border-slate-500/40 bg-slate-500/10 text-slate-700 dark:text-slate-300',
+  WARMING_UP: 'border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300',
+  HEALTHY: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+  SUSPECT: 'border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  ALERT: 'border-destructive/50 bg-destructive/10 text-destructive',
+  DETECTOR_ERROR: 'border-destructive/50 bg-destructive/10 text-destructive',
+}
+
+function StatusBadge({ status }: { status: DetectorStatus }) {
   const { t } = useTranslation()
-  let variant: 'destructive' | 'secondary' | 'outline' = 'outline'
-  if (props.risk === 'high' || props.risk === 'medium') variant = 'destructive'
-  if (props.risk === 'low') variant = 'secondary'
-  const labels = {
-    high: t('Purity risk: high'),
-    medium: t('Purity risk: medium'),
-    low: t('Purity risk: low'),
-    unknown: t('Purity risk: unknown'),
-  }
-  return <Badge variant={variant}>{labels[props.risk]}</Badge>
+  return <Badge variant='outline' className={statusStyle[status]}>{t(`Purity detector status: ${status}`)}</Badge>
 }
 
-function StatusBadge(props: { status: PurityStatus }) {
-  const { t } = useTranslation()
-  const labels = {
-    pending: t('Purity status: pending'),
-    running: t('Purity status: running'),
-    completed: t('Purity status: completed'),
-    failed: t('Purity status: failed'),
-    unknown: t('Purity status: unknown'),
-  }
-  return (
-    <Badge variant={props.status === 'failed' ? 'destructive' : 'outline'}>
-      {labels[props.status]}
-    </Badge>
-  )
-}
-
-function coveragePercent(value: number) {
-  if (!Number.isFinite(value)) return 0
-  return Math.max(0, Math.min(100, Math.round(value)))
-}
-
-function formatTimestamp(timestamp: string | number | undefined) {
-  if (timestamp === undefined || timestamp === '') return '—'
-  const normalized =
-    typeof timestamp === 'number' && timestamp < 1e12
-      ? timestamp * 1000
-      : timestamp
+function formatTime(value?: string | number) {
+  if (value === undefined || value === '') return '—'
+  const normalized = typeof value === 'number' && value < 1e12 ? value * 1000 : value
   const date = new Date(normalized)
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString()
 }
 
-function apiErrorMessage(error: unknown) {
+function percent(value?: number) {
+  if (value === undefined || !Number.isFinite(value)) return '—'
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`
+}
+
+function tokenRange(value?: TokenRange) {
+  if (!value) return '—'
+  return `${value.min.toLocaleString()} – ${value.max.toLocaleString()}`
+}
+
+function errorMessage(error: unknown) {
   if (error && typeof error === 'object' && 'response' in error) {
-    const response = (error as { response?: { data?: { message?: unknown } } })
-      .response
-    if (typeof response?.data?.message === 'string') {
-      return response.data.message
-    }
+    const response = (error as { response?: { data?: { message?: unknown } } }).response
+    if (typeof response?.data?.message === 'string') return response.data.message
   }
   return error instanceof Error ? error.message : undefined
 }
 
-function isUnauthorizedError(error: unknown) {
-  if (error && typeof error === 'object' && 'response' in error) {
-    if (
-      (error as { response?: { status?: number } }).response?.status === 401
-    ) {
-      return true
-    }
-  }
-  return (
-    error instanceof Error && /\b(?:401|unauthorized)\b/i.test(error.message)
-  )
+function Metric({ label, value }: { label: string; value?: number }) {
+  return <div><p className='text-muted-foreground text-xs'>{label}</p><p className='font-medium tabular-nums'>{percent(value)}</p></div>
 }
 
-function SignInAction() {
+function ResultRow({ result, onOpen }: { result: TargetResult; onOpen: () => void }) {
   const { t } = useTranslation()
   return (
-    <Button
-      type='button'
-      size='sm'
-      render={
-        <Link to='/sign-in' search={{ redirect: '/qiq/channel-purity' }} />
-      }
-    >
-      {t('Sign in')}
-    </Button>
+    <TableRow>
+      <TableCell>
+        <div className='font-medium'>{result.target_channel_name}</div>
+        <div className='text-muted-foreground text-xs'>{t('Baseline')}: {result.baseline_channel_name}</div>
+      </TableCell>
+      <TableCell className='font-mono text-xs'>{result.model}</TableCell>
+      <TableCell><StatusBadge status={result.status} /></TableCell>
+      <TableCell className='tabular-nums'>{result.samples}</TableCell>
+      <TableCell>{percent(result.field_similarity.value)}</TableCell>
+      <TableCell>{percent(result.token_similarity.value)}</TableCell>
+      <TableCell>{percent(result.confidence)}</TableCell>
+      <TableCell className='max-w-64'>
+        {result.latest_evidence ? <div><p className='truncate text-sm'>{result.latest_evidence.summary}</p><p className='text-muted-foreground text-xs'>{formatTime(result.latest_evidence.occurred_at)}</p></div> : <span className='text-muted-foreground'>—</span>}
+        {result.alerts.length ? <Badge variant='destructive' className='mt-1'>{t('{{count}} alerts', { count: result.alerts.length })}</Badge> : null}
+      </TableCell>
+      <TableCell className='text-right'><Button size='sm' variant='outline' onClick={onOpen}>{t('Details')}</Button></TableCell>
+    </TableRow>
   )
 }
 
-function ErrorPanel(props: {
-  error: unknown
-  fallback: string
-  onRetry: () => void
+function ResultCard({ result, onOpen }: { result: TargetResult; onOpen: () => void }) {
+  const { t } = useTranslation()
+  return <Card className='gap-3 py-4'>
+    <CardContent className='space-y-3 px-4'>
+      <div className='flex items-start justify-between gap-2'><div><p className='font-medium'>{result.target_channel_name}</p><p className='text-muted-foreground text-xs'>{result.model} · {t('Baseline')}: {result.baseline_channel_name}</p></div><StatusBadge status={result.status} /></div>
+      <div className='grid grid-cols-3 gap-2'><Metric label={t('Field / structure')} value={result.field_similarity.value} /><Metric label={t('Token range')} value={result.token_similarity.value} /><Metric label={t('Confidence')} value={result.confidence} /></div>
+      <div className='text-sm'><span className='text-muted-foreground'>{t('Samples')}: </span>{result.samples}</div>
+      {result.latest_evidence ? <p className='border-l-2 pl-2 text-sm'>{result.latest_evidence.summary}</p> : null}
+      <Button className='w-full' size='sm' variant='outline' onClick={onOpen}>{t('View evidence and trend')}</Button>
+    </CardContent>
+  </Card>
+}
+
+function GroupForm({ open, group, channels, saving, onOpenChange, onSave }: {
+  open: boolean
+  group: PurityGroup | null
+  channels: ChannelOption[]
+  saving: boolean
+  onOpenChange: (open: boolean) => void
+  onSave: (input: PurityGroupInput) => void
 }) {
   const { t } = useTranslation()
-  const unauthorized = isUnauthorizedError(props.error)
-  return (
-    <div className='border-destructive/40 bg-destructive/5 flex flex-wrap items-center justify-between gap-3 rounded-md border px-4 py-3'>
-      <div>
-        <p className='text-destructive text-sm font-medium'>
-          {unauthorized
-            ? t('Your session has expired. Please sign in again.')
-            : props.fallback}
-        </p>
-        {apiErrorMessage(props.error) ? (
-          <p className='text-muted-foreground mt-1 text-xs'>
-            {apiErrorMessage(props.error)}
-          </p>
-        ) : null}
+  const [input, setInput] = useState<PurityGroupInput>(() => group ? {
+    name: group.name, enabled: group.enabled, channel_ids: group.channel_ids,
+    baseline_channel_id: group.baseline_channel_id, interval_minutes: group.interval_minutes,
+    random_pairing_enabled: group.random_pairing_enabled, sampling: { ...group.sampling },
+  } : emptyInput())
+  const selected = new Set(input.channel_ids)
+  const toggleChannel = (id: number, checked: boolean) => {
+    const ids = checked ? [...input.channel_ids, id] : input.channel_ids.filter((item) => item !== id)
+    setInput({ ...input, channel_ids: ids, baseline_channel_id: checked ? input.baseline_channel_id : input.baseline_channel_id === id ? 0 : input.baseline_channel_id })
+  }
+  const valid = input.name.trim() && input.channel_ids.length >= 2 && selected.has(input.baseline_channel_id)
+  return <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-2xl'>
+      <DialogHeader><DialogTitle>{group ? t('Edit benchmark group') : t('Create benchmark group')}</DialogTitle><DialogDescription>{t('Choose at least two channels and designate exactly one baseline. Each target is compared independently by actual model.')}</DialogDescription></DialogHeader>
+      <div className='grid gap-4'>
+        <div className='space-y-2'><Label htmlFor='group-name'>{t('Group name')}</Label><Input id='group-name' value={input.name} onChange={(event) => setInput({ ...input, name: event.target.value })} placeholder={t('Example: Production OpenAI routes')} /></div>
+        <div className='space-y-2'><Label>{t('Channels in group')}</Label><div className='grid max-h-48 gap-2 overflow-y-auto rounded-lg border p-3 sm:grid-cols-2'>{channels.map((channel) => <label key={channel.id} className='flex cursor-pointer items-center gap-2 text-sm'><Checkbox checked={selected.has(channel.id)} onCheckedChange={(checked) => toggleChannel(channel.id, checked === true)} /><span className='truncate'>{channel.name} <span className='text-muted-foreground'>#{channel.id}</span></span></label>)}</div></div>
+        <div className='space-y-2'><Label>{t('Baseline channel')}</Label><Select value={input.baseline_channel_id ? String(input.baseline_channel_id) : ''} onValueChange={(value) => setInput({ ...input, baseline_channel_id: Number(value) })}><SelectTrigger className='w-full'><SelectValue placeholder={t('Select a baseline from group channels')} /></SelectTrigger><SelectContent>{channels.filter((channel) => selected.has(channel.id)).map((channel) => <SelectItem key={channel.id} value={String(channel.id)}>{channel.name} #{channel.id}</SelectItem>)}</SelectContent></Select></div>
+        <div className='grid gap-4 sm:grid-cols-2'><div className='space-y-2'><Label>{t('Detection interval')}</Label><Select value={String(input.interval_minutes)} onValueChange={(value) => setInput({ ...input, interval_minutes: Number(value) as 5 | 10 })}><SelectTrigger className='w-full'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='5'>{t('Every 5 minutes')}</SelectItem><SelectItem value='10'>{t('Every 10 minutes')}</SelectItem></SelectContent></Select></div><div className='flex items-center justify-between rounded-lg border p-3'><div><p className='text-sm font-medium'>{t('Random pairing detection')}</p><p className='text-muted-foreground text-xs'>{t('Randomly pair eligible observations within the same model bucket.')}</p></div><Switch checked={input.random_pairing_enabled} onCheckedChange={(checked) => setInput({ ...input, random_pairing_enabled: checked })} /></div></div>
+        <div><Label>{t('Sampling settings')}</Label><div className='mt-2 grid gap-3 rounded-lg border p-3 sm:grid-cols-3'>{([['window_minutes', t('Window (minutes)')], ['minimum_samples', t('Minimum samples')], ['max_samples_per_window', t('Maximum samples / window')]] as const).map(([key, label]) => <div className='space-y-1' key={key}><Label className='text-xs' htmlFor={key}>{label}</Label><Input id={key} type='number' min={1} value={input.sampling[key]} onChange={(event) => setInput({ ...input, sampling: { ...input.sampling, [key]: Math.max(1, Number(event.target.value)) } })} /></div>)}</div></div>
+        <div className='flex items-center justify-between rounded-lg border p-3'><div><p className='text-sm font-medium'>{t('Enable this group')}</p><p className='text-muted-foreground text-xs'>{t('Disabled groups retain history but do not schedule detection.')}</p></div><Switch checked={input.enabled} onCheckedChange={(checked) => setInput({ ...input, enabled: checked })} /></div>
       </div>
-      <div className='flex gap-2'>
-        {unauthorized ? <SignInAction /> : null}
-        <Button
-          type='button'
-          size='sm'
-          variant='outline'
-          onClick={props.onRetry}
-        >
-          {t('Try again')}
-        </Button>
-      </div>
-    </div>
-  )
+      <DialogFooter><Button disabled={!valid || saving} onClick={() => onSave({ ...input, name: input.name.trim() })}>{saving ? t('Saving…') : t('Save group')}</Button></DialogFooter>
+    </DialogContent>
+  </Dialog>
 }
 
-function operationalErrorLabel(t: TFunction, errorClass?: string) {
-  const labels: Record<string, string> = {
-    invalid_base_url: t('Invalid channel base URL'),
-    credential_unavailable: t('Channel credential is unavailable'),
-    unsupported_channel_type: t('Unsupported channel type'),
-    rate_limit: t('Upstream rate limit'),
-    authentication_error: t('Upstream authentication failed'),
-    timeout: t('Upstream request timed out'),
-  }
-  return (
-    (errorClass && labels[errorClass]) ||
-    errorClass ||
-    t('Scan failed before risk could be determined')
-  )
+function ResultDetail({ result, onClose }: { result: TargetResult | null; onClose: () => void }) {
+  const { t } = useTranslation()
+  return <Dialog open={Boolean(result)} onOpenChange={(open) => { if (!open) onClose() }}><DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-3xl'>{result ? <>
+    <DialogHeader><DialogTitle>{result.target_channel_name} · {result.model}</DialogTitle><DialogDescription>{t('Independent comparison against baseline {{baseline}}', { baseline: result.baseline_channel_name })}</DialogDescription></DialogHeader>
+    <div className='flex flex-wrap gap-2'><StatusBadge status={result.status} /><Badge variant='outline'>{t('{{count}} samples', { count: result.samples })}</Badge></div>
+    <div className='grid gap-3 sm:grid-cols-3'><Card><CardContent className='pt-4'><p className='text-muted-foreground text-xs'>{t('Baseline token interval')}</p><p className='mt-1 font-mono'>{tokenRange(result.baseline_token_range)}</p></CardContent></Card><Card><CardContent className='pt-4'><p className='text-muted-foreground text-xs'>{t('Target token interval')}</p><p className='mt-1 font-mono'>{tokenRange(result.target_token_range)}</p></CardContent></Card><Card><CardContent className='pt-4'><p className='text-muted-foreground text-xs'>{t('Deviation rate')}</p><p className='mt-1 font-medium'>{percent(result.deviation_rate)}</p></CardContent></Card></div>
+    <div><h3 className='mb-2 font-medium'>{t('Evidence chain')}</h3>{result.evidence.length ? <div className='space-y-2'>{result.evidence.map((item) => <div key={item.id} className='rounded-lg border p-3'><div className='flex justify-between gap-3'><Badge variant='outline'>{item.kind}</Badge><span className='text-muted-foreground text-xs'>{formatTime(item.occurred_at)}</span></div><p className='mt-2 text-sm'>{item.summary}</p>{item.baseline_value !== undefined || item.target_value !== undefined ? <div className='bg-muted mt-2 grid gap-2 rounded p-2 font-mono text-xs sm:grid-cols-2'><span>{t('Baseline')}: {item.baseline_value ?? '—'}</span><span>{t('Target')}: {item.target_value ?? '—'}</span></div> : null}{item.request_id ? <p className='text-muted-foreground mt-2 text-xs'>Request ID: {item.request_id}</p> : null}</div>)}</div> : <p className='text-muted-foreground text-sm'>{t('No evidence has been recorded yet.')}</p>}</div>
+    <div><h3 className='mb-2 font-medium'>{t('Historical trend')}</h3>{result.trend.length ? <div className='flex min-h-28 items-end gap-1 overflow-x-auto rounded-lg border p-3'>{result.trend.map((point, index) => <div key={`${point.at}-${index}`} className='group flex min-w-8 flex-1 flex-col items-center justify-end gap-1' title={`${formatTime(point.at)} · ${percent(point.confidence)}`}><div className={`w-full max-w-8 rounded-t ${point.status === 'ALERT' || point.status === 'DETECTOR_ERROR' ? 'bg-destructive' : point.status === 'SUSPECT' ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ height: `${Math.max(10, (point.confidence ?? 0.2) * 80)}px` }} /><span className='text-muted-foreground text-[10px]'>{index + 1}</span></div>)}</div> : <p className='text-muted-foreground text-sm'>{t('Trend is unavailable until multiple detection windows are recorded.')}</p>}</div>
+    {result.alerts.length ? <div className='border-destructive/40 bg-destructive/5 rounded-lg border p-3'><h3 className='text-destructive font-medium'>{t('Alerts')}</h3><ul className='mt-2 list-disc space-y-1 pl-5 text-sm'>{result.alerts.map((alert) => <li key={alert}>{alert}</li>)}</ul></div> : null}
+  </> : null}</DialogContent></Dialog>
 }
 
-function evidenceTitle(t: TFunction, evidence: PurityEvidence) {
-  const labels = {
-    protocol: t('Protocol response'),
-    declared_model: t('Declared model'),
-    usage: t('Usage metadata'),
-    warning: t('Warning'),
-    operational: t('Operational status'),
-    generic: evidence.title ?? t('Evidence item'),
-  }
-  return labels[evidence.kind]
+function QuickProbe({ channels }: { channels: ChannelOption[] }) {
+  const { t } = useTranslation()
+  const [channelId, setChannelId] = useState('')
+  const [model, setModel] = useState('')
+  const [result, setResult] = useState<QuickProbeResult | null>(null)
+  const mutation = useMutation({ mutationFn: runQuickProbe, onSuccess: setResult, onError: (error) => toast.error(errorMessage(error) || t('Quick probe failed')) })
+  return <Card><CardHeader><CardTitle className='flex items-center gap-2'><FlaskConical className='size-5' />{t('Quick Probe — manual connectivity diagnosis')}</CardTitle></CardHeader><CardContent className='space-y-3'><p className='text-muted-foreground text-sm'>{t('This sends a manual connectivity check only. Its output is never included in scheduled benchmark results, evidence, or alerts.')}</p><div className='grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]'><Select value={channelId} onValueChange={setChannelId}><SelectTrigger className='w-full'><SelectValue placeholder={t('Select channel')} /></SelectTrigger><SelectContent>{channels.map((channel) => <SelectItem key={channel.id} value={String(channel.id)}>{channel.name} #{channel.id}</SelectItem>)}</SelectContent></Select><Input value={model} onChange={(event) => setModel(event.target.value)} placeholder={t('Optional model')} /><Button disabled={!channelId || mutation.isPending} onClick={() => mutation.mutate({ channel_id: Number(channelId), model: model || undefined })}>{mutation.isPending ? t('Diagnosing…') : t('Run diagnosis')}</Button></div>{result ? <div className='rounded-lg border p-3 text-sm'><Badge variant={result.ok ? 'secondary' : 'destructive'}>{result.ok ? t('Connected') : t('Connection failed')}</Badge><span className='ml-2'>{result.message || '—'}</span>{result.latency_ms !== undefined ? <span className='text-muted-foreground ml-2'>{result.latency_ms} ms</span> : null}</div> : null}</CardContent></Card>
 }
 
 export function ChannelPurity() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [detail, setDetail] = useState<PurityResult | null>(null)
-
-  const resultsQuery = useQuery({
-    queryKey: resultKey,
-    queryFn: getPurityResults,
+  const [editing, setEditing] = useState<PurityGroup | null | undefined>(undefined)
+  const [detail, setDetail] = useState<TargetResult | null>(null)
+  const groupsQuery = useQuery({ queryKey: groupsKey, queryFn: listPurityGroups, refetchInterval: 30_000 })
+  const channelsQuery = useQuery({ queryKey: ['qiq', 'channels', 'options'], queryFn: listChannelOptions })
+  const refresh = () => queryClient.invalidateQueries({ queryKey: groupsKey })
+  const saveMutation = useMutation({
+    mutationFn: ({ group, input }: { group: PurityGroup | null; input: PurityGroupInput }) => group ? updatePurityGroup(group.id, input) : createPurityGroup(input),
+    onSuccess: async () => { setEditing(undefined); toast.success(t('Benchmark group saved')); await refresh() },
+    onError: (error) => toast.error(errorMessage(error) || t('Failed to save benchmark group')),
   })
-  const settingsQuery = useQuery({
-    queryKey: settingsKey,
-    queryFn: getPuritySettings,
-  })
-  const statusQuery = useQuery({
-    queryKey: statusKey,
-    queryFn: getPurityRunStatus,
-    refetchInterval: (query) => {
-      const status = query.state.data?.status
-      return status === 'pending' || status === 'running' ? 3000 : 30_000
-    },
-  })
-  const detailScanId = detail?.scan_id
-  const detailQuery = useQuery({
-    queryKey: ['qiq', 'channel-purity', 'scan', detailScanId],
-    queryFn: () => getPurityScan(String(detailScanId)),
-    enabled: detailScanId !== undefined,
-    retry: false,
-  })
-
-  const refreshAll = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: resultKey }),
-      queryClient.invalidateQueries({ queryKey: statusKey }),
-    ])
-  }
-  const fullScanMutation = useMutation({
-    mutationFn: startPurityFullScan,
-    onSuccess: async (response) => {
-      if (response.success === false) {
-        toast.error(response.message || t('Failed to start full purity scan'))
-        return
-      }
-      toast.success(t('Full channel purity scan started'))
-      await refreshAll()
-    },
-    onError: (error) =>
-      toast.error(
-        isUnauthorizedError(error)
-          ? t('Your session has expired. Please sign in again.')
-          : apiErrorMessage(error) || t('Failed to start full purity scan')
-      ),
-  })
-  const settingsMutation = useMutation({
-    mutationFn: updatePuritySettings,
-    onSuccess: (settings) => {
-      queryClient.setQueryData(settingsKey, settings)
-      toast.success(t('Automatic inspection settings updated'))
-    },
-    onError: (error) =>
-      toast.error(
-        isUnauthorizedError(error)
-          ? t('Your session has expired. Please sign in again.')
-          : apiErrorMessage(error) ||
-              t('Failed to update automatic inspection settings')
-      ),
-  })
-
-  const settings = settingsQuery.data
-  const run = statusQuery.data
-  const running = run?.status === 'pending' || run?.status === 'running'
-  const total = run?.model_combinations ?? 0
-  const processed = Math.min(total, run?.completed ?? 0)
-  const progress = total > 0 ? Math.round((processed / total) * 100) : 0
-  const updateSettings = (patch: Partial<PuritySettings>) => {
-    if (!settings) return
-    settingsMutation.mutate({ ...settings, ...patch })
-  }
-  const results = resultsQuery.data ?? []
-  const detailResult = detailQuery.data ?? detail
-
-  return (
-    <SectionPageLayout>
-      <SectionPageLayout.Title>{t('Channel purity')}</SectionPageLayout.Title>
-      <SectionPageLayout.Content>
-        <div className='space-y-4'>
-          <div className='flex flex-wrap items-center justify-between gap-3'>
-            <p className='text-muted-foreground max-w-2xl text-sm'>
-              {t(
-                'Automatically inspect every enabled channel and configured model, then review failures and supporting evidence.'
-              )}
-            </p>
-            <div className='flex gap-2'>
-              <Button variant='outline' onClick={() => void refreshAll()}>
-                <RefreshCw
-                  className={statusQuery.isFetching ? 'animate-spin' : ''}
-                />
-                {t('Refresh')}
-              </Button>
-              <Button
-                onClick={() => fullScanMutation.mutate()}
-                disabled={running || fullScanMutation.isPending}
-              >
-                <Search />
-                {running || fullScanMutation.isPending
-                  ? t('Full scan in progress')
-                  : t('Scan all now')}
-              </Button>
-            </div>
-          </div>
-
-          {resultsQuery.isError ? (
-            <ErrorPanel
-              error={resultsQuery.error}
-              fallback={t('Failed to load purity scan results.')}
-              onRetry={() => void resultsQuery.refetch()}
-            />
-          ) : null}
-          {statusQuery.isError ? (
-            <ErrorPanel
-              error={statusQuery.error}
-              fallback={t('Failed to load automatic inspection status.')}
-              onRetry={() => void statusQuery.refetch()}
-            />
-          ) : null}
-
-          <div className='grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]'>
-            <Card>
-              <CardHeader>
-                <CardTitle>{t('Automatic inspection')}</CardTitle>
-              </CardHeader>
-              <CardContent className='space-y-5'>
-                {settingsQuery.isError ? (
-                  <ErrorPanel
-                    error={settingsQuery.error}
-                    fallback={t(
-                      'Failed to load automatic inspection settings.'
-                    )}
-                    onRetry={() => void settingsQuery.refetch()}
-                  />
-                ) : (
-                  <>
-                    <div className='flex items-center justify-between gap-3'>
-                      <div>
-                        <p className='text-sm font-medium'>
-                          {t('Enable scheduled inspection')}
-                        </p>
-                        <p className='text-muted-foreground text-xs'>
-                          {t(
-                            'Run a full inspection automatically at the configured interval.'
-                          )}
-                        </p>
-                      </div>
-                      <Switch
-                        checked={settings?.enabled ?? false}
-                        disabled={!settings || settingsMutation.isPending}
-                        onCheckedChange={(checked) =>
-                          updateSettings({ enabled: checked })
-                        }
-                        aria-label={t('Enable scheduled inspection')}
-                      />
-                    </div>
-                    <div className='space-y-2'>
-                      <p className='text-sm font-medium'>
-                        {t('Inspection interval')}
-                      </p>
-                      <Select
-                        value={String(settings?.interval_minutes ?? 1440)}
-                        disabled={!settings || settingsMutation.isPending}
-                        onValueChange={(value) =>
-                          updateSettings({ interval_minutes: Number(value) })
-                        }
-                      >
-                        <SelectTrigger className='w-full'>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {intervalOptions.map((minutes) => (
-                            <SelectItem key={minutes} value={String(minutes)}>
-                              {t('{{count}} minutes', { count: minutes })}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className='grid grid-cols-2 gap-3 text-sm'>
-                      <div>
-                        <p className='text-muted-foreground'>{t('Last run')}</p>
-                        <p>{formatTimestamp(run?.last_run_at)}</p>
-                      </div>
-                      <div>
-                        <p className='text-muted-foreground'>{t('Next run')}</p>
-                        <p>
-                          {settings?.enabled
-                            ? formatTimestamp(run?.next_run_at)
-                            : t('Disabled')}
-                        </p>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>{t('Inspection progress and coverage')}</CardTitle>
-              </CardHeader>
-              <CardContent className='space-y-4'>
-                <div className='flex items-center justify-between gap-3'>
-                  <StatusBadge status={run?.status ?? 'unknown'} />
-                  <span className='text-muted-foreground text-sm'>
-                    {processed}/{total}
-                  </span>
-                </div>
-                <Progress value={progress} />
-                <div className='grid gap-3 sm:grid-cols-4'>
-                  <SummaryCard
-                    title={t('Enabled channels')}
-                    value={run?.enabled_channels ?? 0}
-                    icon={<ShieldAlert className='size-4' />}
-                  />
-                  <SummaryCard
-                    title={t('Model combinations')}
-                    value={total}
-                    icon={<Search className='size-4' />}
-                  />
-                  <SummaryCard
-                    title={t('Completed')}
-                    value={run?.completed ?? 0}
-                    icon={<RefreshCw className='size-4' />}
-                  />
-                  <SummaryCard
-                    title={t('Failed')}
-                    value={run?.failed ?? 0}
-                    icon={<Clock className='size-4' />}
-                    danger={Boolean(run?.failed)}
-                  />
-                </div>
-                {run?.error ? (
-                  <div className='border-destructive/40 bg-destructive/5 rounded-md border p-3'>
-                    <p className='text-destructive text-sm font-medium'>
-                      {t('Inspection failed')}
-                    </p>
-                    <p className='text-muted-foreground mt-1 text-xs'>
-                      {run.error}
-                    </p>
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('Purity scan results')}</CardTitle>
-            </CardHeader>
-            <CardContent className='overflow-x-auto p-0'>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('Channel')}</TableHead>
-                    <TableHead>{t('Model')}</TableHead>
-                    <TableHead>{t('Risk')}</TableHead>
-                    <TableHead>{t('Coverage')}</TableHead>
-                    <TableHead>{t('Status')}</TableHead>
-                    <TableHead>{t('Updated at')}</TableHead>
-                    <TableHead className='text-right'>{t('Actions')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {results.map((result) => {
-                    const coverage = coveragePercent(result.coverage)
-                    const failed =
-                      result.status === 'failed' || Boolean(result.error_class)
-                    return (
-                      <TableRow key={result.id}>
-                        <TableCell className='font-medium'>
-                          {result.channel_name ?? `#${result.channel_id}`}
-                        </TableCell>
-                        <TableCell className='font-mono text-xs'>
-                          {result.model}
-                        </TableCell>
-                        <TableCell>
-                          {failed ? (
-                            <div className='space-y-1'>
-                              <Badge variant='destructive'>
-                                {t('Risk not determined')}
-                              </Badge>
-                              <p className='text-destructive max-w-52 text-xs'>
-                                {operationalErrorLabel(t, result.error_class)}
-                              </p>
-                            </div>
-                          ) : (
-                            <RiskBadge risk={result.risk} />
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {failed ? (
-                            <span className='text-muted-foreground text-xs'>
-                              {t('Not available')}
-                            </span>
-                          ) : (
-                            <div className='flex min-w-28 items-center gap-2'>
-                              <Progress value={coverage} />
-                              <span className='text-xs'>{coverage}%</span>
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <StatusBadge
-                            status={failed ? 'failed' : result.status}
-                          />
-                        </TableCell>
-                        <TableCell className='text-muted-foreground text-xs whitespace-nowrap'>
-                          {formatTimestamp(
-                            result.updated_at ?? result.created_at
-                          )}
-                        </TableCell>
-                        <TableCell className='text-right'>
-                          <Button
-                            size='sm'
-                            variant='ghost'
-                            disabled={result.scan_id === undefined}
-                            onClick={() => setDetail(result)}
-                          >
-                            {t('View evidence')}
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                  {!resultsQuery.isLoading &&
-                  !resultsQuery.isError &&
-                  results.length === 0 ? (
-                    <TableRow>
-                      <TableCell
-                        colSpan={7}
-                        className='text-muted-foreground h-28 text-center'
-                      >
-                        {t('No purity scan results yet.')}
-                      </TableCell>
-                    </TableRow>
-                  ) : null}
-                  {resultsQuery.isLoading ? (
-                    <TableRow>
-                      <TableCell
-                        colSpan={7}
-                        className='text-muted-foreground h-28 text-center'
-                      >
-                        {t('Loading...')}
-                      </TableCell>
-                    </TableRow>
-                  ) : null}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </div>
-
-        <Dialog
-          open={detail !== null}
-          onOpenChange={(open) => !open && setDetail(null)}
-        >
-          <DialogContent className='sm:max-w-2xl'>
-            <DialogHeader>
-              <DialogTitle>{t('Purity evidence')}</DialogTitle>
-              <DialogDescription>
-                {detailResult?.summary ||
-                  t('Signals and observations collected during this scan.')}
-              </DialogDescription>
-            </DialogHeader>
-            <div className='max-h-[60vh] space-y-3 overflow-y-auto'>
-              {detailQuery.isLoading ? (
-                <p className='text-muted-foreground py-8 text-center text-sm'>
-                  {t('Loading...')}
-                </p>
-              ) : null}
-              {detailQuery.isError ? (
-                <ErrorPanel
-                  error={detailQuery.error}
-                  fallback={t('Failed to load purity scan details.')}
-                  onRetry={() => void detailQuery.refetch()}
-                />
-              ) : null}
-              {!detailQuery.isLoading && !detailQuery.isError
-                ? detailResult?.evidence?.map((evidence) => (
-                    <div
-                      key={evidence.id}
-                      className='bg-muted/40 rounded-lg border p-3'
-                    >
-                      <p className='font-medium'>
-                        {evidenceTitle(t, evidence)}
-                      </p>
-                      {evidence.description ? (
-                        <p className='text-muted-foreground mt-1 text-sm'>
-                          {evidence.description}
-                        </p>
-                      ) : null}
-                      {evidence.expected ? (
-                        <p className='mt-2 text-xs'>
-                          <span className='font-medium'>{t('Expected')}:</span>{' '}
-                          {evidence.expected}
-                        </p>
-                      ) : null}
-                      {evidence.actual ? (
-                        <p className='mt-1 text-xs'>
-                          <span className='font-medium'>{t('Observed')}:</span>{' '}
-                          {evidence.actual}
-                        </p>
-                      ) : null}
-                    </div>
-                  ))
-                : null}
-              {!detailQuery.isLoading &&
-              !detailQuery.isError &&
-              !detailResult?.evidence?.length ? (
-                <p className='text-muted-foreground py-8 text-center text-sm'>
-                  {t('No evidence was returned for this scan.')}
-                </p>
-              ) : null}
-            </div>
-          </DialogContent>
-        </Dialog>
-      </SectionPageLayout.Content>
-    </SectionPageLayout>
-  )
-}
-
-function SummaryCard(props: {
-  title: string
-  value: string | number
-  icon: ReactNode
-  danger?: boolean
-}) {
-  return (
-    <div className='bg-muted/30 flex items-center justify-between rounded-lg border p-3'>
-      <div>
-        <p className='text-muted-foreground text-xs'>{props.title}</p>
-        <p
-          className={
-            props.danger
-              ? 'text-destructive mt-1 text-xl font-semibold'
-              : 'mt-1 text-xl font-semibold'
-          }
-        >
-          {props.value}
-        </p>
-      </div>
-      <div className='bg-muted rounded-full p-2'>{props.icon}</div>
-    </div>
-  )
+  const deleteMutation = useMutation({ mutationFn: deletePurityGroup, onSuccess: async () => { toast.success(t('Benchmark group deleted')); await refresh() }, onError: (error) => toast.error(errorMessage(error) || t('Failed to delete benchmark group')) })
+  const groups = groupsQuery.data ?? []
+  const results = useMemo(() => groups.flatMap((group) => group.results.map((result) => ({ group, result }))), [groups])
+  return <SectionPageLayout>
+    <SectionPageLayout.Title>{t('Channel purity')}</SectionPageLayout.Title>
+    <SectionPageLayout.Content><div className='space-y-4'>
+      <div className='flex flex-wrap items-start justify-between gap-3'><div><h2 className='text-lg font-semibold'>{t('Grouped baseline detection')}</h2><p className='text-muted-foreground max-w-3xl text-sm'>{t('Compare every target with its designated baseline independently. Results are bucketed by actual model; no whole-group average is calculated.')}</p></div><div className='flex gap-2'><Button variant='outline' onClick={() => void refresh()}><RefreshCw className={groupsQuery.isFetching ? 'animate-spin' : ''} />{t('Refresh')}</Button><Button onClick={() => setEditing(null)}><Plus />{t('Create group')}</Button></div></div>
+      {groupsQuery.isError ? <div className='border-destructive/40 bg-destructive/5 rounded-lg border p-4'><p className='text-destructive font-medium'>{t('Failed to load benchmark groups')}</p><p className='text-muted-foreground text-sm'>{errorMessage(groupsQuery.error)}</p><Button className='mt-2' size='sm' variant='outline' onClick={() => void groupsQuery.refetch()}>{t('Try again')}</Button></div> : null}
+      <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>{groups.map((group) => <Card key={group.id} className='gap-3 py-4'><CardContent className='space-y-3 px-4'><div className='flex items-start justify-between gap-2'><div><p className='font-medium'>{group.name}</p><p className='text-muted-foreground text-xs'>{t('{{count}} channels', { count: group.channel_ids.length })} · {t('Baseline')} #{group.baseline_channel_id}</p></div><Badge variant={group.enabled ? 'secondary' : 'outline'}>{group.enabled ? t('Enabled') : t('Disabled')}</Badge></div><div className='text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs'><span>{t('Every {{count}} minutes', { count: group.interval_minutes })}</span><span>{group.random_pairing_enabled ? t('Random pairing on') : t('Random pairing off')}</span><span>{t('Minimum {{count}} samples', { count: group.sampling.minimum_samples })}</span></div><div className='flex gap-2'><Button size='sm' variant='outline' onClick={() => setEditing(group)}><Pencil />{t('Edit')}</Button><Button size='sm' variant='outline' disabled={deleteMutation.isPending} onClick={() => { if (window.confirm(t('Delete this benchmark group and its configuration?'))) deleteMutation.mutate(group.id) }}><Trash2 />{t('Delete')}</Button></div></CardContent></Card>)}{!groupsQuery.isLoading && !groups.length ? <Card className='md:col-span-2 xl:col-span-3'><CardContent className='flex flex-col items-center py-10 text-center'><Activity className='text-muted-foreground mb-3 size-8' /><p className='font-medium'>{t('No benchmark groups yet')}</p><p className='text-muted-foreground text-sm'>{t('Create a group to begin collecting model-bucketed comparisons.')}</p></CardContent></Card> : null}</div>
+      <Card><CardHeader><CardTitle>{t('Independent target results')}</CardTitle></CardHeader><CardContent className='p-0'><div className='hidden overflow-x-auto md:block'><Table><TableHeader><TableRow><TableHead>{t('Target / baseline')}</TableHead><TableHead>{t('Actual model')}</TableHead><TableHead>{t('Status')}</TableHead><TableHead>{t('Samples')}</TableHead><TableHead>{t('Field / structure')}</TableHead><TableHead>{t('Token range')}</TableHead><TableHead>{t('Confidence')}</TableHead><TableHead>{t('Latest evidence / alert')}</TableHead><TableHead /></TableRow></TableHeader><TableBody>{results.map(({ result }) => <ResultRow key={result.id} result={result} onOpen={() => setDetail(result)} />)}{!results.length ? <TableRow><TableCell colSpan={9} className='text-muted-foreground h-24 text-center'>{groupsQuery.isLoading ? t('Loading…') : t('No formal detection results yet. Waiting states are shown when returned by the detector; missing data is not displayed as 0%.')}</TableCell></TableRow> : null}</TableBody></Table></div><div className='space-y-3 p-3 md:hidden'>{results.map(({ result }) => <ResultCard key={result.id} result={result} onOpen={() => setDetail(result)} />)}{!results.length ? <p className='text-muted-foreground py-8 text-center text-sm'>{t('No formal detection results yet. Waiting states are shown when returned by the detector; missing data is not displayed as 0%.')}</p> : null}</div></CardContent></Card>
+      <div className='flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm'><AlertTriangle className='mt-0.5 size-4 shrink-0 text-amber-600' /><p>{t('Status is reported per target and model bucket: BASELINE_UNAVAILABLE, LOW_SAMPLE, NO_TRAFFIC, WARMING_UP, HEALTHY, SUSPECT, ALERT, or DETECTOR_ERROR.')}</p></div>
+      <QuickProbe channels={channelsQuery.data ?? []} />
+    </div></SectionPageLayout.Content>
+    {editing !== undefined ? <GroupForm key={editing?.id ?? 'new'} open group={editing} channels={channelsQuery.data ?? []} saving={saveMutation.isPending} onOpenChange={(open) => { if (!open) setEditing(undefined) }} onSave={(input) => saveMutation.mutate({ group: editing, input })} /> : null}
+    <ResultDetail result={detail} onClose={() => setDetail(null)} />
+  </SectionPageLayout>
 }
