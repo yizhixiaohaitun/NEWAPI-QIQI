@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,75 @@ func setupUserUpdateTestState(t *testing.T) {
 		common.RedisEnabled = oldRedisEnabled
 		common.BatchUpdateEnabled = oldBatchUpdateEnabled
 	})
+}
+
+func TestInvitationCountAndRewards(t *testing.T) {
+	setupUserUpdateTestState(t)
+
+	oldNewUserQuota := common.QuotaForNewUser
+	oldInviterReward := common.QuotaForInviter
+	oldInviteeReward := common.QuotaForInvitee
+	paymentSetting := operation_setting.GetPaymentSetting()
+	oldPaymentSetting := *paymentSetting
+	common.QuotaForNewUser = 0
+	common.QuotaForInviter = 120
+	common.QuotaForInvitee = 80
+	paymentSetting.ComplianceConfirmed = false
+	paymentSetting.ComplianceTermsVersion = ""
+	t.Cleanup(func() {
+		common.QuotaForNewUser = oldNewUserQuota
+		common.QuotaForInviter = oldInviterReward
+		common.QuotaForInvitee = oldInviteeReward
+		*paymentSetting = oldPaymentSetting
+	})
+
+	inviter := User{
+		Username: "inviter-user",
+		Password: "password",
+		AffCode:  "invite-code",
+		Status:   common.UserStatusEnabled,
+	}
+	require.NoError(t, DB.Create(&inviter).Error)
+
+	firstInvitee := &User{
+		Username: "first-invitee",
+		Password: "password",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+	}
+	require.NoError(t, firstInvitee.Insert(inviter.Id))
+
+	var storedInviter User
+	require.NoError(t, DB.First(&storedInviter, inviter.Id).Error)
+	assert.Equal(t, 1, storedInviter.AffCount)
+	assert.Zero(t, storedInviter.AffQuota)
+	assert.Zero(t, storedInviter.AffHistoryQuota)
+
+	paymentSetting.ComplianceConfirmed = true
+	paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+	secondInvitee := &User{
+		Username: "second-invitee",
+		Password: "password",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+	}
+	require.NoError(t, secondInvitee.Insert(inviter.Id))
+
+	require.NoError(t, DB.First(&storedInviter, inviter.Id).Error)
+	assert.Equal(t, 2, storedInviter.AffCount)
+	assert.Equal(t, 120, storedInviter.AffQuota)
+	assert.Equal(t, 120, storedInviter.AffHistoryQuota)
+
+	var storedInvitee User
+	require.NoError(t, DB.First(&storedInvitee, secondInvitee.Id).Error)
+	assert.Equal(t, inviter.Id, storedInvitee.InviterId)
+	assert.Equal(t, 80, storedInvitee.Quota)
+
+	users, total, err := GetInvitedUsers(inviter.Id, &common.PageInfo{Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, total)
+	require.Len(t, users, 2)
+	assert.Equal(t, "second-invitee", users[0].Username)
 }
 
 func TestUserUpdateDoesNotOverwriteAccountingFields(t *testing.T) {

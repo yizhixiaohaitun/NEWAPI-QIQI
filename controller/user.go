@@ -237,8 +237,16 @@ func Register(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserExists)
 		return
 	}
-	affCode := user.AffCode // this code is the inviter's code, not the user's own code
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
+	affCode := strings.TrimSpace(user.AffCode) // this code is the inviter's code, not the user's own code
+	inviterId := 0
+	if affCode != "" {
+		var lookupErr error
+		inviterId, lookupErr = model.GetUserIdByAffCode(affCode)
+		if lookupErr != nil || inviterId == 0 {
+			common.ApiErrorI18n(c, i18n.MsgUserAffCodeInvalid)
+			return
+		}
+	}
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
@@ -457,7 +465,18 @@ func GetAffCode(c *gin.Context) {
 		"message": "",
 		"data":    user.AffCode,
 	})
-	return
+}
+
+func GetInvitedUsers(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
+	users, total, err := model.GetInvitedUsers(c.GetInt("id"), pageInfo)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(users)
+	common.ApiSuccess(c, pageInfo)
 }
 
 func GetSelf(c *gin.Context) {
@@ -470,6 +489,12 @@ func GetSelf(c *gin.Context) {
 	}
 	// Hide admin remarks: set to empty to trigger omitempty tag, ensuring the remark field is not included in JSON returned to regular users
 	user.Remark = ""
+
+	// 邀请关系以受邀用户记录为准，兼容修复前已注册但计数未累加的数据。
+	invitedCount := user.AffCount
+	if total, countErr := model.CountInvitedUsers(id); countErr == nil {
+		invitedCount = int(total)
+	}
 
 	// 计算用户权限信息
 	permissions := calculateUserPermissions(userRole)
@@ -496,7 +521,7 @@ func GetSelf(c *gin.Context) {
 		"used_quota":        user.UsedQuota,
 		"request_count":     user.RequestCount,
 		"aff_code":          user.AffCode,
-		"aff_count":         user.AffCount,
+		"aff_count":         invitedCount,
 		"aff_quota":         user.AffQuota,
 		"aff_history_quota": user.AffHistoryQuota,
 		"inviter_id":        user.InviterId,

@@ -93,6 +93,7 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/passkey/verify/finish", controller.PasskeyVerifyFinish)
 				selfRoute.DELETE("/passkey", controller.PasskeyDelete)
 				selfRoute.GET("/aff", controller.GetAffCode)
+				selfRoute.GET("/aff/invited", controller.GetInvitedUsers)
 				selfRoute.GET("/topup/info", controller.GetTopUpInfo)
 				selfRoute.GET("/topup/self", controller.GetUserTopUps)
 				selfRoute.POST("/topup", middleware.CriticalRateLimit(), controller.TopUp)
@@ -145,6 +146,13 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
 			}
+		}
+
+		invitationSettlementRoute := apiRouter.Group("/invitation-settlement")
+		invitationSettlementRoute.Use(middleware.RootAuth())
+		{
+			invitationSettlementRoute.POST("/retry-pending", controller.RetryPendingInvitationSettlements)
+			invitationSettlementRoute.POST("/:invitee_id/retry", controller.RetryInvitationSettlement)
 		}
 
 		// Subscription billing (plans, purchase, admin management)
