@@ -77,7 +77,7 @@ export type PurityGroup = {
   updated_at?: string | number
 }
 export type PurityGroupInput = Omit<PurityGroup, 'id' | 'results' | 'last_run_at' | 'next_run_at' | 'last_error' | 'updated_at'>
-export type ChannelOption = { id: number; name: string; models?: string[] }
+export type ChannelOption = { id: number; name: string; models?: string[]; groups: string[] }
 export type QuickProbeInput = { channel_id: number; model?: string }
 export type QuickProbeResult = {
   ok: boolean

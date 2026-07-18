@@ -6,6 +6,7 @@ it under the terms of the GNU Affero General Public License as published by
 the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 */
 import { api } from '@/lib/api'
+import { normalizeChannelGroups } from './form-state'
 import type {
   ApiEnvelope,
   ChannelOption,
@@ -124,7 +125,12 @@ export async function listChannelOptions(): Promise<ChannelOption[]> {
   const response = await api.get('/api/channel/search', { params: { p: 1, page_size: 1000 }, ...config })
   const payload = unwrap(response.data)
   const items = array(Array.isArray(payload) ? payload : record(payload).items ?? record(payload).data)
-  return items.map((raw) => { const item = record(raw); return { id: number(item.id), name: String(item.name ?? `#${item.id}`), models: typeof item.models === 'string' ? item.models.split(',') : array(item.models).map(String) } })
+  return items.map((raw) => { const item = record(raw); return {
+    id: number(item.id),
+    name: String(item.name ?? `#${item.id}`),
+    models: typeof item.models === 'string' ? item.models.split(',') : array(item.models).map(String),
+    groups: normalizeChannelGroups(item.group ?? item.groups),
+  } })
 }
 export async function runPurityGroup(id: string): Promise<void> {
   const response = await api.post(`${ROOT}/${id}/run`, undefined, config)

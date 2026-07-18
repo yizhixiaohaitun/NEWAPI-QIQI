@@ -5369,6 +5369,18 @@
     "Purity detector status: SUSPECT": "可疑",
     "Purity detector status: ALERT": "告警",
     "Purity detector status: DETECTOR_ERROR": "检测器错误",
-    "Status is reported per target and model bucket: BASELINE_UNAVAILABLE, LOW_SAMPLE, NO_TRAFFIC, WARMING_UP, HEALTHY, SUSPECT, ALERT, or DETECTOR_ERROR.": "状态按目标渠道及模型桶独立报告：基准不可用、样本不足、无流量、预热中、健康、可疑、告警或检测器错误。"
+    "Status is reported per target and model bucket: BASELINE_UNAVAILABLE, LOW_SAMPLE, NO_TRAFFIC, WARMING_UP, HEALTHY, SUSPECT, ALERT, or DETECTOR_ERROR.": "状态按目标渠道及模型桶独立报告：基准不可用、样本不足、无流量、预热中、健康、可疑、告警或检测器错误。",
+    "Detection group name": "检测分组名称",
+    "Channel group (from channel management)": "渠道分组（来自渠道管理）",
+    "All channel groups": "全部渠道分组",
+    "This filter only changes the visible channel list. Manually selected channels in other channel groups are retained.": "筛选仅改变当前可见渠道，其他渠道分组中已手动选择的渠道会保留。",
+    "Select current channel group": "选中当前渠道分组",
+    "Clear current channel group": "清除当前渠道分组",
+    "{{selected}} selected in total; {{visible}} visible": "共选中 {{selected}} 个；当前显示 {{visible}} 个",
+    "Channels in detection group": "检测分组内渠道",
+    "No channels match this channel group.": "当前渠道分组下没有渠道。",
+    "Baseline channel (unique within detection group)": "基准渠道（检测分组内唯一）",
+    "Select a baseline from selected channels": "从已选渠道中选择基准",
+    "No channel group": "无渠道分组"
   }
 }
