@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	channelpurity "github.com/QuantumNous/new-api/service/channel_purity"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -327,9 +328,24 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
+	if info != nil && info.PurityDetectionRequest {
+		req.Header.Set(channelpurity.DetectionHeader, "1")
+	}
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
+	}
+	if info != nil && info.PurityResponseObserver != nil {
+		channelpurity.ObserveResponse(resp, channelpurity.FeatureSinkFunc(func(features channelpurity.AnonymousFeatures) {
+			defer func() { _ = recover() }()
+			info.PurityResponseObserver(common.PurityObservation{
+				Protocol: features.Protocol, StatusCode: features.StatusCode, ModelFamily: features.ModelFamily,
+				FieldPaths: features.FieldPaths, EventSequence: features.EventSequence, FinishReasons: features.FinishReasons,
+				ProviderInput: features.ProviderUsage.Input, ProviderOutput: features.ProviderUsage.Output, ProviderTotal: features.ProviderUsage.Total,
+				UnifiedTokenCount: features.UnifiedTokenCount, HeaderPresence: features.HeaderPresence,
+				HasSignatureID: features.HasSignatureID, Truncated: features.Truncated,
+			})
+		}), channelpurity.DefaultObservationLimit)
 	}
 	return resp, nil
 }

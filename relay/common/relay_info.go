@@ -60,6 +60,24 @@ type ResponsesUsageInfo struct {
 	BuiltInTools map[string]*BuildInToolInfo
 }
 
+// PurityObservation is intentionally protocol-only: it cannot carry response
+// content, reasoning text, tool arguments, identifiers, or header values.
+type PurityObservation struct {
+	Protocol          string
+	StatusCode        int
+	ModelFamily       string
+	FieldPaths        []string
+	EventSequence     []string
+	FinishReasons     []string
+	ProviderInput     int
+	ProviderOutput    int
+	ProviderTotal     int
+	UnifiedTokenCount int
+	HeaderPresence    map[string]bool
+	HasSignatureID    bool
+	Truncated         bool
+}
+
 type ChannelMeta struct {
 	ChannelType          int
 	ChannelId            int
@@ -155,6 +173,12 @@ type RelayInfo struct {
 	ParamOverrideAudit                    []string
 	DeferStreamHeadersUntilResponse       bool
 	ResponsesStreamErrorBeforeCommit      bool
+
+	// PurityResponseObserver receives anonymous structural evidence extracted from
+	// the raw upstream response before protocol normalization.
+	PurityResponseObserver func(PurityObservation)
+	PurityDetectionRequest bool
+	PurityPairID           string
 
 	// UpstreamRequestBodySize is the byte size of the marshaled upstream request
 	// body. It is set when the body is wrapped in a BodyStorage (see
