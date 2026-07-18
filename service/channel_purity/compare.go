@@ -2,6 +2,7 @@ package channel_purity
 
 import (
 	"errors"
+	"math"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -10,7 +11,8 @@ import (
 )
 
 // AggregatePairWindow persists one independent group+target+actual-model result.
-// It deliberately never reads quick-probe tables and never produces a group score.
+// Only valid baseline/target rows matched one-to-one by the same non-empty RunKey
+// participate in any formal statistic.
 func AggregatePairWindow(groupID uint, targetChannelID int, actualModel string, windowStart, windowEnd int64, policy AggregatePolicy) (*model.ChannelPurityAssessment, error) {
 	group, err := model.GetPurityGroup(groupID)
 	if err != nil {
@@ -25,24 +27,23 @@ func AggregatePairWindow(groupID uint, targetChannelID int, actualModel string, 
 			targetMember = true
 		}
 	}
-	if !targetMember {
+	if baselineID == 0 || !targetMember {
 		return nil, errors.New("target channel is not a non-baseline member of group")
 	}
-	var baseline, target []model.ChannelPuritySample
+	var baselineRows, targetRows []model.ChannelPuritySample
 	query := func(channelID int, into *[]model.ChannelPuritySample) error {
-		return model.DB.Where("group_id = ? AND channel_id = ? AND actual_model = ? AND observed_at >= ? AND observed_at < ?", groupID, channelID, actualModel, windowStart, windowEnd).Order("observed_at asc").Find(into).Error
+		return model.DB.Where("group_id = ? AND channel_id = ? AND actual_model = ? AND observed_at >= ? AND observed_at < ?", groupID, channelID, actualModel, windowStart, windowEnd).Order("observed_at asc, id asc").Find(into).Error
 	}
-	if baselineID != 0 {
-		if err = query(baselineID, &baseline); err != nil {
-			return nil, err
-		}
-	}
-	if err = query(targetChannelID, &target); err != nil {
+	if err = query(baselineID, &baselineRows); err != nil {
 		return nil, err
 	}
-	structure, token, confidence, evidence := CompareSamples(baseline, target)
+	if err = query(targetChannelID, &targetRows); err != nil {
+		return nil, err
+	}
+	baseline, target := matchValidSamples(baselineRows, targetRows)
+	structure, token, confidence, evidence := CompareSamples(baseline, target, policy.MinSamples)
 	combined := structure*.65 + token*.35
-	window := WindowResult{BaselineAvailable: baselineID != 0 && len(baseline) > 0, BaselineSamples: len(baseline), TargetSamples: len(target), Similarity: combined, Confidence: confidence}
+	window := WindowResult{BaselineAvailable: len(baseline) > 0, BaselineSamples: len(baseline), TargetSamples: len(target), Similarity: combined, Confidence: confidence}
 	var previous model.ChannelPurityAssessment
 	err = model.DB.Where("group_id = ? AND target_channel_id = ? AND actual_model = ?", groupID, targetChannelID, actualModel).First(&previous).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -53,22 +54,18 @@ func AggregatePairWindow(groupID uint, targetChannelID int, actualModel string, 
 	if next.FirstSeenAt == 0 {
 		next.FirstSeenAt = now
 	}
-	next.GroupID = groupID
-	next.TargetChannelID = targetChannelID
-	next.ActualModel = actualModel
-	next.UpdatedAt = now
+	next.GroupID, next.TargetChannelID, next.ActualModel, next.UpdatedAt = groupID, targetChannelID, actualModel, now
 	evidenceJSON := "[]"
 	if encoded, e := common.Marshal(evidence); e == nil {
 		evidenceJSON = string(encoded)
 	}
 	baselineMin, baselineMax := tokenBounds(baseline)
 	targetMin, targetMax := tokenBounds(target)
-	pairedCount := pairedSampleCount(baseline, target)
-	deviationRate := tokenDeviationRate(baselineMin, baselineMax, target)
+	deviationRate := pairedTokenDeviationRate(baseline, target, policy.MinSamples)
 	run := model.ChannelPurityPairRun{
 		GroupID: groupID, BaselineChannelID: baselineID, TargetChannelID: targetChannelID, ActualModel: actualModel,
 		WindowStartedAt: windowStart, WindowEndedAt: windowEnd, BaselineSampleCount: len(baseline), TargetSampleCount: len(target),
-		PairedSampleCount: pairedCount, StructureSimilarity: structure, TokenSimilarity: token,
+		PairedSampleCount: len(baseline), StructureSimilarity: structure, TokenSimilarity: token,
 		BaselineTokenMin: baselineMin, BaselineTokenMax: baselineMax, TargetTokenMin: targetMin, TargetTokenMax: targetMax,
 		TokenDeviationRate: deviationRate, AnomalyEvidenceJSON: evidenceJSON, Confidence: confidence, State: next.State, CreatedAt: now,
 	}
@@ -99,55 +96,77 @@ func AggregatePairWindow(groupID uint, targetChannelID int, actualModel string, 
 	return &next, nil
 }
 
+func matchValidSamples(baseline, target []model.ChannelPuritySample) ([]model.ChannelPuritySample, []model.ChannelPuritySample) {
+	byKey := make(map[string][]model.ChannelPuritySample)
+	for _, sample := range baseline {
+		if sample.Valid && sample.RunKey != "" {
+			byKey[sample.RunKey] = append(byKey[sample.RunKey], sample)
+		}
+	}
+	matchedBaseline := make([]model.ChannelPuritySample, 0)
+	matchedTarget := make([]model.ChannelPuritySample, 0)
+	for _, sample := range target {
+		candidates := byKey[sample.RunKey]
+		if !sample.Valid || sample.RunKey == "" || len(candidates) == 0 {
+			continue
+		}
+		matchedBaseline = append(matchedBaseline, candidates[0])
+		matchedTarget = append(matchedTarget, sample)
+		byKey[sample.RunKey] = candidates[1:]
+	}
+	return matchedBaseline, matchedTarget
+}
+
+// CountValidPairedSamples returns the existing formal pair count for one isolated window quota.
+func CountValidPairedSamples(groupID uint, baselineChannelID, targetChannelID int, actualModel string, windowStart, windowEnd int64) (int64, error) {
+	var baseline, target []model.ChannelPuritySample
+	load := func(channelID int, into *[]model.ChannelPuritySample) error {
+		return model.DB.Where("group_id = ? AND channel_id = ? AND actual_model = ? AND observed_at >= ? AND observed_at < ?", groupID, channelID, actualModel, windowStart, windowEnd).Order("observed_at asc, id asc").Find(into).Error
+	}
+	if err := load(baselineChannelID, &baseline); err != nil {
+		return 0, err
+	}
+	if err := load(targetChannelID, &target); err != nil {
+		return 0, err
+	}
+	paired, _ := matchValidSamples(baseline, target)
+	return int64(len(paired)), nil
+}
+
 func tokenBounds(samples []model.ChannelPuritySample) (int, int) {
-	minimum, maximum := 0, 0
+	minimum, maximum, initialized := 0, 0, false
 	for _, sample := range samples {
 		if !sample.Valid || sample.TotalTokens < 0 {
 			continue
 		}
-		if minimum == 0 || sample.TotalTokens < minimum {
+		if !initialized || sample.TotalTokens < minimum {
 			minimum = sample.TotalTokens
 		}
-		if sample.TotalTokens > maximum {
+		if !initialized || sample.TotalTokens > maximum {
 			maximum = sample.TotalTokens
 		}
+		initialized = true
 	}
 	return minimum, maximum
 }
 
-func pairedSampleCount(baseline, target []model.ChannelPuritySample) int {
-	baselineKeys := map[string]int{}
-	for _, sample := range baseline {
-		if sample.Valid && sample.RunKey != "" {
-			baselineKeys[sample.RunKey]++
+func pairedTokenDeviationRate(baseline, target []model.ChannelPuritySample, minSamples int) float64 {
+	pairs := make([]TokenPair, 0, len(baseline))
+	for i := range baseline {
+		pair, ok := NewTokenPair(baseline[i].ActualModel, "purity_probe", target[i].TotalTokens, baseline[i].TotalTokens, target[i].TotalTokens, baseline[i].TotalTokens)
+		if ok {
+			pairs = append(pairs, pair)
 		}
 	}
-	count := 0
-	for _, sample := range target {
-		if sample.Valid && baselineKeys[sample.RunKey] > 0 {
-			count++
-			baselineKeys[sample.RunKey]--
-		}
-	}
-	return count
-}
-
-func tokenDeviationRate(minimum, maximum int, target []model.ChannelPuritySample) float64 {
-	if len(target) == 0 || maximum < minimum {
+	if len(pairs) == 0 {
 		return 0
 	}
-	valid, outside := 0, 0
-	for _, sample := range target {
-		if !sample.Valid {
-			continue
-		}
-		valid++
-		if sample.TotalTokens < minimum || sample.TotalTokens > maximum {
+	interval := AnalyzeTokenRatios(pairs[0].ModelFamily, "purity_probe", pairs, minSamples)
+	outside := 0
+	for _, pair := range pairs {
+		if pair.Ratio < interval.Lower || pair.Ratio > interval.Upper {
 			outside++
 		}
 	}
-	if valid == 0 {
-		return 0
-	}
-	return float64(outside) / float64(valid)
+	return math.Min(1, float64(outside)/float64(len(pairs)))
 }

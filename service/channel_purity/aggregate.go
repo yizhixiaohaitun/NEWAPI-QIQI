@@ -2,7 +2,6 @@ package channel_purity
 
 import (
 	"math"
-	"sort"
 
 	"github.com/QuantumNous/new-api/model"
 )
@@ -19,9 +18,13 @@ func DefaultAggregatePolicy() AggregatePolicy {
 	return AggregatePolicy{MinSamples: 3, AlertWindows: 3, RecoveryWindows: 2, SuspectThreshold: .72, AlertThreshold: .55}
 }
 
-// CompareSamples compares only a target against its own group's baseline.
-func CompareSamples(baseline, target []model.ChannelPuritySample) (structure, token, confidence float64, evidence []string) {
-	if len(baseline) == 0 || len(target) == 0 {
+// CompareSamples compares only samples already matched by RunKey.
+func CompareSamples(baseline, target []model.ChannelPuritySample, minimumSamples ...int) (structure, token, confidence float64, evidence []string) {
+	minSamples := 5
+	if len(minimumSamples) > 0 {
+		minSamples = minimumSamples[0]
+	}
+	if len(baseline) == 0 || len(target) == 0 || len(baseline) != len(target) {
 		return 0, 0, 0, []string{"missing_comparable_samples"}
 	}
 	bf, tf := signatureFrequency(baseline), signatureFrequency(target)
@@ -40,24 +43,55 @@ func CompareSamples(baseline, target []model.ChannelPuritySample) (structure, to
 	if union > 0 {
 		structure = float64(intersection) / float64(union)
 	}
-	bm, tm := medianTokens(baseline), medianTokens(target)
-	if maxInt(bm, tm) == 0 {
-		token = 1
+
+	pairs := make([]TokenPair, 0, len(baseline))
+	for i := range baseline {
+		pair, ok := NewTokenPair(actualModelFamily(baseline[i], target[i]), "purity_probe", target[i].TotalTokens, baseline[i].TotalTokens, target[i].TotalTokens, baseline[i].TotalTokens)
+		if ok {
+			pairs = append(pairs, pair)
+		}
+	}
+	modelFamily := ""
+	if len(pairs) > 0 {
+		modelFamily = pairs[0].ModelFamily
+	}
+	interval := AnalyzeTokenRatios(modelFamily, "purity_probe", pairs, minSamples)
+	if interval.Samples == 0 {
+		token = 0
 	} else {
-		token = 1 - math.Abs(float64(bm-tm))/float64(maxInt(bm, tm))
+		token = 1 - math.Abs(interval.Median-1)/math.Max(1, interval.Median)
+		if interval.Alert {
+			outside := 0
+			for _, pair := range pairs {
+				if pair.Ratio < interval.Lower || pair.Ratio > interval.Upper {
+					outside++
+				}
+			}
+			// Repeated robust-interval outliers must affect the formal score,
+			// rather than merely being attached as evidence beside a median score.
+			token *= math.Max(0, 1-3*float64(outside)/float64(len(pairs)))
+		}
 		if token < 0 {
 			token = 0
 		}
 	}
-	confidence = math.Min(1, float64(minInt(len(baseline), len(target)))/10)
+	confidence = math.Min(1, float64(len(baseline))/10)
 	if structure < .72 {
 		evidence = append(evidence, "structure_distribution_shift")
 	}
-	if token < .70 {
+	if token < .70 || interval.Alert {
 		evidence = append(evidence, "token_interval_shift")
 	}
 	return
 }
+
+func actualModelFamily(baseline, target model.ChannelPuritySample) string {
+	if baseline.ActualModel == target.ActualModel {
+		return baseline.ActualModel
+	}
+	return ""
+}
+
 func signatureFrequency(samples []model.ChannelPuritySample) map[string]int {
 	out := map[string]int{}
 	for _, s := range samples {
@@ -66,19 +100,6 @@ func signatureFrequency(samples []model.ChannelPuritySample) map[string]int {
 		}
 	}
 	return out
-}
-func medianTokens(samples []model.ChannelPuritySample) int {
-	v := make([]int, 0, len(samples))
-	for _, s := range samples {
-		if s.Valid {
-			v = append(v, s.TotalTokens)
-		}
-	}
-	if len(v) == 0 {
-		return 0
-	}
-	sort.Ints(v)
-	return v[len(v)/2]
 }
 func minInt(a, b int) int {
 	if a < b {

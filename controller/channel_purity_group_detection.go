@@ -213,6 +213,24 @@ func runPurityGroupDetection(ctx context.Context, group *model.ChannelPurityGrou
 		if ctx.Err() != nil {
 			return pairs, ctx.Err()
 		}
+		windowEnd := time.Now().Unix() + 1
+		windowStart := windowEnd - int64(group.WindowMinutes*60)
+		eligibleTargets := make([]*model.Channel, 0, len(modelsToTargets[modelName]))
+		for _, target := range modelsToTargets[modelName] {
+			existing, countErr := channelpurity.CountValidPairedSamples(group.ID, baselineID, target.Id, modelName, windowStart, windowEnd)
+			if countErr != nil {
+				if firstErr == nil {
+					firstErr = countErr
+				}
+				continue
+			}
+			if group.MaxSamplesPerWindow <= 0 || existing < int64(group.MaxSamplesPerWindow) {
+				eligibleTargets = append(eligibleTargets, target)
+			}
+		}
+		if len(eligibleTargets) == 0 {
+			continue
+		}
 		runKey := common.NewRequestId()
 		baselineSample := runPuritySample(ctx, group.ID, runKey, baseline, modelName, userID)
 		if err = model.CreatePuritySample(&baselineSample); err != nil {
@@ -221,10 +239,7 @@ func runPurityGroupDetection(ctx context.Context, group *model.ChannelPurityGrou
 			}
 			continue
 		}
-		for _, target := range modelsToTargets[modelName] {
-			if group.MaxSamplesPerWindow > 0 && pairs >= group.MaxSamplesPerWindow {
-				break
-			}
+		for _, target := range eligibleTargets {
 			targetSample := runPuritySample(ctx, group.ID, runKey, target, modelName, userID)
 			if createErr := model.CreatePuritySample(&targetSample); createErr != nil {
 				if firstErr == nil {
@@ -232,8 +247,6 @@ func runPurityGroupDetection(ctx context.Context, group *model.ChannelPurityGrou
 				}
 				continue
 			}
-			windowEnd := time.Now().Unix() + 1
-			windowStart := windowEnd - int64(group.WindowMinutes*60)
 			policy := channelpurity.DefaultAggregatePolicy()
 			policy.MinSamples = group.MinimumSamples
 			if _, aggregateErr := channelpurity.AggregatePairWindow(group.ID, target.Id, modelName, windowStart, windowEnd, policy); aggregateErr != nil && firstErr == nil {
