@@ -10,7 +10,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
@@ -462,17 +461,6 @@ func GetInvitedUsers(inviterId int, pageInfo *common.PageInfo) ([]InvitedUser, i
 	return users, total, nil
 }
 
-func recordInvitation(inviterId int, reward int) error {
-	updates := map[string]interface{}{
-		"aff_count": gorm.Expr("aff_count + ?", 1),
-	}
-	if reward > 0 {
-		updates["aff_quota"] = gorm.Expr("aff_quota + ?", reward)
-		updates["aff_history"] = gorm.Expr("aff_history + ?", reward)
-	}
-	return DB.Model(&User{}).Where("id = ?", inviterId).Updates(updates).Error
-}
-
 func (user *User) TransferAffQuotaToQuota(quota int) error {
 	// 检查quota是否小于最小额度
 	if float64(quota) < common.QuotaPerUnit {
@@ -562,6 +550,11 @@ func ensureEmailAvailableWithTx(tx *gorm.DB, email string, excludeUserID int) er
 }
 
 func (user *User) Insert(inviterId int) error {
+	inviterReward, inviteeReward := 0, 0
+	if inviterId != 0 {
+		inviterReward, inviteeReward = invitationRewardSnapshot()
+	}
+
 	if err := DB.Transaction(func(tx *gorm.DB) error {
 		return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
 			if err := user.prepareForInsert(tx); err != nil {
@@ -578,7 +571,13 @@ func (user *User) Insert(inviterId int) error {
 				user.SetSetting(defaultSetting)
 			}
 
-			return tx.Create(user).Error
+			if err := tx.Create(user).Error; err != nil {
+				return err
+			}
+			if inviterId == 0 {
+				return nil
+			}
+			return createInvitationSettlementWithTx(tx, inviterId, user.Id, inviterReward, inviteeReward)
 		})
 	}); err != nil {
 		return err
@@ -608,20 +607,7 @@ func (user *User) finishInsert(inviterId int) {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
 	}
 	if inviterId != 0 {
-		reward := 0
-		if operation_setting.IsPaymentComplianceConfirmed() {
-			reward = common.QuotaForInviter
-			if common.QuotaForInvitee > 0 {
-				_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-				RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-			}
-			if reward > 0 {
-				RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(reward)))
-			}
-		}
-		if err := recordInvitation(inviterId, reward); err != nil {
-			common.SysError(fmt.Sprintf("记录邀请关系失败 inviter_id=%d invitee_id=%d: %s", inviterId, user.Id, err.Error()))
-		}
+		retryInvitationAfterRegistration(inviterId, user.Id)
 	}
 }
 
@@ -633,6 +619,11 @@ func (user *User) FinishInsert(inviterId int) {
 // This is used for OAuth registration where user creation and binding need to be atomic.
 // Post-creation tasks (sidebar config, logs, inviter rewards) are handled after the transaction commits.
 func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
+	inviterReward, inviteeReward := 0, 0
+	if inviterId != 0 {
+		inviterReward, inviteeReward = invitationRewardSnapshot()
+	}
+
 	return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
 		if err := user.prepareForInsert(tx); err != nil {
 			return err
@@ -647,7 +638,13 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			user.SetSetting(defaultSetting)
 		}
 
-		return tx.Create(user).Error
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+		if inviterId == 0 {
+			return nil
+		}
+		return createInvitationSettlementWithTx(tx, inviterId, user.Id, inviterReward, inviteeReward)
 	})
 }
 
@@ -671,20 +668,7 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
 	}
 	if inviterId != 0 {
-		reward := 0
-		if operation_setting.IsPaymentComplianceConfirmed() {
-			reward = common.QuotaForInviter
-			if common.QuotaForInvitee > 0 {
-				_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-				RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-			}
-			if reward > 0 {
-				RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(reward)))
-			}
-		}
-		if err := recordInvitation(inviterId, reward); err != nil {
-			common.SysError(fmt.Sprintf("记录邀请关系失败 inviter_id=%d invitee_id=%d: %s", inviterId, user.Id, err.Error()))
-		}
+		retryInvitationAfterRegistration(inviterId, user.Id)
 	}
 }
 

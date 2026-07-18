@@ -148,6 +148,13 @@ func SetApiRouter(router *gin.Engine) {
 			}
 		}
 
+		invitationSettlementRoute := apiRouter.Group("/invitation-settlement")
+		invitationSettlementRoute.Use(middleware.RootAuth())
+		{
+			invitationSettlementRoute.POST("/retry-pending", controller.RetryPendingInvitationSettlements)
+			invitationSettlementRoute.POST("/:invitee_id/retry", controller.RetryInvitationSettlement)
+		}
+
 		// Subscription billing (plans, purchase, admin management)
 		subscriptionRoute := apiRouter.Group("/subscription")
 		subscriptionRoute.Use(middleware.UserAuth())

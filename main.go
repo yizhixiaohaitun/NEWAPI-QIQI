@@ -152,6 +152,9 @@ func main() {
 	controller.RegisterScheduledSystemTasks()
 	service.StartSystemTaskRunner()
 
+	// Retry durable invitation settlements left pending by transient failures.
+	service.StartInvitationSettlementRetryTask()
+
 	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
 		common.BatchUpdateEnabled = true
 		common.SysLog("batch update enabled with interval " + strconv.Itoa(common.BatchUpdateInterval) + "s")
