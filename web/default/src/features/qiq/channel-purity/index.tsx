@@ -9,7 +9,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   AlertTriangle,
-  FlaskConical,
   Pencil,
   Play,
   Plus,
@@ -24,25 +23,13 @@ import { SectionPageLayout } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -60,38 +47,13 @@ import {
   listChannelOptions,
   listPurityGroups,
   runPurityGroup,
-  runQuickProbe,
   updatePurityGroup,
 } from './api'
-import {
-  ALL_CHANNEL_GROUPS,
-  channelGroupNames,
-  filterChannelsByGroup,
-  groupToInput,
-  isGroupInputValid,
-  setChannelSelected,
-  setGroupChannelsSelected,
-} from './form-state'
-import type {
-  ChannelOption,
-  DetectorStatus,
-  PurityGroup,
-  PurityGroupInput,
-  QuickProbeResult,
-  TargetResult,
-  TokenRange,
-} from './types'
+import { GroupForm } from './group-form'
+import { QuickProbe } from './quick-probe'
+import type { DetectorStatus, PurityGroup, PurityGroupInput, TargetResult, TokenRange } from './types'
 
 const groupsKey = ['qiq', 'channel-purity', 'groups'] as const
-const emptyInput = (): PurityGroupInput => ({
-  name: '',
-  enabled: true,
-  channel_ids: [],
-  baseline_channel_id: 0,
-  interval_minutes: 5,
-  random_pairing_enabled: false,
-  sampling: { window_minutes: 30, minimum_samples: 20, max_samples_per_window: 200 },
-})
 
 const statusStyle: Record<DetectorStatus, string> = {
   BASELINE_UNAVAILABLE: 'border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-300',

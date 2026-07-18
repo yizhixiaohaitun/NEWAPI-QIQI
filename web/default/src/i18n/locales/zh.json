@@ -5381,6 +5381,17 @@
     "No channels match this channel group.": "当前渠道分组下没有渠道。",
     "Baseline channel (unique within detection group)": "基准渠道（检测分组内唯一）",
     "Select a baseline from selected channels": "从已选渠道中选择基准",
-    "No channel group": "无渠道分组"
+    "No channel group": "无渠道分组",
+    "Choose at least two enabled channels and designate exactly one baseline. Disabled or missing legacy channels must be removed before saving.": "请选择至少两个启用渠道，并指定唯一基准渠道。旧检测组中的禁用或缺失渠道必须移除后才能保存。",
+    "Filtering preserves manual selections in other channel groups. Batch selection only adds enabled channels.": "筛选不会丢失其他渠道分组中的手动选择；批量选择只会加入启用渠道。",
+    "Select enabled in current channel group": "选中当前渠道分组的启用渠道",
+    "Clear enabled in current channel group": "清除当前渠道分组的启用渠道",
+    "{{selected}} selected in total": "共选中 {{selected}} 个",
+    "Enabled channels ({{count}})": "启用渠道（{{count}}）",
+    "Disabled channels ({{count}})": "禁用渠道（{{count}}）",
+    "This legacy detection group contains disabled or missing channels. They cannot participate in formal detection; remove them before saving.": "此旧检测组包含禁用或缺失渠道，它们不能参与正式检测，请在保存前移除。",
+    "Missing channel #{{id}}": "缺失渠道 #{{id}}",
+    "Baseline channel (selected and enabled only)": "基准渠道（仅限已选且启用）",
+    "Select a baseline from selected enabled channels": "从已选且启用的渠道中选择基准"
   }
 }

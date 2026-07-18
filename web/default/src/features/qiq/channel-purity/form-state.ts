@@ -5,34 +5,7 @@ This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published by
 the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 */
-import type { ChannelOption, PurityGroup, PurityGroupInput } from './types'
-
-export const ALL_CHANNEL_GROUPS = '__all__'
-
-export function normalizeChannelGroups(value: unknown): string[] {
-  const values = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : []
-  return [...new Set(values.map((item) => String(item).trim()).filter(Boolean))]
-}
-
-export function channelGroupNames(channels: ChannelOption[]): string[] {
-  return [...new Set(channels.flatMap((channel) => channel.groups))].sort((left, right) => left.localeCompare(right))
-}
-
-export function filterChannelsByGroup(channels: ChannelOption[], group: string): ChannelOption[] {
-  return group === ALL_CHANNEL_GROUPS ? channels : channels.filter((channel) => channel.groups.includes(group))
-}
-
-export function setGroupChannelsSelected(input: PurityGroupInput, channels: ChannelOption[], group: string, checked: boolean): PurityGroupInput {
-  const groupIds = new Set(filterChannelsByGroup(channels, group).map((channel) => channel.id))
-  const channelIds = checked
-    ? [...new Set([...input.channel_ids, ...groupIds])]
-    : input.channel_ids.filter((id) => !groupIds.has(id))
-  return {
-    ...input,
-    channel_ids: channelIds,
-    baseline_channel_id: channelIds.includes(input.baseline_channel_id) ? input.baseline_channel_id : 0,
-  }
-}
+import type { PurityGroup, PurityGroupInput } from './types'
 
 export function groupToInput(group: PurityGroup): PurityGroupInput {
   return {

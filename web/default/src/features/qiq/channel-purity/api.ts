@@ -6,7 +6,7 @@ it under the terms of the GNU Affero General Public License as published by
 the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 */
 import { api } from '@/lib/api'
-import { normalizeChannelGroups } from './form-state'
+import { normalizeChannelGroups } from './channel-state'
 import type {
   ApiEnvelope,
   ChannelOption,
@@ -122,12 +122,21 @@ export async function deletePurityGroup(id: string): Promise<void> {
   unwrap(response.data)
 }
 export async function listChannelOptions(): Promise<ChannelOption[]> {
-  const response = await api.get('/api/channel/search', { params: { p: 1, page_size: 1000 }, ...config })
-  const payload = unwrap(response.data)
-  const items = array(Array.isArray(payload) ? payload : record(payload).items ?? record(payload).data)
+  const pageSize = 500
+  const items: unknown[] = []
+  for (let page = 1; ; page += 1) {
+    const response = await api.get('/api/channel/search', { params: { p: page, page_size: pageSize }, ...config })
+    const payload = unwrap(response.data)
+    const body = record(payload)
+    const pageItems = array(Array.isArray(payload) ? payload : body.items ?? body.data)
+    items.push(...pageItems)
+    const total = number(body.total, items.length)
+    if (pageItems.length === 0 || items.length >= total || pageItems.length < pageSize) break
+  }
   return items.map((raw) => { const item = record(raw); return {
     id: number(item.id),
     name: String(item.name ?? `#${item.id}`),
+    status: number(item.status),
     models: typeof item.models === 'string' ? item.models.split(',') : array(item.models).map(String),
     groups: normalizeChannelGroups(item.group ?? item.groups),
   } })
