@@ -84,7 +84,14 @@ export function removeUserId(): void {
 export function getAffiliateCode(): string {
   if (typeof window === 'undefined') return ''
   try {
-    return window.localStorage.getItem(STORAGE_KEYS.AFFILIATE) ?? ''
+    const queryCode = new URLSearchParams(window.location.search)
+      .get('aff')
+      ?.trim()
+    if (queryCode) {
+      window.localStorage.setItem(STORAGE_KEYS.AFFILIATE, queryCode)
+      return queryCode
+    }
+    return window.localStorage.getItem(STORAGE_KEYS.AFFILIATE)?.trim() ?? ''
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to get affiliate code:', error)

@@ -30,6 +30,7 @@ import type {
   PaymentResponse,
   StripePaymentResponse,
   AffiliateCodeResponse,
+  InvitedUsersResponse,
   AffiliateTransferResponse,
   BillingHistoryResponse,
   CompleteOrderRequest,
@@ -174,6 +175,16 @@ export async function requestWaffoPancakePayment(
  */
 export async function getAffiliateCode(): Promise<AffiliateCodeResponse> {
   const res = await api.get('/api/user/aff')
+  return res.data
+}
+
+export async function getInvitedUsers(
+  page: number,
+  pageSize: number
+): Promise<InvitedUsersResponse> {
+  const res = await api.get('/api/user/aff/invited', {
+    params: { p: page, page_size: pageSize },
+  })
   return res.data
 }
 

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Check, Copy } from 'lucide-react'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -38,6 +38,7 @@ interface CopyButtonProps {
   size?: 'default' | 'sm' | 'lg' | 'icon'
   tooltip?: string
   successTooltip?: string
+  disabled?: boolean
   'aria-label'?: string
 }
 
@@ -50,6 +51,7 @@ export function CopyButton({
   size = 'icon',
   tooltip,
   successTooltip,
+  disabled = false,
   'aria-label': ariaLabel,
 }: CopyButtonProps) {
   const { t } = useTranslation()
@@ -66,6 +68,7 @@ export function CopyButton({
       size={size}
       className={cn('shrink-0', className)}
       onClick={() => copyToClipboard(value)}
+      disabled={disabled}
       aria-label={isCopied ? copiedAriaLabel : resolvedAriaLabel}
     >
       {isCopied ? (
