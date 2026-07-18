@@ -126,6 +126,40 @@ export async function listChannelOptions(): Promise<ChannelOption[]> {
   const items = array(Array.isArray(payload) ? payload : record(payload).items ?? record(payload).data)
   return items.map((raw) => { const item = record(raw); return { id: number(item.id), name: String(item.name ?? `#${item.id}`), models: typeof item.models === 'string' ? item.models.split(',') : array(item.models).map(String) } })
 }
+export async function runPurityGroup(id: string): Promise<void> {
+  const response = await api.post(`${ROOT}/${id}/run`, undefined, config)
+  unwrap(response.data)
+}
+
+function historyPoint(value: unknown): TrendPoint {
+  const item = record(value)
+  return {
+    at: (item.window_ended_at ?? item.created_at) as string | number,
+    status: status(item.state ?? item.status),
+    field_similarity: optionalNumber(item.structure_similarity ?? item.field_similarity),
+    token_similarity: optionalNumber(item.token_similarity),
+    confidence: optionalNumber(item.confidence),
+  }
+}
+
+export async function getPurityResultDetail(result: TargetResult): Promise<TargetResult> {
+  const params = { target_channel_id: result.target_channel_id, actual_model: result.model }
+  const [latestResponse, historyResponse] = await Promise.all([
+    api.get(`${ROOT}/${result.group_id}/latest`, { params, ...config }),
+    api.get(`${ROOT}/${result.group_id}/history`, { params: { ...params, p: 1, page_size: 100 }, ...config }),
+  ])
+  const latest = record(unwrap(latestResponse.data))
+  const historyPayload = unwrap(historyResponse.data)
+  const historyItems = array(Array.isArray(historyPayload) ? historyPayload : record(historyPayload).items)
+  return {
+    ...result,
+    status: status(latest.state ?? latest.status ?? result.status),
+    confidence: optionalNumber(latest.confidence) ?? result.confidence,
+    updated_at: (latest.updated_at ?? result.updated_at) as string | number | undefined,
+    trend: historyItems.slice().reverse().map(historyPoint),
+  }
+}
+
 export async function runQuickProbe(input: QuickProbeInput): Promise<QuickProbeResult> {
   const response = await api.post('/api/channel/purity/quick-probe', input, config)
   const item = record(unwrap(response.data))
