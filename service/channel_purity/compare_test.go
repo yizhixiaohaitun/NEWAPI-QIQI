@@ -57,6 +57,38 @@ func TestAggregatePairWindowExcludesUnpairedRowsFromAllStatistics(t *testing.T) 
 	assert.Equal(t, 1.0, run.StructureSimilarity)
 }
 
+func TestPersistedStructureSimilarityDetailUsesExactScoringInputs(t *testing.T) {
+	setupPurityDB(t)
+	group := createTestPurityGroup(t)
+	for i, signature := range []string{"shared", "baseline-only"} {
+		key := fmt.Sprintf("pair-%d", i)
+		addPuritySample(t, group.ID, 10, "m1", key, signature, 100, int64(100+i))
+		targetSignature := "shared"
+		if i == 1 {
+			targetSignature = "target-only"
+		}
+		addPuritySample(t, group.ID, 20, "m1", key, targetSignature, 100, int64(100+i))
+	}
+	_, err := AggregatePairWindow(group.ID, 20, "m1", "m1", 90, 120, DefaultAggregatePolicy())
+	require.NoError(t, err)
+	var run model.ChannelPurityPairRun
+	require.NoError(t, model.DB.Last(&run).Error)
+	detail, err := DecodeStructureSimilarityDetail(&run)
+	require.NoError(t, err)
+	require.NotNil(t, detail)
+	assert.Equal(t, StructureSimilarityDetailVersion, detail.Version)
+	assert.Equal(t, int64(90), detail.WindowStartedAt)
+	assert.Equal(t, int64(120), detail.WindowEndedAt)
+	assert.Equal(t, 2, detail.PairedSampleCount)
+	assert.Equal(t, 1, detail.MatchedCount)
+	assert.Equal(t, 1, detail.BaselineOnlyCount)
+	assert.Equal(t, 1, detail.TargetOnlyCount)
+	assert.Equal(t, 1, detail.IntersectionCount)
+	assert.Equal(t, 3, detail.UnionCount)
+	assert.False(t, detail.FieldPathsAvailable)
+	assert.InDelta(t, run.StructureSimilarity, float64(detail.IntersectionCount)/float64(detail.UnionCount), 0.0001)
+}
+
 func TestFormalAssessmentUsesRobustPairedTokenDistribution(t *testing.T) {
 	setupPurityDB(t)
 	group := createTestPurityGroup(t)

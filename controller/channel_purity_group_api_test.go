@@ -83,8 +83,10 @@ func TestChannelPurityGroupCRUDAndListContract(t *testing.T) {
 	run := &model.ChannelPurityPairRun{
 		GroupID: groupID, BaselineChannelID: 101, TargetChannelID: 102, ActualModel: "gpt-4o",
 		WindowStartedAt: 100, WindowEndedAt: 200, BaselineSampleCount: 3, TargetSampleCount: 3,
-		PairedSampleCount: 3, StructureSimilarity: 0.9, TokenSimilarity: 0.8,
-		BaselineTokenMin: 10, BaselineTokenMax: 20, TargetTokenMin: 11, TargetTokenMax: 22,
+		PairedSampleCount: 3, StructureSimilarity: 0.5,
+		StructureSimilarityDetail: `{"version":"structure_similarity.v1","method":"multiset_jaccard","window_started_at":100,"window_ended_at":200,"paired_sample_count":3,"matched_count":2,"baseline_only_count":1,"target_only_count":1,"intersection_count":2,"union_count":4,"differences":[{"signature":"shared","baseline_count":2,"target_count":2,"matched_count":2},{"signature":"baseline-only","baseline_count":1,"target_count":0,"matched_count":0},{"signature":"target-only","baseline_count":0,"target_count":1,"matched_count":0}],"field_paths_available":false,"limitation":"Only anonymous structure-signature hashes are retained."}`,
+		TokenSimilarity:           0.8,
+		BaselineTokenMin:          10, BaselineTokenMax: 20, TargetTokenMin: 11, TargetTokenMax: 22,
 		TokenDeviationRate: 0.1, AnomalyEvidenceJSON: `["token_interval_shift"]`, Confidence: 0.75,
 		State: model.ChannelPurityStateSuspect, CreatedAt: 200,
 	}
@@ -108,6 +110,20 @@ func TestChannelPurityGroupCRUDAndListContract(t *testing.T) {
 	}
 	assert.Equal(t, "target", result["target_channel_name"])
 	assert.Equal(t, float64(3), result["samples"])
+
+	latest := purityRequest(t, http.MethodGet, fmt.Sprintf("/api/channel/purity/groups/%d/latest?target_channel_id=102&actual_model=gpt-4o", groupID), "", GetLatestChannelPurityAssessment, gin.Param{Key: "group_id", Value: fmt.Sprint(groupID)})
+	require.Equal(t, http.StatusOK, latest.Code, latest.Body.String())
+	latestData := decodeEnvelope(t, latest)["data"].(map[string]any)
+	assert.Equal(t, 0.5, latestData["structure_similarity"])
+	assert.Equal(t, float64(100), latestData["window_started_at"])
+	assert.Equal(t, float64(200), latestData["window_ended_at"])
+	detail := latestData["structure_similarity_detail"].(map[string]any)
+	assert.Equal(t, "structure_similarity.v1", detail["version"])
+	assert.Equal(t, float64(3), detail["paired_sample_count"])
+	assert.Equal(t, float64(2), detail["matched_count"])
+	assert.Equal(t, float64(1), detail["baseline_only_count"])
+	assert.Equal(t, float64(1), detail["target_only_count"])
+	assert.Equal(t, false, detail["field_paths_available"])
 
 	update := purityRequest(t, http.MethodPut, fmt.Sprintf("/api/channel/purity/groups/%d", groupID), `{
 		"name":"api-acceptance-updated","enabled":true,

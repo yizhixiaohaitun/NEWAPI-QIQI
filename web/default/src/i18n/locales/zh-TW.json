@@ -5275,6 +5275,21 @@
     "Failed to update automatic inspection settings": "更新自動巡檢設定失敗",
     "Failed to load automatic inspection settings.": "載入自動巡檢設定失敗。",
     "Failed to load automatic inspection status.": "載入自動巡檢狀態失敗。",
-    "{{count}} minutes": "{{count}} 分鐘"
+    "{{count}} minutes": "{{count}} 分鐘",
+    "View field and structure similarity details": "查看欄位與結構相似度詳情",
+    "Field / structure similarity": "欄位 / 結構相似度",
+    "Scoring method": "評分方法",
+    "multiset Jaccard similarity": "多重集合 Jaccard 相似度",
+    "Matched structure samples": "匹配結構樣本",
+    "Baseline-only structure samples": "僅基準存在的結構樣本",
+    "Target-only structure samples": "僅目標存在的結構樣本",
+    "Score basis": "評分依據",
+    "Scoring detail version": "評分詳情版本",
+    "Window": "檢測視窗",
+    "{{count}} paired samples": "{{count}} 個配對樣本",
+    "Structure signature frequencies": "匿名結構簽章頻次",
+    "Anonymous structure signature": "匿名結構簽章",
+    "Field-level evidence gap: existing samples retain only anonymous structure hashes, so exact matched, missing, or added field names cannot be recovered. The counts above are real matched structure occurrences, not inferred field names.": "欄位級證據限制：現有樣本僅保留匿名結構雜湊，無法還原具體匹配、缺失或新增的欄位名稱。以上計數來自真實結構樣本，不是推測出的欄位名稱。",
+    "Detailed scoring inputs are unavailable for this historical result.": "此歷史結果沒有可用的詳細評分輸入。"
   }
 }

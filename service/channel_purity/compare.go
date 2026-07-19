@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,11 +77,20 @@ func AggregatePairWindow(groupID uint, targetChannelID int, baselineModel, targe
 	baselineMin, baselineMax := tokenBounds(baseline)
 	targetMin, targetMax := tokenBounds(target)
 	deviationRate := pairedTokenDeviationRate(baseline, target, policy.MinSamples)
+	structureDetail := BuildStructureSimilarityDetail(baseline, target)
+	structureDetail.Version = StructureSimilarityDetailVersion
+	structureDetail.WindowStartedAt = windowStart
+	structureDetail.WindowEndedAt = windowEnd
+	structureDetail.PairedSampleCount = len(baseline)
+	encodedStructureDetail, err := common.Marshal(structureDetail)
+	if err != nil {
+		return nil, err
+	}
 	run := model.ChannelPurityPairRun{
 		GroupID: groupID, BaselineChannelID: baselineID, TargetChannelID: targetChannelID, ActualModel: comparisonKey,
 		BaselineModel: baselineModel, TargetModel: targetModel,
 		WindowStartedAt: windowStart, WindowEndedAt: windowEnd, BaselineSampleCount: len(baseline), TargetSampleCount: len(target),
-		PairedSampleCount: len(baseline), StructureSimilarity: structure, TokenSimilarity: token,
+		PairedSampleCount: len(baseline), StructureSimilarity: structure, StructureSimilarityDetail: string(encodedStructureDetail), TokenSimilarity: token,
 		BaselineTokenMin: baselineMin, BaselineTokenMax: baselineMax, TargetTokenMin: targetMin, TargetTokenMax: targetMax,
 		TokenDeviationRate: deviationRate, AnomalyEvidenceJSON: evidenceJSON, Confidence: confidence, State: next.State, CreatedAt: now,
 	}
@@ -109,6 +119,76 @@ func AggregatePairWindow(groupID uint, targetChannelID int, baselineModel, targe
 		return nil, err
 	}
 	return &next, nil
+}
+
+type StructureDifference struct {
+	Signature     string `json:"signature"`
+	BaselineCount int    `json:"baseline_count"`
+	TargetCount   int    `json:"target_count"`
+	MatchedCount  int    `json:"matched_count"`
+}
+
+const StructureSimilarityDetailVersion = "structure_similarity.v1"
+
+type StructureSimilarityDetail struct {
+	Version             string                `json:"version"`
+	Method              string                `json:"method"`
+	WindowStartedAt     int64                 `json:"window_started_at"`
+	WindowEndedAt       int64                 `json:"window_ended_at"`
+	PairedSampleCount   int                   `json:"paired_sample_count"`
+	MatchedCount        int                   `json:"matched_count"`
+	BaselineOnlyCount   int                   `json:"baseline_only_count"`
+	TargetOnlyCount     int                   `json:"target_only_count"`
+	IntersectionCount   int                   `json:"intersection_count"`
+	UnionCount          int                   `json:"union_count"`
+	Differences         []StructureDifference `json:"differences"`
+	FieldPathsAvailable bool                  `json:"field_paths_available"`
+	Limitation          string                `json:"limitation"`
+}
+
+// BuildStructureSimilarityDetail uses the same already-paired samples as CompareSamples.
+func BuildStructureSimilarityDetail(baseline, target []model.ChannelPuritySample) StructureSimilarityDetail {
+	bf, tf := signatureFrequency(baseline), signatureFrequency(target)
+	keys := make(map[string]bool, len(bf)+len(tf))
+	for key := range bf {
+		keys[key] = true
+	}
+	for key := range tf {
+		keys[key] = true
+	}
+	detail := StructureSimilarityDetail{
+		Version: StructureSimilarityDetailVersion, Method: "multiset_jaccard",
+		PairedSampleCount: len(baseline), Differences: make([]StructureDifference, 0, len(keys)),
+		FieldPathsAvailable: false,
+		Limitation:          "Only anonymous structure-signature hashes are retained; individual field paths cannot be recovered from existing samples.",
+	}
+	for key := range keys {
+		matched := minInt(bf[key], tf[key])
+		baseCount, targetCount := bf[key], tf[key]
+		detail.IntersectionCount += matched
+		detail.UnionCount += maxInt(baseCount, targetCount)
+		detail.MatchedCount += matched
+		if baseCount > targetCount {
+			detail.BaselineOnlyCount += baseCount - targetCount
+		}
+		if targetCount > baseCount {
+			detail.TargetOnlyCount += targetCount - baseCount
+		}
+		detail.Differences = append(detail.Differences, StructureDifference{Signature: key, BaselineCount: baseCount, TargetCount: targetCount, MatchedCount: matched})
+	}
+	sort.Slice(detail.Differences, func(i, j int) bool { return detail.Differences[i].Signature < detail.Differences[j].Signature })
+	return detail
+}
+
+func DecodeStructureSimilarityDetail(run *model.ChannelPurityPairRun) (*StructureSimilarityDetail, error) {
+	if strings.TrimSpace(run.StructureSimilarityDetail) == "" {
+		return nil, nil
+	}
+	var detail StructureSimilarityDetail
+	if err := common.Unmarshal([]byte(run.StructureSimilarityDetail), &detail); err != nil {
+		return nil, err
+	}
+	return &detail, nil
 }
 
 func matchValidSamples(baseline, target []model.ChannelPuritySample) ([]model.ChannelPuritySample, []model.ChannelPuritySample) {

@@ -17,6 +17,7 @@ import type {
   QuickProbeInput,
   QuickProbeResult,
   TargetResult,
+  StructureSimilarityDetail,
   TokenRange,
   TrendPoint,
 } from './types'
@@ -45,6 +46,25 @@ function range(value: unknown): TokenRange | undefined {
   const item = record(value)
   if (item.min === undefined || item.max === undefined) return undefined
   return { min: number(item.min), max: number(item.max), p50: optionalNumber(item.p50), p95: optionalNumber(item.p95) }
+}
+function structureDetail(value: unknown): StructureSimilarityDetail | undefined {
+  const item = record(value)
+  if (!Object.keys(item).length) return undefined
+  return {
+    version: String(item.version ?? ''),
+    method: String(item.method ?? 'multiset_jaccard'),
+    window_started_at: item.window_started_at as string | number,
+    window_ended_at: item.window_ended_at as string | number,
+    paired_sample_count: number(item.paired_sample_count),
+    matched_count: number(item.matched_count), baseline_only_count: number(item.baseline_only_count), target_only_count: number(item.target_only_count),
+    intersection_count: number(item.intersection_count), union_count: number(item.union_count),
+    differences: array(item.differences).map((raw) => { const difference = record(raw); return {
+      signature: String(difference.signature ?? ''), baseline_count: number(difference.baseline_count),
+      target_count: number(difference.target_count), matched_count: number(difference.matched_count),
+    } }),
+    field_paths_available: Boolean(item.field_paths_available),
+    limitation: item.limitation == null ? undefined : String(item.limitation),
+  }
 }
 function evidence(value: unknown, index: number): PurityEvidence {
   const item = record(value)
@@ -177,6 +197,11 @@ export async function getPurityResultDetail(result: TargetResult): Promise<Targe
     ...result,
     status: status(latest.state ?? latest.status ?? result.status),
     confidence: optionalNumber(latest.confidence) ?? result.confidence,
+    field_similarity: {
+      ...result.field_similarity,
+      value: optionalNumber(latest.structure_similarity) ?? result.field_similarity.value,
+      detail: structureDetail(latest.structure_similarity_detail),
+    },
     updated_at: (latest.updated_at ?? result.updated_at) as string | number | undefined,
     trend: historyItems.slice().reverse().map(historyPoint),
   }

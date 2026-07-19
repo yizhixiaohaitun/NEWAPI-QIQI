@@ -16,7 +16,28 @@ export type DetectorStatus =
   | 'ALERT'
   | 'DETECTOR_ERROR'
 
-export type SimilarityMetric = { value?: number; sample_size: number }
+export type StructureDifference = {
+  signature: string
+  baseline_count: number
+  target_count: number
+  matched_count: number
+}
+export type StructureSimilarityDetail = {
+  version: string
+  method: 'multiset_jaccard' | string
+  window_started_at: string | number
+  window_ended_at: string | number
+  paired_sample_count: number
+  matched_count: number
+  baseline_only_count: number
+  target_only_count: number
+  intersection_count: number
+  union_count: number
+  differences: StructureDifference[]
+  field_paths_available: boolean
+  limitation?: string
+}
+export type SimilarityMetric = { value?: number; sample_size: number; detail?: StructureSimilarityDetail }
 export type TokenRange = { min: number; max: number; p50?: number; p95?: number }
 export type PurityEvidence = {
   id: string

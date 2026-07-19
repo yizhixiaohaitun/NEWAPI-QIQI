@@ -5275,6 +5275,21 @@
     "Failed to update automatic inspection settings": "Failed to update automatic inspection settings",
     "Failed to load automatic inspection settings.": "Failed to load automatic inspection settings.",
     "Failed to load automatic inspection status.": "Failed to load automatic inspection status.",
-    "{{count}} minutes": "{{count}} minutes"
+    "{{count}} minutes": "{{count}} minutes",
+    "View field and structure similarity details": "View field and structure similarity details",
+    "Field / structure similarity": "Field / structure similarity",
+    "Scoring method": "Scoring method",
+    "multiset Jaccard similarity": "multiset Jaccard similarity",
+    "Matched structure samples": "Matched structure samples",
+    "Baseline-only structure samples": "Baseline-only structure samples",
+    "Target-only structure samples": "Target-only structure samples",
+    "Score basis": "Score basis",
+    "Scoring detail version": "Scoring detail version",
+    "Window": "Window",
+    "{{count}} paired samples": "{{count}} paired samples",
+    "Structure signature frequencies": "Structure signature frequencies",
+    "Anonymous structure signature": "Anonymous structure signature",
+    "Field-level evidence gap: existing samples retain only anonymous structure hashes, so exact matched, missing, or added field names cannot be recovered. The counts above are real matched structure occurrences, not inferred field names.": "Field-level evidence gap: existing samples retain only anonymous structure hashes, so exact matched, missing, or added field names cannot be recovered. The counts above are real matched structure occurrences, not inferred field names.",
+    "Detailed scoring inputs are unavailable for this historical result.": "Detailed scoring inputs are unavailable for this historical result."
   }
 }

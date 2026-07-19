@@ -5,7 +5,7 @@ This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published by
 the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   Activity,
   AlertTriangle,
@@ -111,7 +111,7 @@ function ResultRow({ result, onOpen }: { result: TargetResult; onOpen: () => voi
       <TableCell className='font-mono text-xs'>{result.baseline_model} → {result.target_model}</TableCell>
       <TableCell><StatusBadge status={result.status} /></TableCell>
       <TableCell className='tabular-nums'>{result.samples}</TableCell>
-      <TableCell>{percent(result.field_similarity.value)}</TableCell>
+      <TableCell><button type='button' className='text-primary cursor-pointer font-medium tabular-nums underline decoration-dotted underline-offset-4 hover:decoration-solid' onClick={onOpen} aria-label={t('View field and structure similarity details')}>{percent(result.field_similarity.value)}</button></TableCell>
       <TableCell>{percent(result.token_similarity.value)}</TableCell>
       <TableCell>{percent(result.confidence)}</TableCell>
       <TableCell className='max-w-64'>
@@ -128,7 +128,7 @@ function ResultCard({ result, onOpen }: { result: TargetResult; onOpen: () => vo
   return <Card className='gap-3 py-4'>
     <CardContent className='space-y-3 px-4'>
       <div className='flex items-start justify-between gap-2'><div><p className='font-medium'>{result.target_channel_name}</p><p className='text-muted-foreground text-xs'>{result.baseline_model} → {result.target_model} · {t('Baseline')}: {result.baseline_channel_name}</p></div><StatusBadge status={result.status} /></div>
-      <div className='grid grid-cols-3 gap-2'><Metric label={t('Field / structure')} value={result.field_similarity.value} /><Metric label={t('Token range')} value={result.token_similarity.value} /><Metric label={t('Confidence')} value={result.confidence} /></div>
+      <div className='grid grid-cols-3 gap-2'><button type='button' className='cursor-pointer text-left' onClick={onOpen}><Metric label={t('Field / structure')} value={result.field_similarity.value} /></button><Metric label={t('Token range')} value={result.token_similarity.value} /><Metric label={t('Confidence')} value={result.confidence} /></div>
       <div className='text-sm'><span className='text-muted-foreground'>{t('Samples')}: </span>{result.samples}</div>
       {result.latest_evidence ? <p className='border-l-2 pl-2 text-sm'>{result.latest_evidence.summary}</p> : null}
       <Button className='w-full' size='sm' variant='outline' onClick={onOpen}>{t('View evidence and trend')}</Button>
@@ -141,6 +141,16 @@ function ResultDetail({ result, loading, error, onRetry, onClose }: { result: Ta
   return <Dialog open={Boolean(result) || loading || Boolean(error)} onOpenChange={(open) => { if (!open) onClose() }}><DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-3xl'>{result ? <>
     <DialogHeader><DialogTitle>{result.target_channel_name} · {result.baseline_model} → {result.target_model}</DialogTitle><DialogDescription>{t('Independent comparison against baseline {{baseline}}', { baseline: result.baseline_channel_name })}</DialogDescription></DialogHeader>
     <div className='flex flex-wrap gap-2'><StatusBadge status={result.status} /><Badge variant='outline'>{t('{{count}} samples', { count: result.samples })}</Badge></div>
+    <div className='rounded-lg border p-4'>
+      <div className='flex flex-wrap items-end justify-between gap-2'><div><p className='text-muted-foreground text-xs'>{t('Field / structure similarity')}</p><p className='text-2xl font-semibold tabular-nums'>{percent(result.field_similarity.value)}</p></div><p className='text-muted-foreground text-xs'>{t('Scoring method')}: {t('multiset Jaccard similarity')}</p></div>
+      {result.field_similarity.detail ? <div className='mt-4 space-y-3'>
+        <div className='grid grid-cols-3 gap-2 text-center'><div className='rounded bg-emerald-500/10 p-2'><p className='text-xs text-emerald-700'>{t('Matched structure samples')}</p><p className='font-semibold'>{result.field_similarity.detail.matched_count}</p></div><div className='rounded bg-amber-500/10 p-2'><p className='text-xs text-amber-700'>{t('Baseline-only structure samples')}</p><p className='font-semibold'>{result.field_similarity.detail.baseline_only_count}</p></div><div className='rounded bg-blue-500/10 p-2'><p className='text-xs text-blue-700'>{t('Target-only structure samples')}</p><p className='font-semibold'>{result.field_similarity.detail.target_only_count}</p></div></div>
+        <p className='text-sm'>{t('Score basis')}: {result.field_similarity.detail.intersection_count} / {result.field_similarity.detail.union_count} = {percent(result.field_similarity.value)}</p>
+        <p className='text-muted-foreground text-xs'>{t('Scoring detail version')}: {result.field_similarity.detail.version} · {t('Window')}: {formatTime(result.field_similarity.detail.window_started_at)} - {formatTime(result.field_similarity.detail.window_ended_at)} · {t('{{count}} paired samples', { count: result.field_similarity.detail.paired_sample_count })}</p>
+        {result.field_similarity.detail.differences.length ? <div><p className='mb-1 text-sm font-medium'>{t('Structure signature frequencies')}</p><div className='max-h-48 overflow-auto rounded border'><Table><TableHeader><TableRow><TableHead>{t('Anonymous structure signature')}</TableHead><TableHead>{t('Baseline')}</TableHead><TableHead>{t('Target')}</TableHead><TableHead>{t('Matched')}</TableHead></TableRow></TableHeader><TableBody>{result.field_similarity.detail.differences.map((difference) => <TableRow key={difference.signature}><TableCell className='max-w-56 truncate font-mono text-xs' title={difference.signature}>{difference.signature}</TableCell><TableCell>{difference.baseline_count}</TableCell><TableCell>{difference.target_count}</TableCell><TableCell>{difference.matched_count}</TableCell></TableRow>)}</TableBody></Table></div></div> : null}
+        {!result.field_similarity.detail.field_paths_available ? <p className='rounded bg-amber-500/10 p-2 text-xs text-amber-800'>{t('Field-level evidence gap: existing samples retain only anonymous structure hashes, so exact matched, missing, or added field names cannot be recovered. The counts above are real matched structure occurrences, not inferred field names.')}</p> : null}
+      </div> : <p className='text-muted-foreground mt-3 text-sm'>{t('Detailed scoring inputs are unavailable for this historical result.')}</p>}
+    </div>
     <div className='grid gap-3 sm:grid-cols-3'><Card><CardContent className='pt-4'><p className='text-muted-foreground text-xs'>{t('Baseline token interval')}</p><p className='mt-1 font-mono'>{tokenRange(result.baseline_token_range)}</p></CardContent></Card><Card><CardContent className='pt-4'><p className='text-muted-foreground text-xs'>{t('Target token interval')}</p><p className='mt-1 font-mono'>{tokenRange(result.target_token_range)}</p></CardContent></Card><Card><CardContent className='pt-4'><p className='text-muted-foreground text-xs'>{t('Deviation rate')}</p><p className='mt-1 font-medium'>{percent(result.deviation_rate)}</p></CardContent></Card></div>
     <div><h3 className='mb-2 font-medium'>{t('Evidence chain')}</h3>{result.evidence.length ? <div className='space-y-2'>{result.evidence.map((item) => <div key={item.id} className='rounded-lg border p-3'><div className='flex justify-between gap-3'><Badge variant='outline'>{item.kind}</Badge><span className='text-muted-foreground text-xs'>{formatTime(item.occurred_at)}</span></div><p className='mt-2 text-sm'>{item.summary}</p>{item.baseline_value !== undefined || item.target_value !== undefined ? <div className='bg-muted mt-2 grid gap-2 rounded p-2 font-mono text-xs sm:grid-cols-2'><span>{t('Baseline')}: {item.baseline_value ?? '—'}</span><span>{t('Target')}: {item.target_value ?? '—'}</span></div> : null}{item.request_id ? <p className='text-muted-foreground mt-2 text-xs'>Request ID: {item.request_id}</p> : null}</div>)}</div> : <p className='text-muted-foreground text-sm'>{t('No evidence has been recorded yet.')}</p>}</div>
     <div><h3 className='mb-2 font-medium'>{t('Historical trend')}</h3>{result.trend.length ? <div className='flex min-h-28 items-end gap-1 overflow-x-auto rounded-lg border p-3'>{result.trend.map((point, index) => <div key={`${point.at}-${index}`} className='group flex min-w-8 flex-1 flex-col items-center justify-end gap-1' title={`${formatTime(point.at)} · ${percent(point.confidence)}`}><div className={`w-full max-w-8 rounded-t ${point.status === 'ALERT' || point.status === 'DETECTOR_ERROR' ? 'bg-destructive' : point.status === 'SUSPECT' ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ height: `${Math.max(10, (point.confidence ?? 0.2) * 80)}px` }} /><span className='text-muted-foreground text-[10px]'>{index + 1}</span></div>)}</div> : <p className='text-muted-foreground text-sm'>{t('Trend is unavailable until multiple detection windows are recorded.')}</p>}</div>
@@ -150,7 +160,6 @@ function ResultDetail({ result, loading, error, onRetry, onClose }: { result: Ta
 
 export function ChannelPurity() {
   const { t } = useTranslation()
-  const queryClient = useQueryClient()
   const [editing, setEditing] = useState<PurityGroup | null | undefined>(undefined)
   const [formError, setFormError] = useState<string>()
   const [detailSeed, setDetailSeed] = useState<TargetResult | null>(null)

@@ -85,30 +85,31 @@ type ChannelPuritySample struct {
 func (ChannelPuritySample) TableName() string { return "qiqi_channel_purity_samples" }
 
 type ChannelPurityPairRun struct {
-	ID                  uint    `json:"id" gorm:"primaryKey"`
-	GroupID             uint    `json:"group_id" gorm:"not null;index:idx_purity_pair_history,priority:1"`
-	BaselineChannelID   int     `json:"baseline_channel_id" gorm:"not null"`
-	TargetChannelID     int     `json:"target_channel_id" gorm:"not null;index:idx_purity_pair_history,priority:2"`
-	ActualModel         string  `json:"actual_model" gorm:"type:varchar(255);not null;index:idx_purity_pair_history,priority:3"`
-	BaselineModel       string  `json:"baseline_model" gorm:"type:varchar(255);not null;default:''"`
-	TargetModel         string  `json:"target_model" gorm:"type:varchar(255);not null;default:''"`
-	WindowStartedAt     int64   `json:"window_started_at" gorm:"bigint;not null"`
-	WindowEndedAt       int64   `json:"window_ended_at" gorm:"bigint;not null;index:idx_purity_pair_history,priority:4,sort:desc"`
-	BaselineSampleCount int     `json:"baseline_sample_count"`
-	TargetSampleCount   int     `json:"target_sample_count"`
-	PairedSampleCount   int     `json:"paired_sample_count"`
-	StructureSimilarity float64 `json:"structure_similarity"`
-	TokenSimilarity     float64 `json:"token_similarity"`
-	BaselineTokenMin    int     `json:"baseline_token_min"`
-	BaselineTokenMax    int     `json:"baseline_token_max"`
-	TargetTokenMin      int     `json:"target_token_min"`
-	TargetTokenMax      int     `json:"target_token_max"`
-	TokenDeviationRate  float64 `json:"token_deviation_rate"`
-	AnomalyEvidenceJSON string  `json:"-" gorm:"type:text;not null"`
-	Confidence          float64 `json:"confidence"`
-	State               string  `json:"state" gorm:"type:varchar(32);not null"`
-	ErrorClass          string  `json:"error_class,omitempty" gorm:"type:varchar(64)"`
-	CreatedAt           int64   `json:"created_at" gorm:"bigint;not null"`
+	ID                        uint    `json:"id" gorm:"primaryKey"`
+	GroupID                   uint    `json:"group_id" gorm:"not null;index:idx_purity_pair_history,priority:1"`
+	BaselineChannelID         int     `json:"baseline_channel_id" gorm:"not null"`
+	TargetChannelID           int     `json:"target_channel_id" gorm:"not null;index:idx_purity_pair_history,priority:2"`
+	ActualModel               string  `json:"actual_model" gorm:"type:varchar(255);not null;index:idx_purity_pair_history,priority:3"`
+	BaselineModel             string  `json:"baseline_model" gorm:"type:varchar(255);not null;default:''"`
+	TargetModel               string  `json:"target_model" gorm:"type:varchar(255);not null;default:''"`
+	WindowStartedAt           int64   `json:"window_started_at" gorm:"bigint;not null"`
+	WindowEndedAt             int64   `json:"window_ended_at" gorm:"bigint;not null;index:idx_purity_pair_history,priority:4,sort:desc"`
+	BaselineSampleCount       int     `json:"baseline_sample_count"`
+	TargetSampleCount         int     `json:"target_sample_count"`
+	PairedSampleCount         int     `json:"paired_sample_count"`
+	StructureSimilarity       float64 `json:"structure_similarity"`
+	StructureSimilarityDetail string  `json:"-" gorm:"type:text;not null;default:''"`
+	TokenSimilarity           float64 `json:"token_similarity"`
+	BaselineTokenMin          int     `json:"baseline_token_min"`
+	BaselineTokenMax          int     `json:"baseline_token_max"`
+	TargetTokenMin            int     `json:"target_token_min"`
+	TargetTokenMax            int     `json:"target_token_max"`
+	TokenDeviationRate        float64 `json:"token_deviation_rate"`
+	AnomalyEvidenceJSON       string  `json:"-" gorm:"type:text;not null"`
+	Confidence                float64 `json:"confidence"`
+	State                     string  `json:"state" gorm:"type:varchar(32);not null"`
+	ErrorClass                string  `json:"error_class,omitempty" gorm:"type:varchar(64)"`
+	CreatedAt                 int64   `json:"created_at" gorm:"bigint;not null"`
 }
 
 func (ChannelPurityPairRun) TableName() string { return "qiqi_channel_purity_pair_runs" }

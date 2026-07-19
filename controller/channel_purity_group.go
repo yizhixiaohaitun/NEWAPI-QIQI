@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	channelpurity "github.com/QuantumNous/new-api/service/channel_purity"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -306,7 +307,27 @@ func GetLatestChannelPurityAssessment(c *gin.Context) {
 		purityGroupLookup(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": value})
+	run, err := model.GetPurityPairRun(value.LatestPairRunID)
+	if err != nil {
+		purityGroupLookup(c, err)
+		return
+	}
+	structureDetail, err := channelpurity.DecodeStructureSimilarityDetail(run)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": struct {
+		*model.ChannelPurityAssessment
+		WindowStartedAt           int64                                    `json:"window_started_at"`
+		WindowEndedAt             int64                                    `json:"window_ended_at"`
+		StructureSimilarity       float64                                  `json:"structure_similarity"`
+		StructureSimilarityDetail *channelpurity.StructureSimilarityDetail `json:"structure_similarity_detail"`
+	}{
+		ChannelPurityAssessment: value,
+		WindowStartedAt:         run.WindowStartedAt, WindowEndedAt: run.WindowEndedAt,
+		StructureSimilarity: run.StructureSimilarity, StructureSimilarityDetail: structureDetail,
+	}})
 }
 
 func ListChannelPurityHistory(c *gin.Context) {
