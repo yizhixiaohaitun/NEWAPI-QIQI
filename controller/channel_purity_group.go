@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -317,17 +318,40 @@ func GetLatestChannelPurityAssessment(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": struct {
-		*model.ChannelPurityAssessment
-		WindowStartedAt           int64                                    `json:"window_started_at"`
-		WindowEndedAt             int64                                    `json:"window_ended_at"`
-		StructureSimilarity       float64                                  `json:"structure_similarity"`
-		StructureSimilarityDetail *channelpurity.StructureSimilarityDetail `json:"structure_similarity_detail"`
-	}{
-		ChannelPurityAssessment: value,
-		WindowStartedAt:         run.WindowStartedAt, WindowEndedAt: run.WindowEndedAt,
-		StructureSimilarity: run.StructureSimilarity, StructureSimilarityDetail: structureDetail,
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
+		"id": value.ID, "group_id": value.GroupID, "target_channel_id": value.TargetChannelID,
+		"actual_model": value.ActualModel, "latest_pair_run_id": value.LatestPairRunID,
+		"state": value.State, "confidence": value.Confidence, "updated_at": value.UpdatedAt,
+		"pair_run":                    purityPairRunResponse(run, structureDetail),
+		"window_started_at":           run.WindowStartedAt,
+		"window_ended_at":             run.WindowEndedAt,
+		"structure_similarity":        run.StructureSimilarity,
+		"structure_similarity_detail": structureDetail,
+		"evidence":                    purityPairRunEvidence(run),
 	}})
+}
+
+func purityPairRunEvidence(run *model.ChannelPurityPairRun) []gin.H {
+	var reasons []string
+	_ = common.Unmarshal([]byte(run.AnomalyEvidenceJSON), &reasons)
+	items := make([]gin.H, 0, len(reasons))
+	for i, reason := range reasons {
+		items = append(items, gin.H{"id": fmt.Sprintf("%d-%d", run.ID, i), "occurred_at": run.CreatedAt, "kind": reason, "summary": purityEvidenceSummary(reason)})
+	}
+	return items
+}
+
+func purityPairRunResponse(run *model.ChannelPurityPairRun, detail *channelpurity.StructureSimilarityDetail) gin.H {
+	return gin.H{
+		"id": run.ID, "group_id": run.GroupID, "baseline_channel_id": run.BaselineChannelID, "target_channel_id": run.TargetChannelID,
+		"actual_model": run.ActualModel, "baseline_model": run.BaselineModel, "target_model": run.TargetModel,
+		"window_started_at": run.WindowStartedAt, "window_ended_at": run.WindowEndedAt,
+		"baseline_sample_count": run.BaselineSampleCount, "target_sample_count": run.TargetSampleCount, "paired_sample_count": run.PairedSampleCount,
+		"structure_similarity": run.StructureSimilarity, "structure_similarity_detail": detail,
+		"token_similarity": run.TokenSimilarity, "baseline_token_min": run.BaselineTokenMin, "baseline_token_max": run.BaselineTokenMax,
+		"target_token_min": run.TargetTokenMin, "target_token_max": run.TargetTokenMax, "token_deviation_rate": run.TokenDeviationRate,
+		"confidence": run.Confidence, "state": run.State, "error_class": run.ErrorClass, "evidence": purityPairRunEvidence(run), "created_at": run.CreatedAt,
+	}
 }
 
 func ListChannelPurityHistory(c *gin.Context) {
@@ -344,7 +368,33 @@ func ListChannelPurityHistory(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"items": values, "total": total, "page": page.GetPage(), "page_size": page.GetPageSize()}})
+	items := make([]gin.H, 0, len(values))
+	for i := range values {
+		detail, decodeErr := channelpurity.DecodeStructureSimilarityDetail(&values[i])
+		if decodeErr != nil {
+			common.ApiError(c, decodeErr)
+			return
+		}
+		items = append(items, purityPairRunResponse(&values[i], detail))
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"items": items, "total": total, "page": page.GetPage(), "page_size": page.GetPageSize()}})
+}
+
+func ClearChannelPurityHistory(c *gin.Context) {
+	groupID, err := strconvParseGroupID(c.Param("group_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid group id"})
+		return
+	}
+	if err := model.ClearPurityGroupHistory(groupID); err != nil {
+		if errors.Is(err, model.ErrPurityGroupDetectionRunning) {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		purityGroupLookup(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "channel purity history cleared"})
 }
 
 func buildPurityGroupResponse(group *model.ChannelPurityGroup) (gin.H, error) {

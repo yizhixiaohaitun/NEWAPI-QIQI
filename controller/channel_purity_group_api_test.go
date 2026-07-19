@@ -148,6 +148,32 @@ func TestChannelPurityGroupCRUDAndListContract(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, missing.Code)
 }
 
+func TestClearChannelPurityHistoryKeepsGroupAndRejectsActiveTask(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPurityAPITestDB(t)
+	group := &model.ChannelPurityGroup{Name: "clear-group", Enabled: true, IntervalMinutes: 5, WindowMinutes: 30, MinimumSamples: 1, MaxSamplesPerWindow: 10, Members: []model.ChannelPurityMember{{ChannelID: 1, IsBaseline: true}, {ChannelID: 2}}}
+	require.NoError(t, model.CreatePurityGroup(group))
+	run := &model.ChannelPurityPairRun{GroupID: group.ID, TargetChannelID: 2, ActualModel: "model", State: model.ChannelPurityStateHealthy, AnomalyEvidenceJSON: "[]", CreatedAt: 1}
+	require.NoError(t, model.DB.Create(run).Error)
+	require.NoError(t, model.DB.Create(&model.ChannelPurityAssessment{GroupID: group.ID, TargetChannelID: 2, ActualModel: "model", LatestPairRunID: run.ID, State: model.ChannelPurityStateHealthy, FirstSeenAt: 1, UpdatedAt: 1}).Error)
+
+	active, err := model.CreateSystemTask(model.SystemTaskTypeChannelPurityAggregate, channelPurityGroupDetectionPayload{GroupID: group.ID}, nil)
+	require.NoError(t, err)
+	blocked := purityRequest(t, http.MethodDelete, fmt.Sprintf("/api/channel/purity/groups/%d/history", group.ID), "", ClearChannelPurityHistory, gin.Param{Key: "group_id", Value: fmt.Sprint(group.ID)})
+	assert.Equal(t, http.StatusConflict, blocked.Code)
+	require.NoError(t, model.DB.Model(active).Updates(map[string]any{"status": model.SystemTaskStatusFailed, "active_key": nil}).Error)
+
+	cleared := purityRequest(t, http.MethodDelete, fmt.Sprintf("/api/channel/purity/groups/%d/history", group.ID), "", ClearChannelPurityHistory, gin.Param{Key: "group_id", Value: fmt.Sprint(group.ID)})
+	require.Equal(t, http.StatusOK, cleared.Code, cleared.Body.String())
+	_, err = model.GetPurityGroup(group.ID)
+	require.NoError(t, err)
+	var runs, assessments int64
+	require.NoError(t, model.DB.Model(&model.ChannelPurityPairRun{}).Where("group_id = ?", group.ID).Count(&runs).Error)
+	require.NoError(t, model.DB.Model(&model.ChannelPurityAssessment{}).Where("group_id = ?", group.ID).Count(&assessments).Error)
+	assert.Zero(t, runs)
+	assert.Zero(t, assessments)
+}
+
 func TestChannelPurityManualRunEnqueuesFormalTask(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPurityAPITestDB(t)

@@ -118,6 +118,11 @@ func AggregatePairWindow(groupID uint, targetChannelID int, baselineModel, targe
 	if err != nil {
 		return nil, err
 	}
+	// Keep 100 windows per target/model bucket by default (over eight hours at
+	// the minimum five-minute interval) while preventing unbounded growth.
+	if err := model.PrunePurityGroupHistory(groupID, 100); err != nil {
+		return nil, err
+	}
 	return &next, nil
 }
 

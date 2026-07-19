@@ -55,6 +55,19 @@ export type TrendPoint = {
   token_similarity?: number
   confidence?: number
 }
+export type SystemTaskStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+export type PurityRunTask = { task_id: string; status: SystemTaskStatus; error?: string }
+export type PairRunDetail = {
+  id?: number
+  baseline_sample_count?: number
+  target_sample_count?: number
+  paired_sample_count?: number
+  window_started_at?: string | number
+  window_ended_at?: string | number
+  state?: DetectorStatus
+  error_class?: string
+  created_at?: string | number
+}
 export type TargetResult = {
   id: string
   group_id: string
@@ -77,6 +90,8 @@ export type TargetResult = {
   evidence: PurityEvidence[]
   alerts: string[]
   trend: TrendPoint[]
+  pair_run?: PairRunDetail
+  error_class?: string
   updated_at?: string | number
 }
 export type SamplingSettings = {

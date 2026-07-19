@@ -21,10 +21,20 @@ describe('channel purity group form state', () => {
   })
   test('normalizes and validates explicit model comparisons', () => {
     assert.deepEqual(normalizeModelComparisons(input().model_comparisons), [{ baseline_model: 'gpt-4o', target_model: 'gpt-4o-mini' }])
-    const channels = [{ id: 1, models: [' gpt-4o '] }, { id: 2, models: ['gpt-4o-mini '] }]
+    const channels = [{ id: 1, name: 'baseline', status: 1, groups: [], models: [' gpt-4o '] }, { id: 2, name: 'target', status: 1, groups: [], models: ['gpt-4o-mini '] }]
     assert.equal(modelComparisonError(input(), channels), undefined)
     assert.equal(modelComparisonError({ ...input(), model_comparisons: [...input().model_comparisons, ...input().model_comparisons] }, channels), 'Duplicate model comparison')
     assert.equal(modelComparisonError({ ...input(), model_comparisons: [] }, channels), 'Model comparisons are required')
+  })
+  test('uses the same trimmed, empty-filtered and deduplicated models for options and validation', () => {
+    const channels = [
+      { id: 1, name: 'baseline', status: 1, groups: [], models: [' shared ', '', 'shared'] },
+      { id: 2, name: 'target', status: 1, groups: [], models: ['shared ', ' '] },
+    ]
+    const current = { ...input(), model_comparisons: [{ baseline_model: ' shared ', target_model: ' shared ' }] }
+    assert.deepEqual(modelComparisonOptions(current, channels), { baselineModels: ['shared'], targetModels: ['shared'] })
+    assert.equal(modelComparisonError(current, channels), undefined)
+    assert.deepEqual(reconcileModelComparisons(current, channels).model_comparisons, [{ baseline_model: 'shared', target_model: 'shared' }])
   })
   test('offers baseline models and the intersection supported by every target', () => {
     const channels = [

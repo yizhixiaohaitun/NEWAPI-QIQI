@@ -88,6 +88,29 @@ func StartChannelPurityGroupDetection(c *gin.Context) {
 	c.JSON(status, gin.H{"success": created, "data": task.ToResponse(), "message": map[bool]string{true: "", false: "a grouped purity detection task is already pending or running"}[created]})
 }
 
+func GetChannelPurityGroupDetectionTask(c *gin.Context) {
+	groupID, err := strconvParseGroupID(c.Param("group_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid group id"})
+		return
+	}
+	task, err := model.GetSystemTaskByTaskID(strings.TrimSpace(c.Param("task_id")))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if task.Type != model.SystemTaskTypeChannelPurityAggregate {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "task not found"})
+		return
+	}
+	payload := channelPurityGroupDetectionPayload{}
+	if task.DecodePayload(&payload) != nil || payload.GroupID != groupID {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "task not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": task.ToResponse()})
+}
+
 func strconvParseGroupID(raw string) (uint, error) {
 	var value uint64
 	_, err := fmt.Sscan(strings.TrimSpace(raw), &value)

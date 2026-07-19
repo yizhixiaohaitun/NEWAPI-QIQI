@@ -280,6 +280,79 @@ func DeletePurityGroup(id uint) error {
 		return tx.Delete(&ChannelPurityGroup{}, id).Error
 	})
 }
+
+var ErrPurityGroupDetectionRunning = errors.New("channel purity detection is pending or running")
+
+// ClearPurityGroupHistory removes detector outputs while preserving the group configuration.
+// The active system-task check and deletes share one transaction so a pending/running group
+// detection cannot be cleared underneath its writer.
+func ClearPurityGroupHistory(id uint) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var group ChannelPurityGroup
+		if err := tx.First(&group, id).Error; err != nil {
+			return err
+		}
+		var activeTasks []SystemTask
+		if err := tx.Where("type = ? AND status IN ?", SystemTaskTypeChannelPurityAggregate, activeSystemTaskStatuses()).Find(&activeTasks).Error; err != nil {
+			return err
+		}
+		for i := range activeTasks {
+			var payload struct {
+				GroupID uint `json:"group_id"`
+			}
+			if activeTasks[i].DecodePayload(&payload) == nil && (payload.GroupID == 0 || payload.GroupID == id) {
+				return ErrPurityGroupDetectionRunning
+			}
+		}
+		var assessmentIDs []uint
+		if err := tx.Model(&ChannelPurityAssessment{}).Where("group_id = ?", id).Pluck("id", &assessmentIDs).Error; err != nil {
+			return err
+		}
+		if len(assessmentIDs) > 0 {
+			if err := tx.Where("assessment_id IN ?", assessmentIDs).Delete(&ChannelPurityAlert{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("group_id = ?", id).Delete(&ChannelPurityAssessment{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("group_id = ?", id).Delete(&ChannelPurityPairRun{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("group_id = ?", id).Delete(&ChannelPuritySample{}).Error
+	})
+}
+
+// PrunePurityGroupHistory keeps a bounded number of pair-run rows per result bucket.
+// Assessments always point at the newest row, so only older, unreferenced rows are removed.
+func PrunePurityGroupHistory(groupID uint, keepPerBucket int) error {
+	if keepPerBucket <= 0 {
+		keepPerBucket = 100
+	}
+	var assessments []ChannelPurityAssessment
+	if err := DB.Where("group_id = ?", groupID).Find(&assessments).Error; err != nil {
+		return err
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		for _, assessment := range assessments {
+			var keepIDs []uint
+			if err := tx.Model(&ChannelPurityPairRun{}).
+				Where("group_id = ? AND target_channel_id = ? AND actual_model = ?", groupID, assessment.TargetChannelID, assessment.ActualModel).
+				Order("window_ended_at desc, id desc").Limit(keepPerBucket).Pluck("id", &keepIDs).Error; err != nil {
+				return err
+			}
+			query := tx.Where("group_id = ? AND target_channel_id = ? AND actual_model = ?", groupID, assessment.TargetChannelID, assessment.ActualModel)
+			if len(keepIDs) > 0 {
+				query = query.Where("id NOT IN ?", keepIDs)
+			}
+			if err := query.Delete(&ChannelPurityPairRun{}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func CreatePuritySample(sample *ChannelPuritySample) error { return DB.Create(sample).Error }
 func ListPurityGroupIDsForChannel(channelID int) ([]uint, error) {
 	var groupIDs []uint

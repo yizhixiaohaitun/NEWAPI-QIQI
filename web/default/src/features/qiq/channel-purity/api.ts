@@ -14,6 +14,7 @@ import type {
   PurityEvidence,
   PurityGroup,
   PurityGroupInput,
+  PurityRunTask,
   QuickProbeInput,
   QuickProbeResult,
   TargetResult,
@@ -145,6 +146,10 @@ export async function deletePurityGroup(id: string): Promise<void> {
   const response = await api.delete(`${ROOT}/${id}`, config)
   unwrap(response.data)
 }
+export async function clearPurityGroupHistory(id: string): Promise<void> {
+  const response = await api.delete(`${ROOT}/${id}/history`, config)
+  unwrap(response.data)
+}
 export async function listChannelOptions(): Promise<ChannelOption[]> {
   const pageSize = 500
   const items: unknown[] = []
@@ -168,9 +173,32 @@ export async function listChannelOptions(): Promise<ChannelOption[]> {
     }
   }))
 }
-export async function runPurityGroup(id: string): Promise<void> {
+function normalizeRunTask(value: unknown): PurityRunTask {
+  const item = record(value)
+  const rawStatus = String(item.status ?? 'pending')
+  const status = ['pending', 'running', 'succeeded', 'failed'].includes(rawStatus) ? rawStatus as PurityRunTask['status'] : 'pending'
+  return { task_id: String(item.task_id ?? ''), status, error: item.error == null || item.error === '' ? undefined : String(item.error) }
+}
+export async function runPurityGroup(id: string): Promise<PurityRunTask> {
   const response = await api.post(`${ROOT}/${id}/run`, undefined, config)
-  unwrap(response.data)
+  return normalizeRunTask(unwrap(response.data))
+}
+export async function getPurityRunTask(groupId: string, taskId: string): Promise<PurityRunTask> {
+  const response = await api.get(`${ROOT}/${groupId}/run/${encodeURIComponent(taskId)}`, config)
+  return normalizeRunTask(unwrap(response.data))
+}
+export async function waitForPurityRun(groupId: string, task: PurityRunTask, onStatus?: (task: PurityRunTask) => void): Promise<PurityRunTask> {
+  let current = task
+  const deadline = Date.now() + 10 * 60_000
+  while (current.status === 'pending' || current.status === 'running') {
+    if (Date.now() >= deadline) throw new Error('Manual detection timed out while waiting for completion')
+    onStatus?.(current)
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    current = await getPurityRunTask(groupId, current.task_id)
+  }
+  onStatus?.(current)
+  if (current.status === 'failed') throw new Error(current.error || 'Manual detection failed')
+  return current
 }
 
 function historyPoint(value: unknown): TrendPoint {
@@ -193,16 +221,37 @@ export async function getPurityResultDetail(result: TargetResult): Promise<Targe
   const latest = record(unwrap(latestResponse.data))
   const historyPayload = unwrap(historyResponse.data)
   const historyItems = array(Array.isArray(historyPayload) ? historyPayload : record(historyPayload).items)
+  const detail = structureDetail(latest.structure_similarity_detail)
+  const pairRun = record(latest.pair_run)
+  const run = Object.keys(pairRun).length ? pairRun : latest
+  const evidenceItems = array(latest.evidence ?? latest.anomaly_evidence).map(evidence)
   return {
     ...result,
-    status: status(latest.state ?? latest.status ?? result.status),
-    confidence: optionalNumber(latest.confidence) ?? result.confidence,
+    status: status(latest.state ?? latest.status ?? run.state ?? result.status),
+    confidence: optionalNumber(latest.confidence) ?? optionalNumber(run.confidence) ?? result.confidence,
+    samples: number(run.paired_sample_count ?? detail?.paired_sample_count ?? result.samples),
     field_similarity: {
       ...result.field_similarity,
-      value: optionalNumber(latest.structure_similarity) ?? result.field_similarity.value,
-      detail: structureDetail(latest.structure_similarity_detail),
+      value: optionalNumber(latest.structure_similarity ?? run.structure_similarity) ?? result.field_similarity.value,
+      sample_size: number(run.paired_sample_count ?? detail?.paired_sample_count ?? result.field_similarity.sample_size),
+      detail,
     },
-    updated_at: (latest.updated_at ?? result.updated_at) as string | number | undefined,
+    token_similarity: { ...result.token_similarity, value: optionalNumber(run.token_similarity) ?? result.token_similarity.value },
+    baseline_token_range: run.baseline_token_min === undefined ? result.baseline_token_range : { min: number(run.baseline_token_min), max: number(run.baseline_token_max) },
+    target_token_range: run.target_token_min === undefined ? result.target_token_range : { min: number(run.target_token_min), max: number(run.target_token_max) },
+    deviation_rate: optionalNumber(run.token_deviation_rate) ?? result.deviation_rate,
+    evidence: evidenceItems.length ? evidenceItems : result.evidence,
+    error_class: run.error_class == null ? undefined : String(run.error_class),
+    pair_run: Object.keys(run).some((key) => ['id', 'latest_pair_run_id', 'window_started_at', 'window_ended_at', 'paired_sample_count', 'created_at'].includes(key)) || Boolean(detail) ? {
+      id: optionalNumber(run.id ?? latest.latest_pair_run_id),
+      baseline_sample_count: optionalNumber(run.baseline_sample_count), target_sample_count: optionalNumber(run.target_sample_count),
+      paired_sample_count: optionalNumber(run.paired_sample_count ?? detail?.paired_sample_count),
+      window_started_at: (run.window_started_at ?? detail?.window_started_at) as string | number | undefined,
+      window_ended_at: (run.window_ended_at ?? detail?.window_ended_at) as string | number | undefined,
+      state: run.state === undefined && latest.state === undefined ? undefined : status(run.state ?? latest.state),
+      error_class: run.error_class == null ? undefined : String(run.error_class), created_at: run.created_at as string | number | undefined,
+    } : undefined,
+    updated_at: (latest.updated_at ?? run.created_at ?? result.updated_at) as string | number | undefined,
     trend: historyItems.slice().reverse().map(historyPoint),
   }
 }

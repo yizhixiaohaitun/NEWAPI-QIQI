@@ -50,28 +50,26 @@ export function modelComparisonOptions(input: PurityGroupInput, channels: Channe
 
 export function reconcileModelComparisons(input: PurityGroupInput, channels: ChannelOption[]): PurityGroupInput {
   const { baselineModels, targetModels } = modelComparisonOptions(input, channels)
+  const comparisons = normalizeModelComparisons(input.model_comparisons)
   return {
     ...input,
-    model_comparisons: input.model_comparisons.map((comparison) => ({
+    model_comparisons: comparisons.map((comparison) => ({
       baseline_model: baselineModels.includes(comparison.baseline_model) ? comparison.baseline_model : '',
       target_model: targetModels.includes(comparison.target_model) ? comparison.target_model : '',
     })),
   }
 }
 
-export function modelComparisonError(input: PurityGroupInput, channels: { id: number; models?: string[] }[]): string | undefined {
+export function modelComparisonError(input: PurityGroupInput, channels: ChannelOption[]): string | undefined {
   const comparisons = normalizeModelComparisons(input.model_comparisons)
   if (!comparisons.length || comparisons.some((item) => !item.baseline_model || !item.target_model)) return 'Model comparisons are required'
   const keys = comparisons.map((item) => `${item.baseline_model}\u0000${item.target_model}`)
   if (new Set(keys).size !== keys.length) return 'Duplicate model comparison'
-  const baseline = channels.find((channel) => channel.id === input.baseline_channel_id)
-  if (!baseline) return 'Baseline channel is required'
-  const baselineModels = new Set(uniqueModels(baseline.models))
+  const { baselineModels, targetModels } = modelComparisonOptions(input, channels)
+  if (!channels.some((channel) => channel.id === input.baseline_channel_id && channel.status === 1)) return 'Baseline channel is required'
   for (const item of comparisons) {
-    if (!baselineModels.has(item.baseline_model)) return 'Baseline model is unavailable'
-    for (const target of channels.filter((channel) => input.channel_ids.includes(channel.id) && channel.id !== input.baseline_channel_id)) {
-      if (!new Set(uniqueModels(target.models)).has(item.target_model)) return 'Target model is unavailable'
-    }
+    if (!baselineModels.includes(item.baseline_model)) return 'Baseline model is unavailable'
+    if (!targetModels.includes(item.target_model)) return 'Target model is unavailable'
   }
   return undefined
 }

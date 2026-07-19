@@ -18,15 +18,17 @@ import (
 
 func TestChannelPurityRouteContracts(t *testing.T) {
 	expected := map[string]authz.Permission{
-		http.MethodPost + " /purity/groups":                  authz.ChannelWrite,
-		http.MethodGet + " /purity/groups":                   authz.ChannelRead,
-		http.MethodGet + " /purity/groups/:group_id":         authz.ChannelRead,
-		http.MethodPut + " /purity/groups/:group_id":         authz.ChannelWrite,
-		http.MethodDelete + " /purity/groups/:group_id":      authz.ChannelSensitiveWrite,
-		http.MethodPost + " /purity/groups/:group_id/run":    authz.ChannelOperate,
-		http.MethodPost + " /purity/quick-probe":             authz.ChannelOperate,
-		http.MethodGet + " /purity/groups/:group_id/latest":  authz.ChannelRead,
-		http.MethodGet + " /purity/groups/:group_id/history": authz.ChannelRead,
+		http.MethodPost + " /purity/groups":                       authz.ChannelWrite,
+		http.MethodGet + " /purity/groups":                        authz.ChannelRead,
+		http.MethodGet + " /purity/groups/:group_id":              authz.ChannelRead,
+		http.MethodPut + " /purity/groups/:group_id":              authz.ChannelWrite,
+		http.MethodDelete + " /purity/groups/:group_id":           authz.ChannelSensitiveWrite,
+		http.MethodPost + " /purity/groups/:group_id/run":         authz.ChannelOperate,
+		http.MethodGet + " /purity/groups/:group_id/run/:task_id": authz.ChannelRead,
+		http.MethodPost + " /purity/quick-probe":                  authz.ChannelOperate,
+		http.MethodGet + " /purity/groups/:group_id/latest":       authz.ChannelRead,
+		http.MethodGet + " /purity/groups/:group_id/history":      authz.ChannelRead,
+		http.MethodDelete + " /purity/groups/:group_id/history":   authz.ChannelSensitiveWrite,
 	}
 	found := map[string]permissionRoute{}
 	for _, route := range channelPermissionRoutes {
