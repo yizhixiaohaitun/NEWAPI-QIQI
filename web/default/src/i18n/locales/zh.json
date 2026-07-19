@@ -4099,6 +4099,8 @@
     "Duplicate model comparison": "模型对比不能重复。",
     "Baseline model is unavailable": "基准模型不在当前基准渠道的可用模型中。",
     "Target model is unavailable": "对标模型并非所有已选对标渠道都可用。",
+    "Select an enabled baseline channel with available models.": "请选择一个已启用且配置了模型的基准渠道。",
+    "The selected target channels have no model in common.": "所选对标渠道没有共同支持的模型。",
     "Select body font": "选择正文字体",
     "Select border radius": "选择圆角大小",
     "Select channel type": "选择渠道类型",
