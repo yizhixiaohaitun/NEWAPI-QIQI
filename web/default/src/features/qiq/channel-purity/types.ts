@@ -42,6 +42,8 @@ export type TargetResult = {
   baseline_channel_id: number
   baseline_channel_name: string
   model: string
+  baseline_model: string
+  target_model: string
   status: DetectorStatus
   samples: number
   field_similarity: SimilarityMetric
@@ -61,6 +63,7 @@ export type SamplingSettings = {
   minimum_samples: number
   max_samples_per_window: number
 }
+export type ModelComparison = { baseline_model: string; target_model: string }
 export type PurityGroup = {
   id: string
   name: string
@@ -69,6 +72,8 @@ export type PurityGroup = {
   baseline_channel_id: number
   interval_minutes: 5 | 10
   random_pairing_enabled: boolean
+  model_comparisons: ModelComparison[]
+  model_comparisons_required?: boolean
   sampling: SamplingSettings
   results: TargetResult[]
   last_run_at?: string | number

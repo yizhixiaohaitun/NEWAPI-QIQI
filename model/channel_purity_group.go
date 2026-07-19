@@ -20,20 +20,34 @@ const (
 
 // ChannelPurityGroup is the isolation boundary for baseline comparison.
 type ChannelPurityGroup struct {
-	ID                   uint                  `json:"id" gorm:"primaryKey"`
-	Name                 string                `json:"name" gorm:"type:varchar(255);not null;uniqueIndex"`
-	Enabled              bool                  `json:"enabled" gorm:"not null;default:true"`
-	IntervalMinutes      int                   `json:"interval_minutes" gorm:"not null;default:5"`
-	RandomPairingEnabled bool                  `json:"random_pairing_enabled" gorm:"not null;default:false"`
-	WindowMinutes        int                   `json:"window_minutes" gorm:"not null;default:30"`
-	MinimumSamples       int                   `json:"minimum_samples" gorm:"not null;default:5"`
-	MaxSamplesPerWindow  int                   `json:"max_samples_per_window" gorm:"not null;default:200"`
-	LastRunAt            int64                 `json:"last_run_at" gorm:"bigint;not null;default:0"`
-	NextRunAt            int64                 `json:"next_run_at" gorm:"bigint;not null;default:0;index"`
-	LastError            string                `json:"last_error,omitempty" gorm:"type:varchar(512)"`
-	CreatedAt            int64                 `json:"created_at" gorm:"bigint;not null"`
-	UpdatedAt            int64                 `json:"updated_at" gorm:"bigint;not null"`
-	Members              []ChannelPurityMember `json:"members,omitempty" gorm:"foreignKey:GroupID;constraint:OnDelete:CASCADE"`
+	ID                   uint                           `json:"id" gorm:"primaryKey"`
+	Name                 string                         `json:"name" gorm:"type:varchar(255);not null;uniqueIndex"`
+	Enabled              bool                           `json:"enabled" gorm:"not null;default:true"`
+	IntervalMinutes      int                            `json:"interval_minutes" gorm:"not null;default:5"`
+	RandomPairingEnabled bool                           `json:"random_pairing_enabled" gorm:"not null;default:false"`
+	WindowMinutes        int                            `json:"window_minutes" gorm:"not null;default:30"`
+	MinimumSamples       int                            `json:"minimum_samples" gorm:"not null;default:5"`
+	MaxSamplesPerWindow  int                            `json:"max_samples_per_window" gorm:"not null;default:200"`
+	LastRunAt            int64                          `json:"last_run_at" gorm:"bigint;not null;default:0"`
+	NextRunAt            int64                          `json:"next_run_at" gorm:"bigint;not null;default:0;index"`
+	LastError            string                         `json:"last_error,omitempty" gorm:"type:varchar(512)"`
+	CreatedAt            int64                          `json:"created_at" gorm:"bigint;not null"`
+	UpdatedAt            int64                          `json:"updated_at" gorm:"bigint;not null"`
+	Members              []ChannelPurityMember          `json:"members,omitempty" gorm:"foreignKey:GroupID;constraint:OnDelete:CASCADE"`
+	ModelComparisons     []ChannelPurityModelComparison `json:"model_comparisons,omitempty" gorm:"foreignKey:GroupID;constraint:OnDelete:CASCADE"`
+}
+
+// ChannelPurityModelComparison is an explicit baseline-model to target-model contract.
+type ChannelPurityModelComparison struct {
+	ID            uint   `json:"id" gorm:"primaryKey"`
+	GroupID       uint   `json:"group_id" gorm:"not null;uniqueIndex:uq_purity_group_model_pair,priority:1"`
+	BaselineModel string `json:"baseline_model" gorm:"type:varchar(255);not null;uniqueIndex:uq_purity_group_model_pair,priority:2"`
+	TargetModel   string `json:"target_model" gorm:"type:varchar(255);not null;uniqueIndex:uq_purity_group_model_pair,priority:3"`
+	CreatedAt     int64  `json:"created_at" gorm:"bigint;not null"`
+}
+
+func (ChannelPurityModelComparison) TableName() string {
+	return "qiqi_channel_purity_model_comparisons"
 }
 
 func (ChannelPurityGroup) TableName() string { return "qiqi_channel_purity_groups" }
@@ -76,6 +90,8 @@ type ChannelPurityPairRun struct {
 	BaselineChannelID   int     `json:"baseline_channel_id" gorm:"not null"`
 	TargetChannelID     int     `json:"target_channel_id" gorm:"not null;index:idx_purity_pair_history,priority:2"`
 	ActualModel         string  `json:"actual_model" gorm:"type:varchar(255);not null;index:idx_purity_pair_history,priority:3"`
+	BaselineModel       string  `json:"baseline_model" gorm:"type:varchar(255);not null;default:''"`
+	TargetModel         string  `json:"target_model" gorm:"type:varchar(255);not null;default:''"`
 	WindowStartedAt     int64   `json:"window_started_at" gorm:"bigint;not null"`
 	WindowEndedAt       int64   `json:"window_ended_at" gorm:"bigint;not null;index:idx_purity_pair_history,priority:4,sort:desc"`
 	BaselineSampleCount int     `json:"baseline_sample_count"`
@@ -175,6 +191,20 @@ func ValidateChannelPurityGroup(group *ChannelPurityGroup) error {
 	if baseline != 1 {
 		return errors.New("a group requires exactly one baseline")
 	}
+	seenComparisons := map[string]bool{}
+	for i := range group.ModelComparisons {
+		comparison := &group.ModelComparisons[i]
+		comparison.BaselineModel = strings.TrimSpace(comparison.BaselineModel)
+		comparison.TargetModel = strings.TrimSpace(comparison.TargetModel)
+		if comparison.BaselineModel == "" || comparison.TargetModel == "" {
+			return errors.New("baseline_model and target_model are required")
+		}
+		key := comparison.BaselineModel + "\x00" + comparison.TargetModel
+		if seenComparisons[key] {
+			return errors.New("model comparisons must be unique")
+		}
+		seenComparisons[key] = true
+	}
 	return nil
 }
 
@@ -204,17 +234,30 @@ func UpdatePurityGroup(group *ChannelPurityGroup) error {
 			group.Members[i].ID = 0
 			group.Members[i].GroupID = group.ID
 		}
-		return tx.Create(&group.Members).Error
+		if err := tx.Create(&group.Members).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("group_id = ?", group.ID).Delete(&ChannelPurityModelComparison{}).Error; err != nil {
+			return err
+		}
+		for i := range group.ModelComparisons {
+			group.ModelComparisons[i].ID = 0
+			group.ModelComparisons[i].GroupID = group.ID
+		}
+		if len(group.ModelComparisons) > 0 {
+			return tx.Create(&group.ModelComparisons).Error
+		}
+		return nil
 	})
 }
 func GetPurityGroup(id uint) (*ChannelPurityGroup, error) {
 	var v ChannelPurityGroup
-	err := DB.Preload("Members").First(&v, id).Error
+	err := DB.Preload("Members").Preload("ModelComparisons").First(&v, id).Error
 	return &v, err
 }
 func ListPurityGroups() ([]ChannelPurityGroup, error) {
 	var v []ChannelPurityGroup
-	err := DB.Preload("Members").Order("id asc").Find(&v).Error
+	err := DB.Preload("Members").Preload("ModelComparisons").Order("id asc").Find(&v).Error
 	return v, err
 }
 func DeletePurityGroup(id uint) error {
@@ -228,7 +271,7 @@ func DeletePurityGroup(id uint) error {
 				return err
 			}
 		}
-		for _, target := range []any{&ChannelPurityAssessment{}, &ChannelPurityPairRun{}, &ChannelPuritySample{}, &ChannelPurityMember{}} {
+		for _, target := range []any{&ChannelPurityAssessment{}, &ChannelPurityPairRun{}, &ChannelPuritySample{}, &ChannelPurityModelComparison{}, &ChannelPurityMember{}} {
 			if err := tx.Where("group_id = ?", id).Delete(target).Error; err != nil {
 				return err
 			}
@@ -247,7 +290,7 @@ func ListPurityGroupIDsForChannel(channelID int) ([]uint, error) {
 }
 func ListDuePurityGroups(now int64) ([]ChannelPurityGroup, error) {
 	var groups []ChannelPurityGroup
-	err := DB.Preload("Members").Where("enabled = ? AND (next_run_at = 0 OR next_run_at <= ?)", true, now).Order("id asc").Find(&groups).Error
+	err := DB.Preload("Members").Preload("ModelComparisons").Where("enabled = ? AND (next_run_at = 0 OR next_run_at <= ?)", true, now).Order("id asc").Find(&groups).Error
 	return groups, err
 }
 func MarkPurityGroupRun(id uint, lastRunAt, nextRunAt int64, lastError string) error {

@@ -199,37 +199,39 @@ func runPurityGroupDetection(ctx context.Context, group *model.ChannelPurityGrou
 	if group.RandomPairingEnabled {
 		rand.Shuffle(len(targets), func(i, j int) { targets[i], targets[j] = targets[j], targets[i] })
 	}
-	baselineModels := channelModelSet(baseline)
-	modelsToTargets := map[string][]*model.Channel{}
-	for _, target := range targets {
-		for modelName := range channelModelSet(target) {
-			if baselineModels[modelName] {
-				modelsToTargets[modelName] = append(modelsToTargets[modelName], target)
-			}
+	if len(group.ModelComparisons) == 0 {
+		return 0, fmt.Errorf("group has no model comparisons; edit the legacy group and configure at least one baseline_model → target_model pair")
+	}
+	comparisons := append([]model.ChannelPurityModelComparison(nil), group.ModelComparisons...)
+	sort.Slice(comparisons, func(i, j int) bool {
+		if comparisons[i].BaselineModel == comparisons[j].BaselineModel {
+			return comparisons[i].TargetModel < comparisons[j].TargetModel
 		}
-	}
-	modelNames := make([]string, 0, len(modelsToTargets))
-	for modelName := range modelsToTargets {
-		modelNames = append(modelNames, modelName)
-	}
-	sort.Strings(modelNames)
+		return comparisons[i].BaselineModel < comparisons[j].BaselineModel
+	})
 	if group.RandomPairingEnabled {
-		rand.Shuffle(len(modelNames), func(i, j int) { modelNames[i], modelNames[j] = modelNames[j], modelNames[i] })
-	}
-	if len(modelNames) == 0 {
-		return 0, fmt.Errorf("baseline and targets do not share a configured model")
+		rand.Shuffle(len(comparisons), func(i, j int) { comparisons[i], comparisons[j] = comparisons[j], comparisons[i] })
 	}
 	pairs := 0
 	var firstErr error
-	for _, modelName := range modelNames {
+	for _, comparison := range comparisons {
+		baselineModel, targetModel := comparison.BaselineModel, comparison.TargetModel
+		if !channelModelSet(baseline)[baselineModel] {
+			return pairs, fmt.Errorf("baseline model %q is not available on baseline channel %d", baselineModel, baseline.Id)
+		}
+		for _, target := range targets {
+			if !channelModelSet(target)[targetModel] {
+				return pairs, fmt.Errorf("target model %q is not available on target channel %d", targetModel, target.Id)
+			}
+		}
 		if ctx.Err() != nil {
 			return pairs, ctx.Err()
 		}
 		windowEnd := time.Now().Unix() + 1
 		windowStart := windowEnd - int64(group.WindowMinutes*60)
-		eligibleTargets := make([]*model.Channel, 0, len(modelsToTargets[modelName]))
-		for _, target := range modelsToTargets[modelName] {
-			existing, countErr := channelpurity.CountValidPairedSamples(group.ID, baselineID, target.Id, modelName, windowStart, windowEnd)
+		eligibleTargets := make([]*model.Channel, 0, len(targets))
+		for _, target := range targets {
+			existing, countErr := channelpurity.CountValidPairedSamples(group.ID, baselineID, target.Id, baselineModel, targetModel, windowStart, windowEnd)
 			if countErr != nil {
 				if firstErr == nil {
 					firstErr = countErr
@@ -244,7 +246,7 @@ func runPurityGroupDetection(ctx context.Context, group *model.ChannelPurityGrou
 			continue
 		}
 		runKey := common.NewRequestId()
-		baselineSample := runPuritySample(ctx, group.ID, runKey, baseline, modelName, userID)
+		baselineSample := runPuritySample(ctx, group.ID, runKey, baseline, baselineModel, userID)
 		if err = model.CreatePuritySample(&baselineSample); err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -252,7 +254,7 @@ func runPurityGroupDetection(ctx context.Context, group *model.ChannelPurityGrou
 			continue
 		}
 		for _, target := range eligibleTargets {
-			targetSample := runPuritySample(ctx, group.ID, runKey, target, modelName, userID)
+			targetSample := runPuritySample(ctx, group.ID, runKey, target, targetModel, userID)
 			if createErr := model.CreatePuritySample(&targetSample); createErr != nil {
 				if firstErr == nil {
 					firstErr = createErr
@@ -261,7 +263,7 @@ func runPurityGroupDetection(ctx context.Context, group *model.ChannelPurityGrou
 			}
 			policy := channelpurity.DefaultAggregatePolicy()
 			policy.MinSamples = group.MinimumSamples
-			if _, aggregateErr := channelpurity.AggregatePairWindow(group.ID, target.Id, modelName, windowStart, windowEnd, policy); aggregateErr != nil && firstErr == nil {
+			if _, aggregateErr := channelpurity.AggregatePairWindow(group.ID, target.Id, baselineModel, targetModel, windowStart, windowEnd, policy); aggregateErr != nil && firstErr == nil {
 				firstErr = aggregateErr
 			}
 			pairs++

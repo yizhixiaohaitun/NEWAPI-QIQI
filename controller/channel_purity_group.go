@@ -33,6 +33,10 @@ func purityGroupFromRequest(r dto.ChannelPurityGroupRequest) *model.ChannelPurit
 	for i, member := range members {
 		g.Members[i] = model.ChannelPurityMember{ChannelID: member.ChannelID, IsBaseline: member.IsBaseline}
 	}
+	g.ModelComparisons = make([]model.ChannelPurityModelComparison, len(r.ModelComparisons))
+	for i, comparison := range r.ModelComparisons {
+		g.ModelComparisons[i] = model.ChannelPurityModelComparison{BaselineModel: comparison.BaselineModel, TargetModel: comparison.TargetModel}
+	}
 	return g
 }
 
@@ -57,6 +61,30 @@ func validatePurityGroupChannelsEnabled(group *model.ChannelPurityGroup) error {
 	}
 	if len(disabledIDs) > 0 {
 		return fmt.Errorf("purity group channels are disabled: %v", disabledIDs)
+	}
+	if len(group.ModelComparisons) == 0 {
+		return fmt.Errorf("at least one model comparison is required")
+	}
+	var baseline *model.Channel
+	targets := make([]*model.Channel, 0, len(group.Members)-1)
+	for _, member := range group.Members {
+		channel, _ := model.GetChannelById(member.ChannelID, true)
+		if member.IsBaseline {
+			baseline = channel
+		} else {
+			targets = append(targets, channel)
+		}
+	}
+	baselineModels := channelModelSet(baseline)
+	for _, comparison := range group.ModelComparisons {
+		if !baselineModels[comparison.BaselineModel] {
+			return fmt.Errorf("baseline model %q is not available on baseline channel %d", comparison.BaselineModel, baseline.Id)
+		}
+		for _, target := range targets {
+			if !channelModelSet(target)[comparison.TargetModel] {
+				return fmt.Errorf("target model %q is not available on target channel %d", comparison.TargetModel, target.Id)
+			}
+		}
 	}
 	return nil
 }
@@ -339,9 +367,14 @@ func buildPurityGroupResponse(group *model.ChannelPurityGroup) (gin.H, error) {
 		for range alerts {
 			alertMessages = append(alertMessages, "Repeated independent evidence is outside the baseline interval")
 		}
+		baselineModel, targetModel := run.BaselineModel, run.TargetModel
+		if baselineModel == "" && targetModel == "" {
+			baselineModel, targetModel = run.ActualModel, run.ActualModel
+		}
 		result := gin.H{
 			"id": assessment.ID, "target_channel_id": assessment.TargetChannelID, "target_channel_name": fallbackChannelName(channelNames, assessment.TargetChannelID),
 			"baseline_channel_id": baselineID, "baseline_channel_name": fallbackChannelName(channelNames, baselineID), "model": assessment.ActualModel,
+			"baseline_model": baselineModel, "target_model": targetModel,
 			"status": assessment.State, "samples": run.PairedSampleCount, "field_similarity": run.StructureSimilarity,
 			"token_similarity": run.TokenSimilarity, "confidence": assessment.Confidence,
 			"baseline_token_range": gin.H{"min": run.BaselineTokenMin, "max": run.BaselineTokenMax},
@@ -356,9 +389,11 @@ func buildPurityGroupResponse(group *model.ChannelPurityGroup) (gin.H, error) {
 	return gin.H{
 		"id": group.ID, "name": group.Name, "enabled": group.Enabled, "channel_ids": channelIDs, "baseline_channel_id": baselineID,
 		"baseline_channel_name": fallbackChannelName(channelNames, baselineID), "interval_minutes": group.IntervalMinutes,
-		"random_pairing_enabled": group.RandomPairingEnabled,
-		"sampling":               gin.H{"window_minutes": group.WindowMinutes, "minimum_samples": group.MinimumSamples, "max_samples_per_window": group.MaxSamplesPerWindow},
-		"results":                results, "last_run_at": group.LastRunAt, "next_run_at": group.NextRunAt, "last_error": group.LastError,
+		"random_pairing_enabled":     group.RandomPairingEnabled,
+		"model_comparisons":          group.ModelComparisons,
+		"model_comparisons_required": len(group.ModelComparisons) == 0,
+		"sampling":                   gin.H{"window_minutes": group.WindowMinutes, "minimum_samples": group.MinimumSamples, "max_samples_per_window": group.MaxSamplesPerWindow},
+		"results":                    results, "last_run_at": group.LastRunAt, "next_run_at": group.NextRunAt, "last_error": group.LastError,
 		"created_at": group.CreatedAt, "updated_at": group.UpdatedAt,
 	}, nil
 }

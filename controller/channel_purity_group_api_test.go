@@ -28,7 +28,7 @@ func setupPurityAPITestDB(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.Exec("PRAGMA foreign_keys = ON").Error)
 	require.NoError(t, db.AutoMigrate(
-		&model.Channel{}, &model.ChannelPurityGroup{}, &model.ChannelPurityMember{},
+		&model.Channel{}, &model.ChannelPurityGroup{}, &model.ChannelPurityMember{}, &model.ChannelPurityModelComparison{},
 		&model.ChannelPuritySample{}, &model.ChannelPurityPairRun{},
 		&model.ChannelPurityAssessment{}, &model.ChannelPurityAlert{},
 		&model.SystemTask{}, &model.SystemTaskLock{},
@@ -64,6 +64,7 @@ func TestChannelPurityGroupCRUDAndListContract(t *testing.T) {
 	create := purityRequest(t, http.MethodPost, "/api/channel/purity/groups", `{
 		"name":"api-acceptance","enabled":true,"channel_ids":[101,102],"baseline_channel_id":101,
 		"interval_minutes":5,"random_pairing_enabled":true,
+		"model_comparisons":[{"baseline_model":"gpt-4o","target_model":"gpt-4o"}],
 		"sampling":{"window_minutes":30,"minimum_samples":2,"max_samples_per_window":20}
 	}`, CreateChannelPurityGroup)
 	require.Equal(t, http.StatusCreated, create.Code, create.Body.String())
@@ -111,7 +112,7 @@ func TestChannelPurityGroupCRUDAndListContract(t *testing.T) {
 	update := purityRequest(t, http.MethodPut, fmt.Sprintf("/api/channel/purity/groups/%d", groupID), `{
 		"name":"api-acceptance-updated","enabled":true,
 		"members":[{"channel_id":101,"is_baseline":true},{"channel_id":102,"is_baseline":false}],
-		"interval_minutes":10,"sampling":{"window_minutes":30,"minimum_samples":3,"max_samples_per_window":30}
+		"interval_minutes":10,"model_comparisons":[{"baseline_model":"gpt-4o","target_model":"gpt-4o"}],"sampling":{"window_minutes":30,"minimum_samples":3,"max_samples_per_window":30}
 	}`, UpdateChannelPurityGroup, gin.Param{Key: "group_id", Value: fmt.Sprint(groupID)})
 	require.Equal(t, http.StatusOK, update.Code, update.Body.String())
 	updated := decodeEnvelope(t, update)["data"].(map[string]any)

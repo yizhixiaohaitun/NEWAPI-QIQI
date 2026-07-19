@@ -1,8 +1,11 @@
 package channel_purity
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -10,10 +13,21 @@ import (
 	"gorm.io/gorm"
 )
 
-// AggregatePairWindow persists one independent group+target+actual-model result.
+func ModelComparisonKey(baselineModel, targetModel string) string {
+	baselineModel, targetModel = strings.TrimSpace(baselineModel), strings.TrimSpace(targetModel)
+	display := baselineModel + " → " + targetModel
+	if len(display) <= 240 {
+		return display
+	}
+	sum := sha256.Sum256([]byte(display))
+	return display[:220] + "#" + hex.EncodeToString(sum[:8])
+}
+
+// AggregatePairWindow persists one independent group+target+model-comparison result.
 // Only valid baseline/target rows matched one-to-one by the same non-empty RunKey
 // participate in any formal statistic.
-func AggregatePairWindow(groupID uint, targetChannelID int, actualModel string, windowStart, windowEnd int64, policy AggregatePolicy) (*model.ChannelPurityAssessment, error) {
+func AggregatePairWindow(groupID uint, targetChannelID int, baselineModel, targetModel string, windowStart, windowEnd int64, policy AggregatePolicy) (*model.ChannelPurityAssessment, error) {
+	comparisonKey := ModelComparisonKey(baselineModel, targetModel)
 	group, err := model.GetPurityGroup(groupID)
 	if err != nil {
 		return nil, err
@@ -31,13 +45,13 @@ func AggregatePairWindow(groupID uint, targetChannelID int, actualModel string, 
 		return nil, errors.New("target channel is not a non-baseline member of group")
 	}
 	var baselineRows, targetRows []model.ChannelPuritySample
-	query := func(channelID int, into *[]model.ChannelPuritySample) error {
-		return model.DB.Where("group_id = ? AND channel_id = ? AND actual_model = ? AND observed_at >= ? AND observed_at < ?", groupID, channelID, actualModel, windowStart, windowEnd).Order("observed_at asc, id asc").Find(into).Error
+	query := func(channelID int, modelName string, into *[]model.ChannelPuritySample) error {
+		return model.DB.Where("group_id = ? AND channel_id = ? AND actual_model = ? AND observed_at >= ? AND observed_at < ?", groupID, channelID, modelName, windowStart, windowEnd).Order("observed_at asc, id asc").Find(into).Error
 	}
-	if err = query(baselineID, &baselineRows); err != nil {
+	if err = query(baselineID, baselineModel, &baselineRows); err != nil {
 		return nil, err
 	}
-	if err = query(targetChannelID, &targetRows); err != nil {
+	if err = query(targetChannelID, targetModel, &targetRows); err != nil {
 		return nil, err
 	}
 	baseline, target := matchValidSamples(baselineRows, targetRows)
@@ -45,7 +59,7 @@ func AggregatePairWindow(groupID uint, targetChannelID int, actualModel string, 
 	combined := structure*.65 + token*.35
 	window := WindowResult{BaselineAvailable: len(baseline) > 0, BaselineSamples: len(baseline), TargetSamples: len(target), Similarity: combined, Confidence: confidence}
 	var previous model.ChannelPurityAssessment
-	err = model.DB.Where("group_id = ? AND target_channel_id = ? AND actual_model = ?", groupID, targetChannelID, actualModel).First(&previous).Error
+	err = model.DB.Where("group_id = ? AND target_channel_id = ? AND actual_model = ?", groupID, targetChannelID, comparisonKey).First(&previous).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
@@ -54,7 +68,7 @@ func AggregatePairWindow(groupID uint, targetChannelID int, actualModel string, 
 	if next.FirstSeenAt == 0 {
 		next.FirstSeenAt = now
 	}
-	next.GroupID, next.TargetChannelID, next.ActualModel, next.UpdatedAt = groupID, targetChannelID, actualModel, now
+	next.GroupID, next.TargetChannelID, next.ActualModel, next.UpdatedAt = groupID, targetChannelID, comparisonKey, now
 	evidenceJSON := "[]"
 	if encoded, e := common.Marshal(evidence); e == nil {
 		evidenceJSON = string(encoded)
@@ -63,7 +77,8 @@ func AggregatePairWindow(groupID uint, targetChannelID int, actualModel string, 
 	targetMin, targetMax := tokenBounds(target)
 	deviationRate := pairedTokenDeviationRate(baseline, target, policy.MinSamples)
 	run := model.ChannelPurityPairRun{
-		GroupID: groupID, BaselineChannelID: baselineID, TargetChannelID: targetChannelID, ActualModel: actualModel,
+		GroupID: groupID, BaselineChannelID: baselineID, TargetChannelID: targetChannelID, ActualModel: comparisonKey,
+		BaselineModel: baselineModel, TargetModel: targetModel,
 		WindowStartedAt: windowStart, WindowEndedAt: windowEnd, BaselineSampleCount: len(baseline), TargetSampleCount: len(target),
 		PairedSampleCount: len(baseline), StructureSimilarity: structure, TokenSimilarity: token,
 		BaselineTokenMin: baselineMin, BaselineTokenMax: baselineMax, TargetTokenMin: targetMin, TargetTokenMax: targetMax,
@@ -118,15 +133,15 @@ func matchValidSamples(baseline, target []model.ChannelPuritySample) ([]model.Ch
 }
 
 // CountValidPairedSamples returns the existing formal pair count for one isolated window quota.
-func CountValidPairedSamples(groupID uint, baselineChannelID, targetChannelID int, actualModel string, windowStart, windowEnd int64) (int64, error) {
+func CountValidPairedSamples(groupID uint, baselineChannelID, targetChannelID int, baselineModel, targetModel string, windowStart, windowEnd int64) (int64, error) {
 	var baseline, target []model.ChannelPuritySample
-	load := func(channelID int, into *[]model.ChannelPuritySample) error {
-		return model.DB.Where("group_id = ? AND channel_id = ? AND actual_model = ? AND observed_at >= ? AND observed_at < ?", groupID, channelID, actualModel, windowStart, windowEnd).Order("observed_at asc, id asc").Find(into).Error
+	load := func(channelID int, modelName string, into *[]model.ChannelPuritySample) error {
+		return model.DB.Where("group_id = ? AND channel_id = ? AND actual_model = ? AND observed_at >= ? AND observed_at < ?", groupID, channelID, modelName, windowStart, windowEnd).Order("observed_at asc, id asc").Find(into).Error
 	}
-	if err := load(baselineChannelID, &baseline); err != nil {
+	if err := load(baselineChannelID, baselineModel, &baseline); err != nil {
 		return 0, err
 	}
-	if err := load(targetChannelID, &target); err != nil {
+	if err := load(targetChannelID, targetModel, &target); err != nil {
 		return 0, err
 	}
 	paired, _ := matchValidSamples(baseline, target)

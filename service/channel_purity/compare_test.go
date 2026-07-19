@@ -16,7 +16,7 @@ func setupPurityDB(t *testing.T) {
 	previous := model.DB
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:purity-%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.ChannelPurityGroup{}, &model.ChannelPurityMember{}, &model.ChannelPuritySample{}, &model.ChannelPurityPairRun{}, &model.ChannelPurityAssessment{}, &model.ChannelPurityAlert{}))
+	require.NoError(t, db.AutoMigrate(&model.ChannelPurityGroup{}, &model.ChannelPurityMember{}, &model.ChannelPurityModelComparison{}, &model.ChannelPuritySample{}, &model.ChannelPurityPairRun{}, &model.ChannelPurityAssessment{}, &model.ChannelPurityAlert{}))
 	model.DB = db
 	t.Cleanup(func() { model.DB = previous })
 }
@@ -43,7 +43,7 @@ func TestAggregatePairWindowExcludesUnpairedRowsFromAllStatistics(t *testing.T) 
 	addPuritySample(t, group.ID, 10, "m1", "baseline-only", "noise-a", 999, 102)
 	addPuritySample(t, group.ID, 20, "m1", "target-only", "noise-b", 1, 103)
 
-	_, err := AggregatePairWindow(group.ID, 20, "m1", 90, 120, DefaultAggregatePolicy())
+	_, err := AggregatePairWindow(group.ID, 20, "m1", "m1", 90, 120, DefaultAggregatePolicy())
 	require.NoError(t, err)
 	var run model.ChannelPurityPairRun
 	require.NoError(t, model.DB.Last(&run).Error)
@@ -68,7 +68,7 @@ func TestFormalAssessmentUsesRobustPairedTokenDistribution(t *testing.T) {
 	}
 	policy := DefaultAggregatePolicy()
 	policy.MinSamples = 5
-	_, err := AggregatePairWindow(group.ID, 20, "m1", 90, 120, policy)
+	_, err := AggregatePairWindow(group.ID, 20, "m1", "m1", 90, 120, policy)
 	require.NoError(t, err)
 	var run model.ChannelPurityPairRun
 	require.NoError(t, model.DB.Last(&run).Error)
@@ -76,6 +76,22 @@ func TestFormalAssessmentUsesRobustPairedTokenDistribution(t *testing.T) {
 	assert.InDelta(t, 0.3, run.TokenDeviationRate, 0.001)
 	assert.Less(t, run.TokenSimilarity, 0.2, "repeated robust-interval outliers must penalize the formal score")
 	assert.Contains(t, run.AnomalyEvidenceJSON, "token_interval_shift", "repeated robust-interval outliers must enter formal evidence")
+}
+
+func TestAggregatePairWindowSupportsDifferentBaselineAndTargetModels(t *testing.T) {
+	setupPurityDB(t)
+	group := createTestPurityGroup(t)
+	addPuritySample(t, group.ID, 10, "baseline-model", "cross-model", "same", 100, 100)
+	addPuritySample(t, group.ID, 20, "target-model", "cross-model", "same", 105, 101)
+
+	assessment, err := AggregatePairWindow(group.ID, 20, "baseline-model", "target-model", 90, 120, DefaultAggregatePolicy())
+	require.NoError(t, err)
+	assert.Equal(t, ModelComparisonKey("baseline-model", "target-model"), assessment.ActualModel)
+	var run model.ChannelPurityPairRun
+	require.NoError(t, model.DB.Last(&run).Error)
+	assert.Equal(t, "baseline-model", run.BaselineModel)
+	assert.Equal(t, "target-model", run.TargetModel)
+	assert.Equal(t, 1, run.PairedSampleCount)
 }
 
 func TestWindowQuotaCountIsolatedByTargetAndActualModel(t *testing.T) {
@@ -93,13 +109,13 @@ func TestWindowQuotaCountIsolatedByTargetAndActualModel(t *testing.T) {
 	addPuritySample(t, group.ID, 10, "m1", "old", "s", 100, 10)
 	addPuritySample(t, group.ID, 20, "m1", "old", "s", 100, 10)
 
-	count, err := CountValidPairedSamples(group.ID, 10, 20, "m1", 90, 120)
+	count, err := CountValidPairedSamples(group.ID, 10, 20, "m1", "m1", 90, 120)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), count)
-	otherTarget, err := CountValidPairedSamples(group.ID, 10, 30, "m1", 90, 120)
+	otherTarget, err := CountValidPairedSamples(group.ID, 10, 30, "m1", "m1", 90, 120)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), otherTarget)
-	otherModel, err := CountValidPairedSamples(group.ID, 10, 20, "m2", 90, 120)
+	otherModel, err := CountValidPairedSamples(group.ID, 10, 20, "m2", "m2", 90, 120)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), otherModel)
 }
