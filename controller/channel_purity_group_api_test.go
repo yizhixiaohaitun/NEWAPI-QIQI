@@ -152,6 +152,14 @@ func TestChannelPurityGroupCRUDAndListContract(t *testing.T) {
 	assert.Equal(t, float64(2), updatedPolicy["alert_windows"])
 	assert.Equal(t, float64(80), updated["retention"].(map[string]any)["max_windows_per_target_model"])
 
+	// A damaged historical detail payload must not make the core latest result unavailable.
+	require.NoError(t, model.DB.Model(run).Update("structure_similarity_detail", "{broken").Error)
+	latestWithDamagedDetail := purityRequest(t, http.MethodGet, fmt.Sprintf("/api/channel/purity/groups/%d/latest?target_channel_id=102&actual_model=gpt-4o", groupID), "", GetLatestChannelPurityAssessment, gin.Param{Key: "group_id", Value: fmt.Sprint(groupID)})
+	require.Equal(t, http.StatusOK, latestWithDamagedDetail.Code, latestWithDamagedDetail.Body.String())
+	damagedData := decodeEnvelope(t, latestWithDamagedDetail)["data"].(map[string]any)
+	assert.Equal(t, 0.5, damagedData["structure_similarity"])
+	assert.Nil(t, damagedData["structure_similarity_detail"])
+
 	invalid := purityRequest(t, http.MethodPost, "/api/channel/purity/groups", `{
 		"name":"invalid","enabled":true,"channel_ids":[101,102],"baseline_channel_id":999,
 		"interval_minutes":5,"sampling":{"window_minutes":30,"minimum_samples":2,"max_samples_per_window":20}

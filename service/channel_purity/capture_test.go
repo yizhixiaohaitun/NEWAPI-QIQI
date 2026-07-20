@@ -27,6 +27,34 @@ func TestObserveResponseDoesNotRetainContent(t *testing.T) {
 	assert.Equal(t, "gpt-4o", got.ModelFamily)
 }
 
+func TestExtractAnonymousFeaturesRetainsOnlySanitizedPathAndType(t *testing.T) {
+	body := []byte(`{"response":{"items":[{"content":"secret-value","score":1,"enabled":true}],"optional":null}}`)
+	got := ExtractAnonymousFeatures(200, http.Header{"Content-Type": []string{"application/json"}}, body, false)
+	encoded, err := json.Marshal(got.FieldProfiles)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"path":"response.items[]","type":"object"`)
+	assert.Contains(t, string(encoded), `"path":"response.items[].score","type":"number"`)
+	assert.Contains(t, string(encoded), `"path":"response.items[].enabled","type":"boolean"`)
+	assert.Contains(t, string(encoded), `"path":"response.optional","type":"null"`)
+	assert.NotContains(t, string(encoded), "secret-value")
+}
+
+func TestSensitiveLeavesRetainSafePathAndTypeWithoutValues(t *testing.T) {
+	body := []byte(`{"choices":[{"message":{"content":"private","reasoning_content":"secret"},"delta":12}]}`)
+	got := ExtractAnonymousFeatures(200, http.Header{"Content-Type": []string{"application/json"}}, body, false)
+	profiles := map[string]string{}
+	for _, profile := range got.FieldProfiles {
+		profiles[profile.Path] = profile.Type
+	}
+	assert.Equal(t, "string", profiles["choices[].message.content"])
+	assert.Equal(t, "string", profiles["choices[].message.reasoning_content"])
+	assert.Equal(t, "number", profiles["choices[].delta"])
+	encoded, err := json.Marshal(got)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "private")
+	assert.NotContains(t, string(encoded), "secret")
+}
+
 func TestExtractSSECodexEvidence(t *testing.T) {
 	header := http.Header{"Content-Type": []string{"text/event-stream"}, "X-Reasoning-Included": []string{"true"}}
 	body := []byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5-codex\",\"signature_id\":\"never-retain\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2,\"total_tokens\":6}}}\n\ndata: [DONE]\n")
@@ -37,6 +65,18 @@ func TestExtractSSECodexEvidence(t *testing.T) {
 	assert.True(t, got.HeaderPresence["x-reasoning-included"])
 	assert.Contains(t, got.EventSequence, "response.completed")
 	assert.NotContains(t, string(encoded), "never-retain")
+}
+
+func TestStructureMetadataPreservesModelAndEventOrder(t *testing.T) {
+	encoded := EncodeStructureMetadata(AnonymousFeatures{
+		Protocol: "sse", ModelFamily: "gpt-5", EventSequence: []string{"response.created", "response.completed", "done"},
+		FinishReasons: []string{"stop"}, HeaderPresence: map[string]bool{"x-request-id": true}, HasSignatureID: true,
+	})
+	var metadata StructureMetadata
+	require.NoError(t, json.Unmarshal([]byte(encoded), &metadata))
+	assert.Equal(t, "gpt-5", metadata.ModelFamily)
+	assert.Equal(t, []string{"response.created", "response.completed", "done"}, metadata.EventSequence)
+	assert.NotContains(t, encoded, "header-value")
 }
 
 func TestCaptureRejectsUnsafeAndPairIsOneShotPerRole(t *testing.T) {

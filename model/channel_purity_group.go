@@ -72,20 +72,21 @@ func (ChannelPurityMember) TableName() string { return "qiqi_channel_purity_memb
 
 // ChannelPuritySample is passive detector input; quick-probe rows are never read by aggregation.
 type ChannelPuritySample struct {
-	ID                   uint   `json:"id" gorm:"primaryKey"`
-	GroupID              uint   `json:"group_id" gorm:"not null;index:idx_purity_sample_window,priority:1"`
-	ChannelID            int    `json:"channel_id" gorm:"not null;index:idx_purity_sample_window,priority:2"`
-	ActualModel          string `json:"actual_model" gorm:"type:varchar(255);not null;index:idx_purity_sample_window,priority:3"`
-	RunKey               string `json:"run_key" gorm:"type:varchar(64);not null;index"`
-	Protocol             string `json:"protocol" gorm:"type:varchar(32);not null"`
-	StructureSignature   string `json:"structure_signature" gorm:"type:varchar(512);not null"`
-	StructureProfileJSON string `json:"-" gorm:"type:text;not null;default:''"`
-	PromptTokens         int    `json:"prompt_tokens"`
-	CompletionTokens     int    `json:"completion_tokens"`
-	TotalTokens          int    `json:"total_tokens"`
-	Valid                bool   `json:"valid" gorm:"not null"`
-	ErrorClass           string `json:"error_class,omitempty" gorm:"type:varchar(64)"`
-	ObservedAt           int64  `json:"observed_at" gorm:"bigint;not null;index:idx_purity_sample_window,priority:4"`
+	ID                    uint   `json:"id" gorm:"primaryKey"`
+	GroupID               uint   `json:"group_id" gorm:"not null;index:idx_purity_sample_window,priority:1"`
+	ChannelID             int    `json:"channel_id" gorm:"not null;index:idx_purity_sample_window,priority:2"`
+	ActualModel           string `json:"actual_model" gorm:"type:varchar(255);not null;index:idx_purity_sample_window,priority:3"`
+	RunKey                string `json:"run_key" gorm:"type:varchar(64);not null;index"`
+	Protocol              string `json:"protocol" gorm:"type:varchar(32);not null"`
+	StructureSignature    string `json:"structure_signature" gorm:"type:varchar(512);not null"`
+	StructureProfileJSON  string `json:"-" gorm:"type:text;not null;default:''"`
+	StructureMetadataJSON string `json:"-" gorm:"type:text;not null;default:''"`
+	PromptTokens          int    `json:"prompt_tokens"`
+	CompletionTokens      int    `json:"completion_tokens"`
+	TotalTokens           int    `json:"total_tokens"`
+	Valid                 bool   `json:"valid" gorm:"not null"`
+	ErrorClass            string `json:"error_class,omitempty" gorm:"type:varchar(64)"`
+	ObservedAt            int64  `json:"observed_at" gorm:"bigint;not null;index:idx_purity_sample_window,priority:4"`
 }
 
 func (ChannelPuritySample) TableName() string { return "qiqi_channel_purity_samples" }

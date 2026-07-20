@@ -68,9 +68,18 @@ function structureDetail(value: unknown): StructureSimilarityDetail | undefined 
       target_count: number(difference.target_count), matched_count: number(difference.matched_count),
     } }),
     field_paths_available: Boolean(item.field_paths_available),
+    detail_available: item.detail_available == null ? undefined : Boolean(item.detail_available),
+    score_available: item.score_available == null ? undefined : Boolean(item.score_available),
     field_differences: array(item.field_differences).map((raw) => { const difference = record(raw); return {
-      path: String(difference.path ?? ''), baseline_type: difference.baseline_type == null ? undefined : String(difference.baseline_type),
+      path: String(difference.path ?? ''), change: difference.change == null ? undefined : String(difference.change),
+      baseline_types: array(difference.baseline_types).map(String), target_types: array(difference.target_types).map(String),
+      baseline_type: difference.baseline_type == null ? undefined : String(difference.baseline_type),
       target_type: difference.target_type == null ? undefined : String(difference.target_type),
+      baseline_count: number(difference.baseline_count), target_count: number(difference.target_count),
+    } }),
+    dimension_differences: array(item.dimension_differences).map((raw) => { const difference = record(raw); return {
+      dimension: String(difference.dimension ?? ''), value: String(difference.value ?? ''),
+      change: difference.change == null ? undefined : String(difference.change),
       baseline_count: number(difference.baseline_count), target_count: number(difference.target_count),
     } }),
     limitation: item.limitation == null ? undefined : String(item.limitation),
@@ -267,7 +276,7 @@ export async function getPurityResultDetail(result: TargetResult): Promise<Targe
     samples: number(run.paired_sample_count ?? detail?.paired_sample_count ?? result.samples),
     field_similarity: {
       ...result.field_similarity,
-      value: optionalNumber(latest.structure_similarity ?? run.structure_similarity) ?? result.field_similarity.value,
+      value: detail?.score_available === false ? undefined : optionalNumber(latest.structure_similarity ?? run.structure_similarity) ?? result.field_similarity.value,
       sample_size: number(run.paired_sample_count ?? detail?.paired_sample_count ?? result.field_similarity.sample_size),
       detail,
     },

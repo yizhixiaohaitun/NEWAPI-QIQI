@@ -9,11 +9,17 @@ import (
 
 // AnonymousFeatures contains protocol-only evidence. It never contains response text,
 // reasoning, tool arguments, identifiers, or header values.
+type FieldProfile struct {
+	Path string `json:"path"`
+	Type string `json:"type"`
+}
+
 type AnonymousFeatures struct {
 	Protocol          string          `json:"protocol"`
 	StatusCode        int             `json:"status_code"`
 	ModelFamily       string          `json:"model_family,omitempty"`
 	FieldPaths        []string        `json:"field_paths,omitempty"`
+	FieldProfiles     []FieldProfile  `json:"field_profiles,omitempty"`
 	EventSequence     []string        `json:"event_sequence,omitempty"`
 	FinishReasons     []string        `json:"finish_reasons,omitempty"`
 	ProviderUsage     TokenUsage      `json:"provider_usage"`
@@ -47,6 +53,7 @@ func ExtractAnonymousFeatures(status int, header http.Header, body []byte, trunc
 		extractJSONFeatures(body, &f)
 	}
 	f.FieldPaths = uniqueSorted(f.FieldPaths)
+	f.FieldProfiles = uniqueSortedProfiles(f.FieldProfiles)
 	f.FinishReasons = uniqueSorted(f.FinishReasons)
 	return f
 }
@@ -94,6 +101,9 @@ var sensitiveLeaf = map[string]bool{
 }
 
 func collectJSON(value any, path string, f *AnonymousFeatures) {
+	if path != "" {
+		f.FieldProfiles = appendBoundedProfile(f.FieldProfiles, FieldProfile{Path: path, Type: jsonValueType(value)}, 512)
+	}
 	switch current := value.(type) {
 	case map[string]any:
 		keys := make([]string, 0, len(current))
@@ -102,7 +112,10 @@ func collectJSON(value any, path string, f *AnonymousFeatures) {
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			lower := strings.ToLower(key)
+			lower := safeFieldName(key)
+			if lower == "" {
+				continue
+			}
 			childPath := lower
 			if path != "" {
 				childPath = path + "." + lower
@@ -112,6 +125,9 @@ func collectJSON(value any, path string, f *AnonymousFeatures) {
 				f.HasSignatureID = true
 			}
 			if sensitiveLeaf[lower] {
+				// Sensitive leaves retain only the sanitized path and JSON type so
+				// structural drift remains explainable; values are never retained.
+				f.FieldProfiles = appendBoundedProfile(f.FieldProfiles, FieldProfile{Path: childPath, Type: jsonValueType(current[key])}, 512)
 				continue
 			}
 			switch lower {
@@ -164,6 +180,19 @@ func eventType(v any) string {
 	}
 	return "message"
 }
+func safeFieldName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" || len(s) > 80 {
+		return ""
+	}
+	for _, r := range s {
+		if !(r == '_' || r == '-' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return ""
+		}
+	}
+	return s
+}
+
 func safeEnum(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if len(s) > 80 {
@@ -194,6 +223,52 @@ func uniqueSorted(values []string) []string {
 		out = append(out, v)
 	}
 	sort.Strings(out)
+	return out
+}
+
+func jsonValueType(value any) string {
+	switch value.(type) {
+	case map[string]any:
+		return "object"
+	case []any:
+		return "array"
+	case string:
+		return "string"
+	case float64:
+		return "number"
+	case bool:
+		return "boolean"
+	case nil:
+		return "null"
+	default:
+		return "unknown"
+	}
+}
+
+func appendBoundedProfile(values []FieldProfile, value FieldProfile, max int) []FieldProfile {
+	if value.Path != "" && len(values) < max {
+		return append(values, value)
+	}
+	return values
+}
+
+func uniqueSortedProfiles(values []FieldProfile) []FieldProfile {
+	set := map[string]FieldProfile{}
+	for _, value := range values {
+		if value.Path != "" {
+			set[value.Path+"\x00"+value.Type] = value
+		}
+	}
+	out := make([]FieldProfile, 0, len(set))
+	for _, value := range set {
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path == out[j].Path {
+			return out[i].Type < out[j].Type
+		}
+		return out[i].Path < out[j].Path
+	})
 	return out
 }
 

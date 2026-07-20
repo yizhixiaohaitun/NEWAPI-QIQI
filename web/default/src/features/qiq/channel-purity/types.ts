@@ -18,6 +18,9 @@ export type DetectorStatus =
 
 export type FieldProfileDifference = {
   path: string
+  change?: 'missing' | 'added' | 'type_changed' | 'frequency_changed' | string
+  baseline_types?: string[]
+  target_types?: string[]
   baseline_type?: string
   target_type?: string
   baseline_count: number
@@ -28,6 +31,13 @@ export type StructureDifference = {
   baseline_count: number
   target_count: number
   matched_count: number
+}
+export type StructureDimensionDifference = {
+  dimension: 'protocol' | 'model_family' | 'event_sequence' | 'event' | 'finish_reason' | 'header_presence' | 'metadata' | string
+  value: string
+  change?: 'missing' | 'added' | 'frequency_changed' | string
+  baseline_count: number
+  target_count: number
 }
 export type StructureSimilarityDetail = {
   version: string
@@ -42,7 +52,10 @@ export type StructureSimilarityDetail = {
   union_count: number
   differences: StructureDifference[]
   field_paths_available: boolean
+  detail_available?: boolean
+  score_available?: boolean
   field_differences?: FieldProfileDifference[]
+  dimension_differences?: StructureDimensionDifference[]
   limitation?: string
 }
 export type SimilarityMetric = { value?: number; sample_size: number; detail?: StructureSimilarityDetail }

@@ -333,9 +333,13 @@ func runPuritySample(parent context.Context, groupID uint, runKey string, channe
 		header := http.Header{}
 		header.Set("Content-Type", probe.contentType)
 		features := channelpurity.ExtractAnonymousFeatures(probe.httpStatus, header, probe.responseBody, false)
+		profiles := make([]relaycommon.PurityFieldProfile, 0, len(features.FieldProfiles))
+		for _, profile := range features.FieldProfiles {
+			profiles = append(profiles, relaycommon.PurityFieldProfile{Path: profile.Path, Type: profile.Type})
+		}
 		observation = &relaycommon.PurityObservation{
 			Protocol: features.Protocol, StatusCode: features.StatusCode, ModelFamily: features.ModelFamily,
-			FieldPaths: features.FieldPaths, EventSequence: features.EventSequence, FinishReasons: features.FinishReasons,
+			FieldPaths: features.FieldPaths, FieldProfiles: profiles, EventSequence: features.EventSequence, FinishReasons: features.FinishReasons,
 			ProviderInput: features.ProviderUsage.Input, ProviderOutput: features.ProviderUsage.Output, ProviderTotal: features.ProviderUsage.Total,
 			UnifiedTokenCount: features.UnifiedTokenCount, HeaderPresence: features.HeaderPresence, HasSignatureID: features.HasSignatureID, Truncated: features.Truncated,
 		}
@@ -343,6 +347,7 @@ func runPuritySample(parent context.Context, groupID uint, runKey string, channe
 	sample.Protocol = observation.Protocol
 	sample.StructureSignature = purityObservationSignature(*observation)
 	sample.StructureProfileJSON = purityObservationProfileJSON(*observation)
+	sample.StructureMetadataJSON = purityObservationMetadataJSON(*observation)
 	sample.PromptTokens = observation.ProviderInput
 	sample.CompletionTokens = observation.ProviderOutput
 	sample.TotalTokens = observation.ProviderTotal
@@ -368,43 +373,32 @@ func runPuritySample(parent context.Context, groupID uint, runKey string, channe
 }
 
 func purityObservationProfileJSON(observation relaycommon.PurityObservation) string {
-	type fieldProfile struct {
-		Path string `json:"path"`
-		Type string `json:"type"`
+	profiles := make([]channelpurity.FieldProfile, 0, len(observation.FieldProfiles))
+	for _, profile := range observation.FieldProfiles {
+		profiles = append(profiles, channelpurity.FieldProfile{Path: profile.Path, Type: profile.Type})
 	}
-	values := make([]fieldProfile, 0, min(len(observation.FieldPaths), 200))
-	seen := map[string]bool{}
-	for _, path := range observation.FieldPaths {
-		path = strings.TrimSpace(path)
-		if path == "" || len(path) > 256 || seen[path] {
-			continue
-		}
-		seen[path] = true
-		values = append(values, fieldProfile{Path: path, Type: "present"})
-		if len(values) == 200 {
-			break
-		}
-	}
-	if len(values) == 0 {
-		return ""
-	}
-	encoded, err := json.Marshal(values)
-	if err != nil {
-		return ""
-	}
-	return string(encoded)
+	return channelpurity.EncodeFieldProfiles(profiles)
+}
+
+func purityObservationMetadataJSON(observation relaycommon.PurityObservation) string {
+	return channelpurity.EncodeStructureMetadata(channelpurity.AnonymousFeatures{
+		Protocol: observation.Protocol, ModelFamily: observation.ModelFamily, EventSequence: observation.EventSequence,
+		FinishReasons: observation.FinishReasons, HeaderPresence: observation.HeaderPresence,
+		HasSignatureID: observation.HasSignatureID,
+	})
 }
 
 func purityObservationSignature(observation relaycommon.PurityObservation) string {
 	payload := struct {
-		Protocol    string          `json:"protocol"`
-		ModelFamily string          `json:"model_family"`
-		Fields      []string        `json:"fields"`
-		Events      []string        `json:"events"`
-		Finish      []string        `json:"finish"`
-		Headers     map[string]bool `json:"headers"`
-		Signature   bool            `json:"signature"`
-	}{observation.Protocol, observation.ModelFamily, observation.FieldPaths, observation.EventSequence, observation.FinishReasons, observation.HeaderPresence, observation.HasSignatureID}
+		Protocol      string                           `json:"protocol"`
+		ModelFamily   string                           `json:"model_family"`
+		Fields        []string                         `json:"fields"`
+		FieldProfiles []relaycommon.PurityFieldProfile `json:"field_profiles"`
+		Events        []string                         `json:"events"`
+		Finish        []string                         `json:"finish"`
+		Headers       map[string]bool                  `json:"headers"`
+		Signature     bool                             `json:"signature"`
+	}{observation.Protocol, observation.ModelFamily, observation.FieldPaths, observation.FieldProfiles, observation.EventSequence, observation.FinishReasons, observation.HeaderPresence, observation.HasSignatureID}
 	encoded, _ := json.Marshal(payload)
 	hash := sha256.Sum256(encoded)
 	return hex.EncodeToString(hash[:])

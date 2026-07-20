@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -87,6 +88,106 @@ func TestPersistedStructureSimilarityDetailUsesExactScoringInputs(t *testing.T) 
 	assert.Equal(t, 3, detail.UnionCount)
 	assert.False(t, detail.FieldPathsAvailable)
 	assert.InDelta(t, run.StructureSimilarity, float64(detail.IntersectionCount)/float64(detail.UnionCount), 0.0001)
+}
+
+func TestStructureDetailExplainsAddedMissingTypeAndFrequencyChanges(t *testing.T) {
+	profile := func(fields ...storedFieldProfile) string {
+		encoded, err := common.Marshal(fields)
+		require.NoError(t, err)
+		return string(encoded)
+	}
+	baseline := []model.ChannelPuritySample{
+		{Valid: true, StructureSignature: "a", StructureProfileJSON: profile(
+			storedFieldProfile{Path: "response.id", Type: "string"},
+			storedFieldProfile{Path: "response.old", Type: "boolean"},
+			storedFieldProfile{Path: "response.freq", Type: "string"},
+		)},
+		{Valid: true, StructureSignature: "a", StructureProfileJSON: profile(storedFieldProfile{Path: "response.freq", Type: "string"})},
+	}
+	target := []model.ChannelPuritySample{
+		{Valid: true, StructureSignature: "b", StructureProfileJSON: profile(
+			storedFieldProfile{Path: "response.id", Type: "number"},
+			storedFieldProfile{Path: "response.new", Type: "object"},
+			storedFieldProfile{Path: "response.freq", Type: "string"},
+		)},
+		{Valid: true, StructureSignature: "b", StructureProfileJSON: profile(storedFieldProfile{Path: "response.new", Type: "object"})},
+	}
+	detail := BuildStructureSimilarityDetail(baseline, target)
+	assert.True(t, detail.DetailAvailable)
+	assert.True(t, detail.ScoreAvailable)
+	byPath := map[string]FieldProfileDifference{}
+	for _, difference := range detail.FieldDifferences {
+		byPath[difference.Path] = difference
+	}
+	assert.Equal(t, "type_changed", byPath["response.id"].Change)
+	assert.Equal(t, "missing", byPath["response.old"].Change)
+	assert.Equal(t, "added", byPath["response.new"].Change)
+	assert.Equal(t, "frequency_changed", byPath["response.freq"].Change)
+}
+
+func TestStructureDetailExplainsSensitiveLeafChanges(t *testing.T) {
+	profile := func(fields ...storedFieldProfile) string {
+		encoded, err := common.Marshal(fields)
+		require.NoError(t, err)
+		return string(encoded)
+	}
+	baseline := []model.ChannelPuritySample{{Valid: true, StructureSignature: "a", StructureProfileJSON: profile(
+		storedFieldProfile{Path: "choices[].message.content", Type: "string"},
+		storedFieldProfile{Path: "response.score", Type: "number"},
+	)}}
+	target := []model.ChannelPuritySample{{Valid: true, StructureSignature: "b", StructureProfileJSON: profile(
+		storedFieldProfile{Path: "choices[].message.reasoning_content", Type: "string"},
+		storedFieldProfile{Path: "response.score", Type: "string"},
+	)}}
+	detail := BuildStructureSimilarityDetail(baseline, target)
+	byPath := map[string]FieldProfileDifference{}
+	for _, difference := range detail.FieldDifferences {
+		byPath[difference.Path] = difference
+	}
+	assert.Equal(t, "missing", byPath["choices[].message.content"].Change)
+	assert.Equal(t, "added", byPath["choices[].message.reasoning_content"].Change)
+	assert.Equal(t, "type_changed", byPath["response.score"].Change)
+}
+
+func TestStructureDetailExplainsProtocolEventHeaderAndFinishDimensions(t *testing.T) {
+	metadata := func(value StructureMetadata) string {
+		encoded, err := common.Marshal(value)
+		require.NoError(t, err)
+		return string(encoded)
+	}
+	baseline := []model.ChannelPuritySample{{Valid: true, StructureSignature: "a", StructureProfileJSON: `[]`, StructureMetadataJSON: metadata(StructureMetadata{
+		Protocol: "json", ModelFamily: "gpt-4o", EventSequence: []string{"response.created", "response.completed"},
+		FinishReasons: []string{"stop"}, HeaderPresence: map[string]bool{"x-request-id": true},
+	})}}
+	target := []model.ChannelPuritySample{{Valid: true, StructureSignature: "b", StructureProfileJSON: `[]`, StructureMetadataJSON: metadata(StructureMetadata{
+		Protocol: "sse", ModelFamily: "gpt-5", EventSequence: []string{"response.completed", "response.created"},
+		FinishReasons: []string{"length"}, HeaderPresence: map[string]bool{"x-reasoning-included": true},
+	})}}
+	detail := BuildStructureSimilarityDetail(baseline, target)
+	keys := map[string]string{}
+	for _, difference := range detail.DimensionDifferences {
+		keys[difference.Dimension+":"+difference.Value] = difference.Change
+	}
+	assert.Equal(t, "missing", keys["protocol:json"])
+	assert.Equal(t, "added", keys["protocol:sse"])
+	assert.Equal(t, "missing", keys["model_family:gpt-4o"])
+	assert.Equal(t, "added", keys["model_family:gpt-5"])
+	assert.Equal(t, "missing", keys["event_sequence:response.created → response.completed"])
+	assert.Equal(t, "added", keys["event_sequence:response.completed → response.created"])
+	assert.Equal(t, "missing", keys["finish_reason:stop"])
+	assert.Equal(t, "added", keys["header_presence:x-reasoning-included"])
+}
+
+func TestStructureDetailMarksLegacyAndInsufficientEvidenceUnavailable(t *testing.T) {
+	legacy := BuildStructureSimilarityDetail(
+		[]model.ChannelPuritySample{{Valid: true, StructureSignature: "a"}},
+		[]model.ChannelPuritySample{{Valid: true, StructureSignature: "b"}},
+	)
+	assert.False(t, legacy.DetailAvailable)
+	assert.True(t, legacy.ScoreAvailable)
+	assert.Equal(t, "detail_unavailable_for_legacy_anonymous_samples", legacy.Limitation)
+	insufficient := BuildStructureSimilarityDetail(nil, nil)
+	assert.False(t, insufficient.ScoreAvailable)
 }
 
 func TestFormalAssessmentUsesRobustPairedTokenDistribution(t *testing.T) {

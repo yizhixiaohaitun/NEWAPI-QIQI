@@ -62,11 +62,17 @@ type ResponsesUsageInfo struct {
 
 // PurityObservation is intentionally protocol-only: it cannot carry response
 // content, reasoning text, tool arguments, identifiers, or header values.
+type PurityFieldProfile struct {
+	Path string
+	Type string
+}
+
 type PurityObservation struct {
 	Protocol          string
 	StatusCode        int
 	ModelFamily       string
 	FieldPaths        []string
+	FieldProfiles     []PurityFieldProfile
 	EventSequence     []string
 	FinishReasons     []string
 	ProviderInput     int

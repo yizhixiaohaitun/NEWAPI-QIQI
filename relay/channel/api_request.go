@@ -339,9 +339,13 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		channelpurity.ObserveResponse(resp, channelpurity.FeatureSinkFunc(func(features channelpurity.AnonymousFeatures) {
 			defer func() { _ = recover() }()
 			if info.PurityResponseObserver != nil {
+				profiles := make([]common.PurityFieldProfile, 0, len(features.FieldProfiles))
+				for _, profile := range features.FieldProfiles {
+					profiles = append(profiles, common.PurityFieldProfile{Path: profile.Path, Type: profile.Type})
+				}
 				info.PurityResponseObserver(common.PurityObservation{
 					Protocol: features.Protocol, StatusCode: features.StatusCode, ModelFamily: features.ModelFamily,
-					FieldPaths: features.FieldPaths, EventSequence: features.EventSequence, FinishReasons: features.FinishReasons,
+					FieldPaths: features.FieldPaths, FieldProfiles: profiles, EventSequence: features.EventSequence, FinishReasons: features.FinishReasons,
 					ProviderInput: features.ProviderUsage.Input, ProviderOutput: features.ProviderUsage.Output, ProviderTotal: features.ProviderUsage.Total,
 					UnifiedTokenCount: features.UnifiedTokenCount, HeaderPresence: features.HeaderPresence,
 					HasSignatureID: features.HasSignatureID, Truncated: features.Truncated,

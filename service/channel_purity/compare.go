@@ -136,34 +136,45 @@ type StructureDifference struct {
 	MatchedCount  int    `json:"matched_count"`
 }
 type FieldProfileDifference struct {
-	Path          string `json:"path"`
-	BaselineType  string `json:"baseline_type,omitempty"`
-	TargetType    string `json:"target_type,omitempty"`
-	BaselineCount int    `json:"baseline_count"`
-	TargetCount   int    `json:"target_count"`
+	Path          string   `json:"path"`
+	Change        string   `json:"change"`
+	BaselineTypes []string `json:"baseline_types,omitempty"`
+	TargetTypes   []string `json:"target_types,omitempty"`
+	BaselineCount int      `json:"baseline_count"`
+	TargetCount   int      `json:"target_count"`
 }
 type storedFieldProfile struct {
 	Path string `json:"path"`
 	Type string `json:"type"`
 }
+type StructureDimensionDifference struct {
+	Dimension     string `json:"dimension"`
+	Value         string `json:"value"`
+	Change        string `json:"change"`
+	BaselineCount int    `json:"baseline_count"`
+	TargetCount   int    `json:"target_count"`
+}
 
-const StructureSimilarityDetailVersion = "structure_similarity.v1"
+const StructureSimilarityDetailVersion = "structure_similarity.v2"
 
 type StructureSimilarityDetail struct {
-	Version             string                   `json:"version"`
-	Method              string                   `json:"method"`
-	WindowStartedAt     int64                    `json:"window_started_at"`
-	WindowEndedAt       int64                    `json:"window_ended_at"`
-	PairedSampleCount   int                      `json:"paired_sample_count"`
-	MatchedCount        int                      `json:"matched_count"`
-	BaselineOnlyCount   int                      `json:"baseline_only_count"`
-	TargetOnlyCount     int                      `json:"target_only_count"`
-	IntersectionCount   int                      `json:"intersection_count"`
-	UnionCount          int                      `json:"union_count"`
-	Differences         []StructureDifference    `json:"differences"`
-	FieldDifferences    []FieldProfileDifference `json:"field_differences,omitempty"`
-	FieldPathsAvailable bool                     `json:"field_paths_available"`
-	Limitation          string                   `json:"limitation"`
+	Version              string                         `json:"version"`
+	Method               string                         `json:"method"`
+	WindowStartedAt      int64                          `json:"window_started_at"`
+	WindowEndedAt        int64                          `json:"window_ended_at"`
+	PairedSampleCount    int                            `json:"paired_sample_count"`
+	MatchedCount         int                            `json:"matched_count"`
+	BaselineOnlyCount    int                            `json:"baseline_only_count"`
+	TargetOnlyCount      int                            `json:"target_only_count"`
+	IntersectionCount    int                            `json:"intersection_count"`
+	UnionCount           int                            `json:"union_count"`
+	Differences          []StructureDifference          `json:"differences"`
+	FieldDifferences     []FieldProfileDifference       `json:"field_differences,omitempty"`
+	DimensionDifferences []StructureDimensionDifference `json:"dimension_differences,omitempty"`
+	FieldPathsAvailable  bool                           `json:"field_paths_available"`
+	DetailAvailable      bool                           `json:"detail_available"`
+	ScoreAvailable       bool                           `json:"score_available"`
+	Limitation           string                         `json:"limitation"`
 }
 
 // BuildStructureSimilarityDetail uses the same already-paired samples as CompareSamples.
@@ -180,12 +191,16 @@ func BuildStructureSimilarityDetail(baseline, target []model.ChannelPuritySample
 		Version: StructureSimilarityDetailVersion, Method: "multiset_jaccard",
 		PairedSampleCount: len(baseline), Differences: make([]StructureDifference, 0, len(keys)),
 		FieldPathsAvailable: false,
-		Limitation:          "Only anonymous structure-signature hashes are retained; individual field paths cannot be recovered from existing samples.",
+		DetailAvailable:     false,
+		ScoreAvailable:      len(baseline) > 0 && len(baseline) == len(target),
+		Limitation:          "detail_unavailable_for_legacy_anonymous_samples",
 	}
 	detail.FieldDifferences = buildFieldProfileDifferences(baseline, target)
-	if len(detail.FieldDifferences) > 0 {
+	detail.DimensionDifferences = buildStructureDimensionDifferences(baseline, target)
+	if fieldProfilesAvailable(baseline) && fieldProfilesAvailable(target) {
 		detail.FieldPathsAvailable = true
-		detail.Limitation = "Field paths and value types are sanitized; response values are never retained."
+		detail.DetailAvailable = true
+		detail.Limitation = "sanitized_field_paths_and_types_only_values_never_retained"
 	}
 	for key := range keys {
 		matched := minInt(bf[key], tf[key])
@@ -205,44 +220,56 @@ func BuildStructureSimilarityDetail(baseline, target []model.ChannelPuritySample
 	return detail
 }
 
+func fieldProfilesAvailable(samples []model.ChannelPuritySample) bool {
+	if len(samples) == 0 {
+		return false
+	}
+	for _, sample := range samples {
+		if strings.TrimSpace(sample.StructureProfileJSON) == "" {
+			return false
+		}
+	}
+	return true
+}
+
 func buildFieldProfileDifferences(baseline, target []model.ChannelPuritySample) []FieldProfileDifference {
 	type counts struct {
-		baseline, target         int
-		baselineType, targetType string
+		baseline, target int
+		baselineTypes    map[string]bool
+		targetTypes      map[string]bool
 	}
 	values := map[string]*counts{}
 	consume := func(samples []model.ChannelPuritySample, isBaseline bool) {
 		for _, sample := range samples {
-			if strings.TrimSpace(sample.StructureProfileJSON) == "" {
-				continue
-			}
 			var fields []storedFieldProfile
 			if common.Unmarshal([]byte(sample.StructureProfileJSON), &fields) != nil {
 				continue
 			}
-			seen := map[string]bool{}
+			seenPaths, seenTypes := map[string]bool{}, map[string]bool{}
 			for _, field := range fields {
 				field.Path, field.Type = strings.TrimSpace(field.Path), strings.TrimSpace(field.Type)
-				if field.Path == "" || seen[field.Path] {
+				key := field.Path + "\x00" + field.Type
+				if field.Path == "" || field.Type == "" || seenTypes[key] {
 					continue
 				}
-				seen[field.Path] = true
+				seenTypes[key] = true
 				value := values[field.Path]
 				if value == nil {
-					value = &counts{}
+					value = &counts{baselineTypes: map[string]bool{}, targetTypes: map[string]bool{}}
 					values[field.Path] = value
 				}
 				if isBaseline {
-					value.baseline++
-					if value.baselineType == "" {
-						value.baselineType = field.Type
+					if !seenPaths[field.Path] {
+						value.baseline++
 					}
+					value.baselineTypes[field.Type] = true
 				} else {
-					value.target++
-					if value.targetType == "" {
-						value.targetType = field.Type
+					if !seenPaths[field.Path] {
+						value.target++
 					}
+					value.targetTypes[field.Type] = true
 				}
+				seenPaths[field.Path] = true
 			}
 		}
 	}
@@ -250,12 +277,94 @@ func buildFieldProfileDifferences(baseline, target []model.ChannelPuritySample) 
 	consume(target, false)
 	out := make([]FieldProfileDifference, 0)
 	for path, value := range values {
-		if value.baseline == value.target && value.baselineType == value.targetType {
+		baselineTypes, targetTypes := sortedSet(value.baselineTypes), sortedSet(value.targetTypes)
+		change := "frequency_changed"
+		switch {
+		case value.baseline == 0:
+			change = "added"
+		case value.target == 0:
+			change = "missing"
+		case strings.Join(baselineTypes, "\x00") != strings.Join(targetTypes, "\x00"):
+			change = "type_changed"
+		case value.baseline == value.target:
 			continue
 		}
-		out = append(out, FieldProfileDifference{Path: path, BaselineType: value.baselineType, TargetType: value.targetType, BaselineCount: value.baseline, TargetCount: value.target})
+		out = append(out, FieldProfileDifference{Path: path, Change: change, BaselineTypes: baselineTypes, TargetTypes: targetTypes, BaselineCount: value.baseline, TargetCount: value.target})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}
+
+func buildStructureDimensionDifferences(baseline, target []model.ChannelPuritySample) []StructureDimensionDifference {
+	counts := map[string][2]int{}
+	consume := func(samples []model.ChannelPuritySample, side int) {
+		for _, sample := range samples {
+			var metadata StructureMetadata
+			if common.Unmarshal([]byte(sample.StructureMetadataJSON), &metadata) != nil {
+				continue
+			}
+			values := map[string][]string{
+				"protocol": {metadata.Protocol}, "model_family": {metadata.ModelFamily},
+				"finish_reason": metadata.FinishReasons,
+			}
+			if len(metadata.EventSequence) > 0 {
+				values["event_sequence"] = []string{strings.Join(metadata.EventSequence, " → ")}
+			}
+			for name, present := range metadata.HeaderPresence {
+				if present {
+					values["header_presence"] = append(values["header_presence"], name)
+				}
+			}
+			if metadata.HasSignatureID {
+				values["metadata"] = append(values["metadata"], "signature_id_present")
+			}
+			for dimension, entries := range values {
+				seen := map[string]bool{}
+				for _, value := range entries {
+					value = strings.TrimSpace(value)
+					if value == "" || seen[value] {
+						continue
+					}
+					seen[value] = true
+					key := dimension + "\x00" + value
+					count := counts[key]
+					count[side]++
+					counts[key] = count
+				}
+			}
+		}
+	}
+	consume(baseline, 0)
+	consume(target, 1)
+	out := make([]StructureDimensionDifference, 0)
+	for key, count := range counts {
+		if count[0] == count[1] {
+			continue
+		}
+		parts := strings.SplitN(key, "\x00", 2)
+		change := "frequency_changed"
+		if count[0] == 0 {
+			change = "added"
+		} else if count[1] == 0 {
+			change = "missing"
+		}
+		out = append(out, StructureDimensionDifference{Dimension: parts[0], Value: parts[1], Change: change, BaselineCount: count[0], TargetCount: count[1]})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Dimension == out[j].Dimension {
+			return out[i].Value < out[j].Value
+		}
+		return out[i].Dimension < out[j].Dimension
+	})
+	return out
+}
+
+func sortedSet(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
 	return out
 }
 
@@ -266,6 +375,15 @@ func DecodeStructureSimilarityDetail(run *model.ChannelPurityPairRun) (*Structur
 	var detail StructureSimilarityDetail
 	if err := common.Unmarshal([]byte(run.StructureSimilarityDetail), &detail); err != nil {
 		return nil, err
+	}
+	// v1 predates the explicit availability flag. A non-empty persisted scoring
+	// input remains a valid score, while field-level evidence stays unavailable.
+	if detail.Version == "structure_similarity.v1" && (detail.UnionCount > 0 || detail.PairedSampleCount > 0) {
+		detail.ScoreAvailable = true
+		if !detail.FieldPathsAvailable {
+			detail.DetailAvailable = false
+			detail.Limitation = "detail_unavailable_for_legacy_anonymous_samples"
+		}
 	}
 	return &detail, nil
 }
