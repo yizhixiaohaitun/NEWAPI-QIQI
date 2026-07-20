@@ -286,6 +286,10 @@ func runPurityGroupDetection(ctx context.Context, group *model.ChannelPurityGrou
 			}
 			policy := channelpurity.DefaultAggregatePolicy()
 			policy.MinSamples = group.MinimumSamples
+			policy.SuspectThreshold = group.SuspectThreshold
+			policy.AlertThreshold = group.AlertThreshold
+			policy.AlertWindows = group.AlertWindows
+			policy.RecoveryWindows = group.RecoveryWindows
 			if _, aggregateErr := channelpurity.AggregatePairWindow(group.ID, target.Id, baselineModel, targetModel, windowStart, windowEnd, policy); aggregateErr != nil && firstErr == nil {
 				firstErr = aggregateErr
 			}
@@ -338,6 +342,7 @@ func runPuritySample(parent context.Context, groupID uint, runKey string, channe
 	}
 	sample.Protocol = observation.Protocol
 	sample.StructureSignature = purityObservationSignature(*observation)
+	sample.StructureProfileJSON = purityObservationProfileJSON(*observation)
 	sample.PromptTokens = observation.ProviderInput
 	sample.CompletionTokens = observation.ProviderOutput
 	sample.TotalTokens = observation.ProviderTotal
@@ -360,6 +365,34 @@ func runPuritySample(parent context.Context, groupID uint, runKey string, channe
 		sample.ErrorClass = "invalid_anonymous_observation"
 	}
 	return sample
+}
+
+func purityObservationProfileJSON(observation relaycommon.PurityObservation) string {
+	type fieldProfile struct {
+		Path string `json:"path"`
+		Type string `json:"type"`
+	}
+	values := make([]fieldProfile, 0, min(len(observation.FieldPaths), 200))
+	seen := map[string]bool{}
+	for _, path := range observation.FieldPaths {
+		path = strings.TrimSpace(path)
+		if path == "" || len(path) > 256 || seen[path] {
+			continue
+		}
+		seen[path] = true
+		values = append(values, fieldProfile{Path: path, Type: "present"})
+		if len(values) == 200 {
+			break
+		}
+	}
+	if len(values) == 0 {
+		return ""
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 func purityObservationSignature(observation relaycommon.PurityObservation) string {

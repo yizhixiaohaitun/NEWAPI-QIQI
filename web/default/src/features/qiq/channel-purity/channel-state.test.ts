@@ -10,7 +10,7 @@ const channels: ChannelOption[] = [
   { id: 3, name: 'Enabled backup', status: 1, groups: ['backup', 'openai'] },
   { id: 4, name: 'Auto disabled', status: 3, groups: [] },
 ]
-const input = (ids = [1, 2, 99]): PurityGroupInput => ({ name: 'Production', enabled: true, channel_ids: ids, baseline_channel_id: 1, interval_minutes: 5, random_pairing_enabled: false, model_comparisons: [{ baseline_model: 'gpt-4o', target_model: 'gpt-4o' }], sampling: { window_minutes: 30, minimum_samples: 20, max_samples_per_window: 200 } })
+const input = (ids = [1, 2, 99]): PurityGroupInput => ({ name: 'Production', enabled: true, channel_ids: ids, baseline_channel_id: 1, interval_minutes: 5, random_pairing_enabled: false, model_comparisons: [{ baseline_model: 'gpt-4o', target_model: 'gpt-4o' }], sampling: { window_minutes: 30, minimum_samples: 20, max_samples_per_window: 200 }, policy: { suspect_threshold: 0.72, alert_threshold: 0.55, alert_windows: 3, recovery_windows: 2 }, retention: { max_windows_per_target_model: 100, policy: 'latest_windows' } })
 
 describe('channel state', () => {
   test('normalizes comma-separated and array groups', () => {

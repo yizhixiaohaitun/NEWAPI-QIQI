@@ -11,9 +11,13 @@ import type {
   ApiEnvelope,
   ChannelOption,
   DetectorStatus,
+  IncidentAction,
   PurityEvidence,
   PurityGroup,
   PurityGroupInput,
+  PurityHistoryPage,
+  PurityHistoryPreview,
+  PurityIncident,
   PurityRunTask,
   QuickProbeInput,
   QuickProbeResult,
@@ -64,6 +68,11 @@ function structureDetail(value: unknown): StructureSimilarityDetail | undefined 
       target_count: number(difference.target_count), matched_count: number(difference.matched_count),
     } }),
     field_paths_available: Boolean(item.field_paths_available),
+    field_differences: array(item.field_differences).map((raw) => { const difference = record(raw); return {
+      path: String(difference.path ?? ''), baseline_type: difference.baseline_type == null ? undefined : String(difference.baseline_type),
+      target_type: difference.target_type == null ? undefined : String(difference.target_type),
+      baseline_count: number(difference.baseline_count), target_count: number(difference.target_count),
+    } }),
     limitation: item.limitation == null ? undefined : String(item.limitation),
   }
 }
@@ -84,6 +93,20 @@ function trend(value: unknown): TrendPoint[] {
     confidence: optionalNumber(item.confidence),
   } })
 }
+function incident(value: unknown): PurityIncident {
+  const item = record(value)
+  const rawStatus = String(item.status ?? 'OPEN')
+  const allowed = ['OPEN', 'ACKNOWLEDGED', 'SILENCED', 'FALSE_POSITIVE', 'RESOLVED']
+  return {
+    id: number(item.id), status: (allowed.includes(rawStatus) ? rawStatus : 'OPEN') as PurityIncident['status'],
+    note: item.note == null ? undefined : String(item.note), silence_until: item.silence_until as string | number | undefined,
+    opened_at: item.opened_at as string | number, resolved_at: item.resolved_at as string | number | undefined,
+    audit: array(item.audit).map((raw) => { const entry = record(raw); return {
+      id: number(entry.id), action: String(entry.action ?? ''), note: entry.note == null ? undefined : String(entry.note),
+      created_at: entry.created_at as string | number,
+    } }),
+  }
+}
 function normalizeResult(value: unknown, group: Record<string, unknown>): TargetResult {
   const item = record(value)
   const evidenceItems = array(item.evidence).map(evidence)
@@ -102,13 +125,23 @@ function normalizeResult(value: unknown, group: Record<string, unknown>): Target
     confidence: optionalNumber(item.confidence), baseline_token_range: range(item.baseline_token_range),
     target_token_range: range(item.target_token_range), deviation_rate: optionalNumber(item.deviation_rate),
     latest_evidence: item.latest_evidence ? evidence(item.latest_evidence, -1) : evidenceItems[0], evidence: evidenceItems,
-    alerts: array(item.alerts).map(String), trend: trend(item.trend ?? item.history),
+    alerts: array(item.alerts).map((alert) => typeof alert === 'string' ? alert : String(record(alert).message ?? record(alert).status ?? '')),
+    incidents: array(item.incidents ?? item.alert_records).map(incident),
+    explanation: Object.keys(record(item.explanation)).length ? (() => { const value = record(item.explanation); return {
+      code: String(value.code ?? item.status ?? ''), summary: String(value.summary ?? ''), suggested_action: String(value.suggested_action ?? ''),
+      combined_similarity: optionalNumber(value.combined_similarity), suspect_threshold: optionalNumber(value.suspect_threshold),
+      alert_threshold: optionalNumber(value.alert_threshold), consecutive_anomalies: optionalNumber(value.consecutive_anomalies),
+      consecutive_healthy: optionalNumber(value.consecutive_healthy), baseline_available: value.baseline_available == null ? undefined : Boolean(value.baseline_available),
+    } })() : undefined,
+    trend: trend(item.trend ?? item.history),
     updated_at: item.updated_at as string | number | undefined,
   }
 }
 function normalizeGroup(value: unknown): PurityGroup {
   const item = record(value)
   const sampling = record(item.sampling)
+  const policy = record(item.policy)
+  const retention = record(item.retention)
   const interval = number(item.interval_minutes, 5)
   return {
     id: String(item.id), name: String(item.name ?? 'Untitled group'), enabled: item.enabled !== false,
@@ -117,6 +150,8 @@ function normalizeGroup(value: unknown): PurityGroup {
     model_comparisons: array(item.model_comparisons).map((raw) => { const comparison = record(raw); return { baseline_model: String(comparison.baseline_model ?? ''), target_model: String(comparison.target_model ?? '') } }),
     model_comparisons_required: Boolean(item.model_comparisons_required),
     sampling: { window_minutes: number(sampling.window_minutes, 30), minimum_samples: number(sampling.minimum_samples, 20), max_samples_per_window: number(sampling.max_samples_per_window, 200) },
+    policy: { suspect_threshold: number(policy.suspect_threshold, .72), alert_threshold: number(policy.alert_threshold, .55), alert_windows: number(policy.alert_windows, 3), recovery_windows: number(policy.recovery_windows, 2) },
+    retention: { max_windows_per_target_model: number(retention.max_windows_per_target_model, 100), policy: String(retention.policy ?? 'latest_windows') },
     results: array(item.results ?? item.targets).map((result) => normalizeResult(result, item)),
     last_run_at: item.last_run_at as string | number | undefined,
     next_run_at: item.next_run_at as string | number | undefined,
@@ -241,11 +276,20 @@ export async function getPurityResultDetail(result: TargetResult): Promise<Targe
     target_token_range: run.target_token_min === undefined ? result.target_token_range : { min: number(run.target_token_min), max: number(run.target_token_max) },
     deviation_rate: optionalNumber(run.token_deviation_rate) ?? result.deviation_rate,
     evidence: evidenceItems.length ? evidenceItems : result.evidence,
+    incidents: array(latest.incidents ?? latest.alert_records).length ? array(latest.incidents ?? latest.alert_records).map(incident) : result.incidents,
+    explanation: Object.keys(record(latest.explanation)).length ? (() => { const value = record(latest.explanation); return {
+      code: String(value.code ?? latest.state ?? ''), summary: String(value.summary ?? ''), suggested_action: String(value.suggested_action ?? ''),
+      combined_similarity: optionalNumber(value.combined_similarity), suspect_threshold: optionalNumber(value.suspect_threshold), alert_threshold: optionalNumber(value.alert_threshold),
+      consecutive_anomalies: optionalNumber(value.consecutive_anomalies), consecutive_healthy: optionalNumber(value.consecutive_healthy),
+      baseline_available: value.baseline_available == null ? undefined : Boolean(value.baseline_available),
+    } })() : result.explanation,
     error_class: run.error_class == null ? undefined : String(run.error_class),
     pair_run: Object.keys(run).some((key) => ['id', 'latest_pair_run_id', 'window_started_at', 'window_ended_at', 'paired_sample_count', 'created_at'].includes(key)) || Boolean(detail) ? {
       id: optionalNumber(run.id ?? latest.latest_pair_run_id),
       baseline_sample_count: optionalNumber(run.baseline_sample_count), target_sample_count: optionalNumber(run.target_sample_count),
       paired_sample_count: optionalNumber(run.paired_sample_count ?? detail?.paired_sample_count),
+      baseline_invalid_count: optionalNumber(run.baseline_invalid_count), target_invalid_count: optionalNumber(run.target_invalid_count),
+      unmatched_baseline_count: optionalNumber(run.unmatched_baseline_count), unmatched_target_count: optionalNumber(run.unmatched_target_count),
       window_started_at: (run.window_started_at ?? detail?.window_started_at) as string | number | undefined,
       window_ended_at: (run.window_ended_at ?? detail?.window_ended_at) as string | number | undefined,
       state: run.state === undefined && latest.state === undefined ? undefined : status(run.state ?? latest.state),
@@ -254,6 +298,31 @@ export async function getPurityResultDetail(result: TargetResult): Promise<Targe
     updated_at: (latest.updated_at ?? run.created_at ?? result.updated_at) as string | number | undefined,
     trend: historyItems.slice().reverse().map(historyPoint),
   }
+}
+
+export async function listPurityHistory(params: { page: number; page_size: number; group_id?: string; status?: string; query?: string }): Promise<PurityHistoryPage> {
+  const response = await api.get('/api/channel/purity/history', { params, ...config })
+  const body = record(unwrap(response.data))
+  return {
+    items: array(body.items).map((raw) => { const item = record(raw); return {
+      id: number(item.id), group_id: String(item.group_id), group_name: String(item.group_name ?? `#${item.group_id}`),
+      target_channel_id: number(item.target_channel_id), target_channel_name: String(item.target_channel_name ?? `#${item.target_channel_id}`),
+      baseline_model: String(item.baseline_model ?? ''), target_model: String(item.target_model ?? ''), status: status(item.state ?? item.status),
+      paired_sample_count: number(item.paired_sample_count), structure_similarity: optionalNumber(item.structure_similarity),
+      token_similarity: optionalNumber(item.token_similarity), confidence: optionalNumber(item.confidence),
+      window_ended_at: item.window_ended_at as string | number,
+    } }),
+    total: number(body.total), page: number(body.page, params.page), page_size: number(body.page_size, params.page_size),
+  }
+}
+export async function getPurityHistoryPreview(groupId: string): Promise<PurityHistoryPreview> {
+  const response = await api.get(`${ROOT}/${groupId}/history/preview`, config)
+  const item = record(unwrap(response.data))
+  return { samples: number(item.samples), pair_runs: number(item.pair_runs), assessments: number(item.assessments), alerts: number(item.alerts), audits: optionalNumber(item.audits) }
+}
+export async function updatePurityIncident(groupId: string, alertId: number, action: IncidentAction, input: { note?: string; silence_until?: string | number } = {}): Promise<PurityIncident> {
+  const response = await api.post(`${ROOT}/${groupId}/alerts/${alertId}/actions`, { action, ...input }, config)
+  return incident(unwrap(response.data))
 }
 
 export async function runQuickProbe(input: QuickProbeInput): Promise<QuickProbeResult> {

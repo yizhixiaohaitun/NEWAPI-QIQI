@@ -23,6 +23,9 @@ func purityGroupFromRequest(r dto.ChannelPurityGroupRequest) *model.ChannelPurit
 		RandomPairingEnabled: r.RandomPairingEnabled,
 		WindowMinutes:        r.Sampling.WindowMinutes, MinimumSamples: r.Sampling.MinimumSamples,
 		MaxSamplesPerWindow: r.Sampling.MaxSamplesPerWindow,
+		SuspectThreshold:    r.Policy.SuspectThreshold, AlertThreshold: r.Policy.AlertThreshold,
+		AlertWindows: r.Policy.AlertWindows, RecoveryWindows: r.Policy.RecoveryWindows,
+		RetentionWindows: r.Retention.MaxWindowsPerTargetModel,
 	}
 	members := r.Members
 	if len(members) == 0 {
@@ -232,10 +235,30 @@ func CreateChannelPuritySample(c *gin.Context) {
 	if request.ObservedAt == 0 {
 		request.ObservedAt = time.Now().Unix()
 	}
+	profileJSON := ""
+	if len(request.StructureProfile) > 0 {
+		profile := make([]dto.ChannelPurityFieldProfile, 0, min(len(request.StructureProfile), 200))
+		seen := map[string]bool{}
+		for _, field := range request.StructureProfile {
+			field.Path, field.Type = strings.TrimSpace(field.Path), strings.TrimSpace(field.Type)
+			if field.Path == "" || len(field.Path) > 256 || len(field.Type) > 64 || seen[field.Path+"\x00"+field.Type] {
+				continue
+			}
+			seen[field.Path+"\x00"+field.Type] = true
+			profile = append(profile, field)
+			if len(profile) == 200 {
+				break
+			}
+		}
+		if encoded, marshalErr := common.Marshal(profile); marshalErr == nil {
+			profileJSON = string(encoded)
+		}
+	}
 	sample := &model.ChannelPuritySample{
 		GroupID: request.GroupID, ChannelID: request.ChannelID, ActualModel: strings.TrimSpace(request.ActualModel),
 		RunKey: fmt.Sprintf("external-%d", request.ObservedAt), Protocol: "external", StructureSignature: request.StructureSignature,
-		PromptTokens: request.PromptTokens, CompletionTokens: request.CompletionTokens, TotalTokens: request.TotalTokens,
+		StructureProfileJSON: profileJSON,
+		PromptTokens:         request.PromptTokens, CompletionTokens: request.CompletionTokens, TotalTokens: request.TotalTokens,
 		Valid: request.Valid, ErrorClass: request.ErrorClass, ObservedAt: request.ObservedAt,
 	}
 	if err = model.CreatePuritySample(sample); err != nil {
@@ -318,6 +341,16 @@ func GetLatestChannelPurityAssessment(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	group, err := model.GetPurityGroup(uint(groupID))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	alerts, _ := model.ListOpenPurityAlerts(value.ID)
+	incidents := make([]gin.H, 0, len(alerts))
+	for i := range alerts {
+		incidents = append(incidents, purityIncidentResponse(&alerts[i]))
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
 		"id": value.ID, "group_id": value.GroupID, "target_channel_id": value.TargetChannelID,
 		"actual_model": value.ActualModel, "latest_pair_run_id": value.LatestPairRunID,
@@ -328,6 +361,8 @@ func GetLatestChannelPurityAssessment(c *gin.Context) {
 		"structure_similarity":        run.StructureSimilarity,
 		"structure_similarity_detail": structureDetail,
 		"evidence":                    purityPairRunEvidence(run),
+		"explanation":                 purityStatusExplanation(value, run, group),
+		"incidents":                   incidents,
 	}})
 }
 
@@ -347,6 +382,8 @@ func purityPairRunResponse(run *model.ChannelPurityPairRun, detail *channelpurit
 		"actual_model": run.ActualModel, "baseline_model": run.BaselineModel, "target_model": run.TargetModel,
 		"window_started_at": run.WindowStartedAt, "window_ended_at": run.WindowEndedAt,
 		"baseline_sample_count": run.BaselineSampleCount, "target_sample_count": run.TargetSampleCount, "paired_sample_count": run.PairedSampleCount,
+		"baseline_invalid_count": run.BaselineInvalidCount, "target_invalid_count": run.TargetInvalidCount,
+		"unmatched_baseline_count": run.UnmatchedBaselineCount, "unmatched_target_count": run.UnmatchedTargetCount,
 		"structure_similarity": run.StructureSimilarity, "structure_similarity_detail": detail,
 		"token_similarity": run.TokenSimilarity, "baseline_token_min": run.BaselineTokenMin, "baseline_token_max": run.BaselineTokenMax,
 		"target_token_min": run.TargetTokenMin, "target_token_max": run.TargetTokenMax, "token_deviation_rate": run.TokenDeviationRate,
@@ -380,6 +417,125 @@ func ListChannelPurityHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"items": items, "total": total, "page": page.GetPage(), "page_size": page.GetPageSize()}})
 }
 
+func ListAllChannelPurityHistory(c *gin.Context) {
+	page := common.GetPageQuery(c)
+	var groupID uint
+	if raw := strings.TrimSpace(c.Query("group_id")); raw != "" {
+		parsed, err := strconvParseGroupID(raw)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid group id"})
+			return
+		}
+		groupID = parsed
+	}
+	values, total, err := model.ListPurityHistory(groupID, strings.TrimSpace(c.Query("status")), strings.TrimSpace(c.Query("query")), page.GetStartIdx(), page.GetPageSize())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	items := make([]gin.H, 0, len(values))
+	groups := map[uint]string{}
+	channels := map[int]string{}
+	for i := range values {
+		run := &values[i]
+		if _, ok := groups[run.GroupID]; !ok {
+			if group, e := model.GetPurityGroup(run.GroupID); e == nil {
+				groups[run.GroupID] = group.Name
+			}
+		}
+		if _, ok := channels[run.TargetChannelID]; !ok {
+			if channel, e := model.GetChannelById(run.TargetChannelID, true); e == nil && channel != nil {
+				channels[run.TargetChannelID] = channel.Name
+			}
+		}
+		items = append(items, gin.H{"id": run.ID, "group_id": run.GroupID, "group_name": fallbackChannelName(map[int]string{int(run.GroupID): groups[run.GroupID]}, int(run.GroupID)),
+			"target_channel_id": run.TargetChannelID, "target_channel_name": fallbackChannelName(channels, run.TargetChannelID),
+			"baseline_model": run.BaselineModel, "target_model": run.TargetModel, "state": run.State,
+			"paired_sample_count": run.PairedSampleCount, "structure_similarity": run.StructureSimilarity,
+			"token_similarity": run.TokenSimilarity, "confidence": run.Confidence, "window_ended_at": run.WindowEndedAt})
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"items": items, "total": total, "page": page.GetPage(), "page_size": page.GetPageSize()}})
+}
+
+func GetChannelPurityHistoryPreview(c *gin.Context) {
+	groupID, err := strconvParseGroupID(c.Param("group_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid group id"})
+		return
+	}
+	if _, err = model.GetPurityGroup(groupID); err != nil {
+		purityGroupLookup(c, err)
+		return
+	}
+	samples, runs, assessments, alerts, audits, err := model.PurityHistoryPreview(groupID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"samples": samples, "pair_runs": runs, "assessments": assessments, "alerts": alerts, "audits": audits}})
+}
+
+func UpdateChannelPurityIncident(c *gin.Context) {
+	groupID, err := strconvParseGroupID(c.Param("group_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid group id"})
+		return
+	}
+	alertID64, err := strconv.ParseUint(c.Param("alert_id"), 10, 64)
+	if err != nil || alertID64 == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid alert id"})
+		return
+	}
+	var request struct {
+		Action       string `json:"action"`
+		Note         string `json:"note"`
+		SilenceUntil int64  `json:"silence_until"`
+	}
+	if c.ShouldBindJSON(&request) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid action"})
+		return
+	}
+	request.Action, request.Note = strings.ToLower(strings.TrimSpace(request.Action)), strings.TrimSpace(request.Note)
+	alert, err := model.GetPurityAlertForGroup(groupID, uint(alertID64))
+	if err != nil {
+		purityGroupLookup(c, err)
+		return
+	}
+	now := time.Now().Unix()
+	switch request.Action {
+	case "acknowledge":
+		alert.Status, alert.AcknowledgedAt = "ACKNOWLEDGED", now
+	case "silence":
+		if request.SilenceUntil <= now || request.SilenceUntil > now+30*86400 {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "silence_until must be within the next 30 days"})
+			return
+		}
+		alert.Status, alert.SilenceUntil = "SILENCED", request.SilenceUntil
+	case "note":
+		if request.Note == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "note is required"})
+			return
+		}
+		alert.Note = request.Note
+	case "false_positive":
+		alert.Status, alert.FalsePositiveAt, alert.ResolvedAt = "FALSE_POSITIVE", now, now
+		if request.Note != "" {
+			alert.Note = request.Note
+		}
+	case "resolve":
+		alert.Status, alert.ResolvedAt = "RESOLVED", now
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "unsupported incident action"})
+		return
+	}
+	alert.UpdatedAt = now
+	if err = model.UpdatePurityAlertAction(alert, request.Action, request.Note, now); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": purityIncidentResponse(alert)})
+}
+
 func ClearChannelPurityHistory(c *gin.Context) {
 	groupID, err := strconvParseGroupID(c.Param("group_id"))
 	if err != nil {
@@ -395,6 +551,37 @@ func ClearChannelPurityHistory(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "channel purity history cleared"})
+}
+
+func purityStatusExplanation(assessment *model.ChannelPurityAssessment, run *model.ChannelPurityPairRun, group *model.ChannelPurityGroup) gin.H {
+	summary, action := "当前窗口正在积累证据", "继续观察后续检测窗口"
+	switch assessment.State {
+	case model.ChannelPurityStateHealthy:
+		summary, action = "当前结构与 Token 分布未发现明显异常", "保持自动检测"
+	case model.ChannelPurityStateSuspect:
+		summary, action = "相似度已低于可疑阈值，但尚未满足连续告警条件", "查看证据和趋势，并核对目标渠道配置"
+	case model.ChannelPurityStateAlert:
+		summary, action = "连续异常已达到告警条件", "核查目标渠道上游、模型映射与响应格式"
+	case model.ChannelPurityStateLowSample, model.ChannelPurityStateWarmingUp:
+		summary, action = "配对样本尚不足以形成稳定判断", "等待更多流量或手动检测"
+	case model.ChannelPurityStateNoTraffic:
+		summary, action = "当前窗口没有可比较的有效流量", "检查渠道路由和实际调用"
+	case model.ChannelPurityStateBaselineUnavailable:
+		summary, action = "基准渠道没有可用样本", "优先检查基准渠道"
+	case model.ChannelPurityStateDetectorError:
+		summary, action = "检测链路执行失败", "查看错误类别后重试"
+	}
+	return gin.H{"code": assessment.State, "summary": summary, "suggested_action": action,
+		"combined_similarity": run.StructureSimilarity*.65 + run.TokenSimilarity*.35,
+		"suspect_threshold":   group.SuspectThreshold, "alert_threshold": group.AlertThreshold,
+		"consecutive_anomalies": assessment.ConsecutiveAnomalies, "consecutive_healthy": assessment.ConsecutiveHealthy,
+		"baseline_available": run.BaselineSampleCount > 0}
+}
+
+func purityIncidentResponse(alert *model.ChannelPurityAlert) gin.H {
+	audits, _ := model.ListPurityAlertAudits(alert.ID)
+	return gin.H{"id": alert.ID, "status": alert.Status, "note": alert.Note, "silence_until": alert.SilenceUntil,
+		"opened_at": alert.OpenedAt, "resolved_at": alert.ResolvedAt, "audit": audits}
 }
 
 func buildPurityGroupResponse(group *model.ChannelPurityGroup) (gin.H, error) {
@@ -435,8 +622,10 @@ func buildPurityGroupResponse(group *model.ChannelPurityGroup) (gin.H, error) {
 		}
 		alerts, _ := model.ListOpenPurityAlerts(assessment.ID)
 		alertMessages := make([]string, 0, len(alerts))
-		for range alerts {
+		incidents := make([]gin.H, 0, len(alerts))
+		for i := range alerts {
 			alertMessages = append(alertMessages, "Repeated independent evidence is outside the baseline interval")
+			incidents = append(incidents, purityIncidentResponse(&alerts[i]))
 		}
 		baselineModel, targetModel := run.BaselineModel, run.TargetModel
 		if baselineModel == "" && targetModel == "" {
@@ -450,7 +639,8 @@ func buildPurityGroupResponse(group *model.ChannelPurityGroup) (gin.H, error) {
 			"token_similarity": run.TokenSimilarity, "confidence": assessment.Confidence,
 			"baseline_token_range": gin.H{"min": run.BaselineTokenMin, "max": run.BaselineTokenMax},
 			"target_token_range":   gin.H{"min": run.TargetTokenMin, "max": run.TargetTokenMax}, "deviation_rate": run.TokenDeviationRate,
-			"evidence": evidence, "alerts": alertMessages, "trend": trend, "updated_at": assessment.UpdatedAt,
+			"evidence": evidence, "alerts": alertMessages, "incidents": incidents,
+			"explanation": purityStatusExplanation(&assessment, run, group), "trend": trend, "updated_at": assessment.UpdatedAt,
 		}
 		if len(evidence) > 0 {
 			result["latest_evidence"] = evidence[0]
@@ -464,6 +654,8 @@ func buildPurityGroupResponse(group *model.ChannelPurityGroup) (gin.H, error) {
 		"model_comparisons":          group.ModelComparisons,
 		"model_comparisons_required": len(group.ModelComparisons) == 0,
 		"sampling":                   gin.H{"window_minutes": group.WindowMinutes, "minimum_samples": group.MinimumSamples, "max_samples_per_window": group.MaxSamplesPerWindow},
+		"policy":                     gin.H{"suspect_threshold": group.SuspectThreshold, "alert_threshold": group.AlertThreshold, "alert_windows": group.AlertWindows, "recovery_windows": group.RecoveryWindows},
+		"retention":                  gin.H{"max_windows_per_target_model": group.RetentionWindows, "policy": "latest_windows"},
 		"results":                    results, "last_run_at": group.LastRunAt, "next_run_at": group.NextRunAt, "last_error": group.LastError,
 		"created_at": group.CreatedAt, "updated_at": group.UpdatedAt,
 	}, nil

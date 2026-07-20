@@ -30,7 +30,7 @@ func setupPurityAPITestDB(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&model.Channel{}, &model.ChannelPurityGroup{}, &model.ChannelPurityMember{}, &model.ChannelPurityModelComparison{},
 		&model.ChannelPuritySample{}, &model.ChannelPurityPairRun{},
-		&model.ChannelPurityAssessment{}, &model.ChannelPurityAlert{},
+		&model.ChannelPurityAssessment{}, &model.ChannelPurityAlert{}, &model.ChannelPurityAlertAudit{},
 		&model.SystemTask{}, &model.SystemTaskLock{},
 	))
 	model.DB = db
@@ -65,7 +65,9 @@ func TestChannelPurityGroupCRUDAndListContract(t *testing.T) {
 		"name":"api-acceptance","enabled":true,"channel_ids":[101,102],"baseline_channel_id":101,
 		"interval_minutes":5,"random_pairing_enabled":true,
 		"model_comparisons":[{"baseline_model":"gpt-4o","target_model":"gpt-4o"}],
-		"sampling":{"window_minutes":30,"minimum_samples":2,"max_samples_per_window":20}
+		"sampling":{"window_minutes":30,"minimum_samples":2,"max_samples_per_window":20},
+		"policy":{"suspect_threshold":0.8,"alert_threshold":0.6,"alert_windows":4,"recovery_windows":3},
+		"retention":{"max_windows_per_target_model":120,"policy":"latest_windows"}
 	}`, CreateChannelPurityGroup)
 	require.Equal(t, http.StatusCreated, create.Code, create.Body.String())
 	created := decodeEnvelope(t, create)
@@ -79,6 +81,14 @@ func TestChannelPurityGroupCRUDAndListContract(t *testing.T) {
 	assert.Contains(t, data, "last_run_at")
 	assert.Contains(t, data, "next_run_at")
 	assert.Contains(t, data, "last_error")
+	policy := data["policy"].(map[string]any)
+	assert.Equal(t, 0.8, policy["suspect_threshold"])
+	assert.Equal(t, 0.6, policy["alert_threshold"])
+	assert.Equal(t, float64(4), policy["alert_windows"])
+	assert.Equal(t, float64(3), policy["recovery_windows"])
+	retention := data["retention"].(map[string]any)
+	assert.Equal(t, float64(120), retention["max_windows_per_target_model"])
+	assert.Equal(t, "latest_windows", retention["policy"])
 
 	run := &model.ChannelPurityPairRun{
 		GroupID: groupID, BaselineChannelID: 101, TargetChannelID: 102, ActualModel: "gpt-4o",
@@ -128,12 +138,19 @@ func TestChannelPurityGroupCRUDAndListContract(t *testing.T) {
 	update := purityRequest(t, http.MethodPut, fmt.Sprintf("/api/channel/purity/groups/%d", groupID), `{
 		"name":"api-acceptance-updated","enabled":true,
 		"members":[{"channel_id":101,"is_baseline":true},{"channel_id":102,"is_baseline":false}],
-		"interval_minutes":10,"model_comparisons":[{"baseline_model":"gpt-4o","target_model":"gpt-4o"}],"sampling":{"window_minutes":30,"minimum_samples":3,"max_samples_per_window":30}
+		"interval_minutes":10,"model_comparisons":[{"baseline_model":"gpt-4o","target_model":"gpt-4o"}],
+		"sampling":{"window_minutes":30,"minimum_samples":3,"max_samples_per_window":30},
+		"policy":{"suspect_threshold":0.75,"alert_threshold":0.5,"alert_windows":2,"recovery_windows":4},
+		"retention":{"max_windows_per_target_model":80,"policy":"latest_windows"}
 	}`, UpdateChannelPurityGroup, gin.Param{Key: "group_id", Value: fmt.Sprint(groupID)})
 	require.Equal(t, http.StatusOK, update.Code, update.Body.String())
 	updated := decodeEnvelope(t, update)["data"].(map[string]any)
 	assert.Equal(t, "api-acceptance-updated", updated["name"])
 	assert.Equal(t, float64(10), updated["interval_minutes"])
+	updatedPolicy := updated["policy"].(map[string]any)
+	assert.Equal(t, 0.75, updatedPolicy["suspect_threshold"])
+	assert.Equal(t, float64(2), updatedPolicy["alert_windows"])
+	assert.Equal(t, float64(80), updated["retention"].(map[string]any)["max_windows_per_target_model"])
 
 	invalid := purityRequest(t, http.MethodPost, "/api/channel/purity/groups", `{
 		"name":"invalid","enabled":true,"channel_ids":[101,102],"baseline_channel_id":999,
@@ -172,6 +189,70 @@ func TestClearChannelPurityHistoryKeepsGroupAndRejectsActiveTask(t *testing.T) {
 	require.NoError(t, model.DB.Model(&model.ChannelPurityAssessment{}).Where("group_id = ?", group.ID).Count(&assessments).Error)
 	assert.Zero(t, runs)
 	assert.Zero(t, assessments)
+}
+
+func TestChannelPurityHistorySearchPreviewAndIncidentLifecycle(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPurityAPITestDB(t)
+	require.NoError(t, model.DB.Create(&[]model.Channel{
+		{Id: 701, Name: "baseline-api", Models: "gpt-4o", Status: common.ChannelStatusEnabled},
+		{Id: 702, Name: "target-api", Models: "gpt-4o-mini", Status: common.ChannelStatusEnabled},
+	}).Error)
+	group := &model.ChannelPurityGroup{
+		Name: "incident-group", Enabled: true, IntervalMinutes: 5, WindowMinutes: 30, MinimumSamples: 2, MaxSamplesPerWindow: 20,
+		Members:          []model.ChannelPurityMember{{ChannelID: 701, IsBaseline: true}, {ChannelID: 702}},
+		ModelComparisons: []model.ChannelPurityModelComparison{{BaselineModel: "gpt-4o", TargetModel: "gpt-4o-mini"}},
+	}
+	require.NoError(t, model.CreatePurityGroup(group))
+	require.NoError(t, model.DB.Create(&model.ChannelPuritySample{GroupID: group.ID, ChannelID: 702, ActualModel: "gpt-4o-mini", RunKey: "sample", Protocol: "responses", StructureSignature: "sig", Valid: true, ObservedAt: 100}).Error)
+	run := &model.ChannelPurityPairRun{
+		GroupID: group.ID, BaselineChannelID: 701, TargetChannelID: 702, ActualModel: "gpt-4o-mini",
+		BaselineModel: "gpt-4o", TargetModel: "gpt-4o-mini", WindowStartedAt: 100, WindowEndedAt: 200,
+		BaselineSampleCount: 3, TargetSampleCount: 3, PairedSampleCount: 2, StructureSimilarity: 0.4,
+		TokenSimilarity: 0.5, Confidence: 0.9, State: model.ChannelPurityStateAlert, AnomalyEvidenceJSON: `["structure_distribution_shift"]`, CreatedAt: 200,
+	}
+	require.NoError(t, model.DB.Create(run).Error)
+	assessment := &model.ChannelPurityAssessment{
+		GroupID: group.ID, TargetChannelID: 702, ActualModel: "gpt-4o-mini", LatestPairRunID: run.ID,
+		State: model.ChannelPurityStateAlert, ConsecutiveAnomalies: 3, Confidence: 0.9, FirstSeenAt: 100, UpdatedAt: 200,
+	}
+	require.NoError(t, model.DB.Create(assessment).Error)
+	alert := &model.ChannelPurityAlert{AssessmentID: assessment.ID, PairRunID: run.ID, Status: "OPEN", EvidenceJSON: `[]`, OpenedAt: 200, UpdatedAt: 200}
+	require.NoError(t, model.DB.Create(alert).Error)
+
+	preview := purityRequest(t, http.MethodGet, fmt.Sprintf("/api/channel/purity/groups/%d/history/preview", group.ID), "", GetChannelPurityHistoryPreview, gin.Param{Key: "group_id", Value: fmt.Sprint(group.ID)})
+	require.Equal(t, http.StatusOK, preview.Code, preview.Body.String())
+	previewData := decodeEnvelope(t, preview)["data"].(map[string]any)
+	assert.Equal(t, float64(1), previewData["samples"])
+	assert.Equal(t, float64(1), previewData["pair_runs"])
+	assert.Equal(t, float64(1), previewData["assessments"])
+	assert.Equal(t, float64(1), previewData["alerts"])
+	assert.Equal(t, float64(0), previewData["audits"])
+
+	history := purityRequest(t, http.MethodGet, "/api/channel/purity/history?query=target-api&p=1&page_size=20", "", ListAllChannelPurityHistory)
+	require.Equal(t, http.StatusOK, history.Code, history.Body.String())
+	historyData := decodeEnvelope(t, history)["data"].(map[string]any)
+	assert.Equal(t, float64(1), historyData["total"])
+	items := historyData["items"].([]any)
+	require.Len(t, items, 1)
+	assert.Equal(t, "incident-group", items[0].(map[string]any)["group_name"])
+	assert.Equal(t, "target-api", items[0].(map[string]any)["target_channel_name"])
+
+	note := purityRequest(t, http.MethodPost, fmt.Sprintf("/api/channel/purity/groups/%d/alerts/%d/actions", group.ID, alert.ID), `{"action":"note","note":"checked upstream mapping"}`, UpdateChannelPurityIncident,
+		gin.Param{Key: "group_id", Value: fmt.Sprint(group.ID)}, gin.Param{Key: "alert_id", Value: fmt.Sprint(alert.ID)})
+	require.Equal(t, http.StatusOK, note.Code, note.Body.String())
+	assert.Equal(t, "checked upstream mapping", decodeEnvelope(t, note)["data"].(map[string]any)["note"])
+
+	acknowledge := purityRequest(t, http.MethodPost, fmt.Sprintf("/api/channel/purity/groups/%d/alerts/%d/actions", group.ID, alert.ID), `{"action":"acknowledge"}`, UpdateChannelPurityIncident,
+		gin.Param{Key: "group_id", Value: fmt.Sprint(group.ID)}, gin.Param{Key: "alert_id", Value: fmt.Sprint(alert.ID)})
+	require.Equal(t, http.StatusOK, acknowledge.Code, acknowledge.Body.String())
+	acknowledged := decodeEnvelope(t, acknowledge)["data"].(map[string]any)
+	assert.Equal(t, "ACKNOWLEDGED", acknowledged["status"])
+	require.Len(t, acknowledged["audit"].([]any), 2)
+
+	preview = purityRequest(t, http.MethodGet, fmt.Sprintf("/api/channel/purity/groups/%d/history/preview", group.ID), "", GetChannelPurityHistoryPreview, gin.Param{Key: "group_id", Value: fmt.Sprint(group.ID)})
+	require.Equal(t, http.StatusOK, preview.Code, preview.Body.String())
+	assert.Equal(t, float64(2), decodeEnvelope(t, preview)["data"].(map[string]any)["audits"])
 }
 
 func TestChannelPurityManualRunEnqueuesFormalTask(t *testing.T) {

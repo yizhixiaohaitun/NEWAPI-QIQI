@@ -16,6 +16,13 @@ export type DetectorStatus =
   | 'ALERT'
   | 'DETECTOR_ERROR'
 
+export type FieldProfileDifference = {
+  path: string
+  baseline_type?: string
+  target_type?: string
+  baseline_count: number
+  target_count: number
+}
 export type StructureDifference = {
   signature: string
   baseline_count: number
@@ -35,6 +42,7 @@ export type StructureSimilarityDetail = {
   union_count: number
   differences: StructureDifference[]
   field_paths_available: boolean
+  field_differences?: FieldProfileDifference[]
   limitation?: string
 }
 export type SimilarityMetric = { value?: number; sample_size: number; detail?: StructureSimilarityDetail }
@@ -62,11 +70,51 @@ export type PairRunDetail = {
   baseline_sample_count?: number
   target_sample_count?: number
   paired_sample_count?: number
+  baseline_invalid_count?: number
+  target_invalid_count?: number
+  unmatched_baseline_count?: number
+  unmatched_target_count?: number
   window_started_at?: string | number
   window_ended_at?: string | number
   state?: DetectorStatus
   error_class?: string
   created_at?: string | number
+}
+export type PurityPolicy = {
+  suspect_threshold: number
+  alert_threshold: number
+  alert_windows: number
+  recovery_windows: number
+}
+export type RetentionPolicy = {
+  max_windows_per_target_model: number
+  policy: string
+}
+export type StatusExplanation = {
+  code: string
+  summary: string
+  suggested_action: string
+  combined_similarity?: number
+  suspect_threshold?: number
+  alert_threshold?: number
+  consecutive_anomalies?: number
+  consecutive_healthy?: number
+  baseline_available?: boolean
+}
+export type PurityIncident = {
+  id: number
+  status: 'OPEN' | 'ACKNOWLEDGED' | 'SILENCED' | 'FALSE_POSITIVE' | 'RESOLVED'
+  note?: string
+  silence_until?: string | number
+  opened_at: string | number
+  resolved_at?: string | number
+  audit?: PurityIncidentAudit[]
+}
+export type PurityIncidentAudit = {
+  id: number
+  action: string
+  note?: string
+  created_at: string | number
 }
 export type TargetResult = {
   id: string
@@ -91,6 +139,8 @@ export type TargetResult = {
   alerts: string[]
   trend: TrendPoint[]
   pair_run?: PairRunDetail
+  explanation?: StatusExplanation
+  incidents: PurityIncident[]
   error_class?: string
   updated_at?: string | number
 }
@@ -111,6 +161,8 @@ export type PurityGroup = {
   model_comparisons: ModelComparison[]
   model_comparisons_required?: boolean
   sampling: SamplingSettings
+  policy: PurityPolicy
+  retention: RetentionPolicy
   results: TargetResult[]
   last_run_at?: string | number
   next_run_at?: string | number
@@ -119,6 +171,24 @@ export type PurityGroup = {
 }
 export type PurityGroupInput = Omit<PurityGroup, 'id' | 'results' | 'last_run_at' | 'next_run_at' | 'last_error' | 'updated_at'>
 export type ChannelOption = { id: number; name: string; status: number; models?: string[]; groups: string[] }
+export type PurityHistoryRecord = {
+  id: number
+  group_id: string
+  group_name: string
+  target_channel_id: number
+  target_channel_name: string
+  baseline_model: string
+  target_model: string
+  status: DetectorStatus
+  paired_sample_count: number
+  structure_similarity?: number
+  token_similarity?: number
+  confidence?: number
+  window_ended_at: string | number
+}
+export type PurityHistoryPage = { items: PurityHistoryRecord[]; total: number; page: number; page_size: number }
+export type PurityHistoryPreview = { samples: number; pair_runs: number; assessments: number; alerts: number; audits?: number }
+export type IncidentAction = 'acknowledge' | 'silence' | 'note' | 'false_positive' | 'resolve'
 export type QuickProbeInput = { channel_id: number; model?: string }
 export type QuickProbeResult = {
   ok: boolean

@@ -17,6 +17,8 @@ export function groupToInput(group: PurityGroup): PurityGroupInput {
     random_pairing_enabled: group.random_pairing_enabled,
     model_comparisons: group.model_comparisons.map((comparison) => ({ ...comparison })),
     sampling: { ...group.sampling },
+    policy: { ...group.policy },
+    retention: { ...group.retention },
   }
 }
 

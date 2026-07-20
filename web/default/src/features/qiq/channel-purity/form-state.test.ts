@@ -4,7 +4,7 @@ import { describe, test } from 'node:test'
 import { groupToInput, isGroupInputValid, modelComparisonError, modelComparisonOptions, normalizeModelComparisons, reconcileModelComparisons, setChannelSelected } from './form-state.ts'
 import type { PurityGroupInput } from './types.ts'
 
-const input = (): PurityGroupInput => ({ name: 'Production', enabled: true, channel_ids: [1, 2], baseline_channel_id: 1, interval_minutes: 5, random_pairing_enabled: false, model_comparisons: [{ baseline_model: ' gpt-4o ', target_model: 'gpt-4o-mini ' }], sampling: { window_minutes: 30, minimum_samples: 20, max_samples_per_window: 200 } })
+const input = (): PurityGroupInput => ({ name: 'Production', enabled: true, channel_ids: [1, 2], baseline_channel_id: 1, interval_minutes: 5, random_pairing_enabled: false, model_comparisons: [{ baseline_model: ' gpt-4o ', target_model: 'gpt-4o-mini ' }], sampling: { window_minutes: 30, minimum_samples: 20, max_samples_per_window: 200 }, policy: { suspect_threshold: 0.72, alert_threshold: 0.55, alert_windows: 3, recovery_windows: 2 }, retention: { max_windows_per_target_model: 100, policy: 'latest_windows' } })
 
 describe('channel purity group form state', () => {
   test('removing the baseline clears it and makes the form invalid', () => {

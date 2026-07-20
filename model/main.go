@@ -308,6 +308,7 @@ func migrateDB() error {
 		&ChannelPurityPairRun{},
 		&ChannelPurityAssessment{},
 		&ChannelPurityAlert{},
+		&ChannelPurityAlertAudit{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -373,6 +374,7 @@ func migrateDBFast() error {
 		{&ChannelPurityPairRun{}, "ChannelPurityPairRun"},
 		{&ChannelPurityAssessment{}, "ChannelPurityAssessment"},
 		{&ChannelPurityAlert{}, "ChannelPurityAlert"},
+		{&ChannelPurityAlertAudit{}, "ChannelPurityAlertAudit"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
