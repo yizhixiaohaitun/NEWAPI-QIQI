@@ -68,7 +68,7 @@ type ChannelTestMode = (typeof channelTestModes)[number]
 
 const routingReliabilitySchema = z
   .object({
-    RetryTimes: z.coerce.number().min(0).max(10),
+    RetryTimes: z.coerce.number().int().min(0),
     ChannelDisableThreshold: numericString,
     AutomaticDisableChannelEnabled: z.boolean(),
     AutomaticEnableChannelEnabled: z.boolean(),
@@ -305,12 +305,14 @@ export function RoutingReliabilitySection({
                       <Input
                         type='number'
                         min='0'
-                        max='10'
+                        step='1'
                         {...safeNumberFieldProps(field)}
                       />
                     </FormControl>
                     <FormDescription>
-                      {t('Number of times to retry failed requests (0-10)')}
+                      {t(
+                        'Number of times to retry failed requests (non-negative integer, no upper limit)'
+                      )}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

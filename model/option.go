@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,14 @@ import (
 type Option struct {
 	Key   string `json:"key" gorm:"primaryKey"`
 	Value string `json:"value"`
+}
+
+func ParseRetryTimes(value string) (int, error) {
+	retryTimes, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || retryTimes < 0 {
+		return 0, fmt.Errorf("request retry times must be a non-negative integer")
+	}
+	return retryTimes, nil
 }
 
 func AllOption() ([]*Option, error) {
@@ -205,18 +214,24 @@ func SyncOptions(frequency int) {
 }
 
 func UpdateOption(key string, value string) error {
-	// Save to database first
-	option := Option{
-		Key: key,
+	if key == "RetryTimes" {
+		if _, err := ParseRetryTimes(value); err != nil {
+			return err
+		}
 	}
+
+	option := Option{Key: key}
 	// https://gorm.io/docs/update.html#Save-All-Fields
-	DB.FirstOrCreate(&option, Option{Key: key})
+	if err := DB.FirstOrCreate(&option, Option{Key: key}).Error; err != nil {
+		return err
+	}
 	option.Value = value
 	// Save is a combination function.
 	// If save value does not contain primary key, it will execute Create,
 	// otherwise it will execute Update (with all fields).
-	DB.Save(&option)
-	// Update OptionMap
+	if err := DB.Save(&option).Error; err != nil {
+		return err
+	}
 	return updateOptionMap(key, value)
 }
 
@@ -229,6 +244,12 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
+	if value, ok := values["RetryTimes"]; ok {
+		if _, err := ParseRetryTimes(value); err != nil {
+			return err
+		}
+	}
+
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for k, v := range values {
 			option := Option{Key: k}
@@ -254,6 +275,14 @@ func UpdateOptionsBulk(values map[string]string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
+	retryTimes := 0
+	if key == "RetryTimes" {
+		retryTimes, err = ParseRetryTimes(value)
+		if err != nil {
+			return err
+		}
+	}
+
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
 	common.OptionMap[key] = value
@@ -519,7 +548,7 @@ func updateOptionMap(key string, value string) (err error) {
 	case "ModelRequestRateLimitGroup":
 		err = setting.UpdateModelRequestRateLimitGroupByJSONString(value)
 	case "RetryTimes":
-		common.RetryTimes, _ = strconv.Atoi(value)
+		common.RetryTimes = retryTimes
 	case "DataExportInterval":
 		common.DataExportInterval, _ = strconv.Atoi(value)
 	case "DataExportDefaultTime":

@@ -189,7 +189,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.LastError = nil
 	retryLimit := common.RetryTimes
 
-	for ; retryParam.GetRetry() <= retryLimit; retryParam.IncreaseRetry() {
+	for retryParam.GetRetry() <= retryLimit {
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		relayInfo.ResponsesStreamErrorBeforeCommit = false
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
@@ -235,6 +235,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
 		if !shouldRetry(c, newAPIError, retryLimit-retryParam.GetRetry()) {
+			break
+		}
+		if !retryParam.IncreaseRetry() {
 			break
 		}
 	}
@@ -534,8 +537,9 @@ func RelayTask(c *gin.Context) {
 		RequestPath: c.Request.URL.Path,
 		Retry:       common.GetPointer(0),
 	}
+	retryLimit := common.RetryTimes
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	for retryParam.GetRetry() <= retryLimit {
 		var channel *model.Channel
 
 		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
@@ -580,7 +584,10 @@ func RelayTask(c *gin.Context) {
 				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
 		}
 
-		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
+		if !shouldRetryTaskRelay(c, channel.Id, taskErr, retryLimit-retryParam.GetRetry()) {
+			break
+		}
+		if !retryParam.IncreaseRetry() {
 			break
 		}
 	}

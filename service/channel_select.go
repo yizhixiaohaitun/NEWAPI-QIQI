@@ -31,15 +31,19 @@ func (p *RetryParam) SetRetry(retry int) {
 	p.Retry = &retry
 }
 
-func (p *RetryParam) IncreaseRetry() {
+func (p *RetryParam) IncreaseRetry() bool {
 	if p.resetNextTry {
 		p.resetNextTry = false
-		return
+		return true
 	}
 	if p.Retry == nil {
 		p.Retry = new(int)
 	}
+	if *p.Retry == int(^uint(0)>>1) {
+		return false
+	}
 	*p.Retry++
+	return true
 }
 
 func (p *RetryParam) ResetRetryNextTry() {
