@@ -18,7 +18,7 @@ export type DetectorStatus =
 
 export type FieldProfileDifference = {
   path: string
-  change?: 'missing' | 'added' | 'type_changed' | 'frequency_changed' | string
+  change?: 'matched' | 'missing' | 'added' | 'type_changed' | 'frequency_changed' | string
   baseline_types?: string[]
   target_types?: string[]
   baseline_type?: string
@@ -33,9 +33,9 @@ export type StructureDifference = {
   matched_count: number
 }
 export type StructureDimensionDifference = {
-  dimension: 'protocol' | 'model_family' | 'event_sequence' | 'event' | 'finish_reason' | 'header_presence' | 'metadata' | string
+  dimension: 'protocol' | 'status_code' | 'model_family' | 'event_sequence' | 'event' | 'finish_reason' | 'header_presence' | 'metadata' | string
   value: string
-  change?: 'missing' | 'added' | 'frequency_changed' | string
+  change?: 'matched' | 'missing' | 'added' | 'frequency_changed' | string
   baseline_count: number
   target_count: number
 }
@@ -52,6 +52,12 @@ export type StructureSimilarityDetail = {
   union_count: number
   differences: StructureDifference[]
   field_paths_available: boolean
+  baseline_field_profile_samples?: number
+  target_field_profile_samples?: number
+  baseline_metadata_samples?: number
+  target_metadata_samples?: number
+  field_profile_coverage_complete?: boolean
+  metadata_coverage_complete?: boolean
   detail_available?: boolean
   score_available?: boolean
   field_differences?: FieldProfileDifference[]
@@ -60,6 +66,14 @@ export type StructureSimilarityDetail = {
 }
 export type SimilarityMetric = { value?: number; sample_size: number; detail?: StructureSimilarityDetail }
 export type TokenRange = { min: number; max: number; p50?: number; p95?: number }
+export type TokenPairDetail = { baseline_tokens: number; target_tokens: number; ratio: number; outside: boolean }
+export type TokenSimilarityDetail = {
+  version: string; baseline_valid_samples: number; target_valid_samples: number; paired_count: number
+  baseline_min: number; baseline_max: number; baseline_p50: number; baseline_p95: number
+  target_min: number; target_max: number; target_p50: number; target_p95: number
+  ratio_median: number; q1: number; q3: number; mad: number; robust_lower: number; robust_upper: number
+  outside_count: number; deviation_rate: number; score_available: boolean; pairs: TokenPairDetail[]
+}
 export type PurityEvidence = {
   id: string
   occurred_at: string | number
@@ -147,6 +161,7 @@ export type TargetResult = {
   baseline_token_range?: TokenRange
   target_token_range?: TokenRange
   deviation_rate?: number
+  token_detail?: TokenSimilarityDetail
   latest_evidence?: PurityEvidence
   evidence: PurityEvidence[]
   alerts: string[]

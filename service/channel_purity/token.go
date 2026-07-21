@@ -30,7 +30,7 @@ type TokenInterval struct {
 }
 
 func NewTokenPair(modelFamily, requestType string, targetProvider, baselineProvider, targetUnified, baselineUnified int) (TokenPair, bool) {
-	if baselineUnified <= 0 || targetUnified < 0 {
+	if baselineUnified <= 0 || targetUnified <= 0 {
 		return TokenPair{}, false
 	}
 	return TokenPair{ModelFamily: modelFamily, RequestType: requestType, TargetProvider: targetProvider, BaselineProvider: baselineProvider, TargetUnified: targetUnified, BaselineUnified: baselineUnified, Ratio: float64(targetUnified) / float64(baselineUnified)}, true

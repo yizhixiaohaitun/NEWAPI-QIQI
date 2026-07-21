@@ -382,7 +382,7 @@ func purityObservationProfileJSON(observation relaycommon.PurityObservation) str
 
 func purityObservationMetadataJSON(observation relaycommon.PurityObservation) string {
 	return channelpurity.EncodeStructureMetadata(channelpurity.AnonymousFeatures{
-		Protocol: observation.Protocol, ModelFamily: observation.ModelFamily, EventSequence: observation.EventSequence,
+		Protocol: observation.Protocol, StatusCode: observation.StatusCode, ModelFamily: observation.ModelFamily, EventSequence: observation.EventSequence,
 		FinishReasons: observation.FinishReasons, HeaderPresence: observation.HeaderPresence,
 		HasSignatureID: observation.HasSignatureID,
 	})

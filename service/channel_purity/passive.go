@@ -26,6 +26,7 @@ func EncodeFieldProfiles(profiles []FieldProfile) string { return encodeFieldPro
 
 type StructureMetadata struct {
 	Protocol       string          `json:"protocol,omitempty"`
+	StatusCode     int             `json:"status_code,omitempty"`
 	ModelFamily    string          `json:"model_family,omitempty"`
 	EventSequence  []string        `json:"event_sequence,omitempty"`
 	FinishReasons  []string        `json:"finish_reasons,omitempty"`
@@ -35,7 +36,7 @@ type StructureMetadata struct {
 
 func encodeStructureMetadata(features AnonymousFeatures) string {
 	metadata := StructureMetadata{
-		Protocol: features.Protocol, ModelFamily: features.ModelFamily,
+		Protocol: features.Protocol, StatusCode: features.StatusCode, ModelFamily: features.ModelFamily,
 		EventSequence: append([]string(nil), features.EventSequence...),
 		FinishReasons: uniqueSorted(features.FinishReasons), HeaderPresence: features.HeaderPresence,
 		HasSignatureID: features.HasSignatureID,

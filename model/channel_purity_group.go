@@ -111,6 +111,7 @@ type ChannelPurityPairRun struct {
 	StructureSimilarity       float64 `json:"structure_similarity"`
 	StructureSimilarityDetail string  `json:"-" gorm:"type:text;not null;default:''"`
 	TokenSimilarity           float64 `json:"token_similarity"`
+	TokenSimilarityDetail     string  `json:"-" gorm:"type:text;not null;default:''"`
 	BaselineTokenMin          int     `json:"baseline_token_min"`
 	BaselineTokenMax          int     `json:"baseline_token_max"`
 	TargetTokenMin            int     `json:"target_token_min"`

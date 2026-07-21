@@ -79,7 +79,7 @@ func CompareSamples(baseline, target []model.ChannelPuritySample, minimumSamples
 	if structure < .72 {
 		evidence = append(evidence, "structure_distribution_shift")
 	}
-	if token < .70 || interval.Alert {
+	if interval.Samples > 0 && (token < .70 || interval.Alert) {
 		evidence = append(evidence, "token_interval_shift")
 	}
 	return

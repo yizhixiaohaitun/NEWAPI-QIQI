@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"math"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -59,7 +59,9 @@ func AggregatePairWindow(groupID uint, targetChannelID int, baselineModel, targe
 	baselineInvalid, baselineUnmatched := sampleDiagnostics(baselineRows, len(baseline))
 	targetInvalid, targetUnmatched := sampleDiagnostics(targetRows, len(target))
 	structure, token, confidence, evidence := CompareSamples(baseline, target, policy.MinSamples)
-	combined := structure*.65 + token*.35
+	structureDetail := BuildStructureSimilarityDetail(baseline, target)
+	tokenDetail := BuildTokenSimilarityDetail(baseline, target, policy.MinSamples)
+	combined, _ := combinedSimilarity(structure, structureDetail.ScoreAvailable, token, tokenDetail.ScoreAvailable)
 	window := WindowResult{BaselineAvailable: len(baseline) > 0, BaselineSamples: len(baseline), TargetSamples: len(target), Similarity: combined, Confidence: confidence}
 	var previous model.ChannelPurityAssessment
 	err = model.DB.Where("group_id = ? AND target_channel_id = ? AND actual_model = ?", groupID, targetChannelID, comparisonKey).First(&previous).Error
@@ -78,8 +80,7 @@ func AggregatePairWindow(groupID uint, targetChannelID int, baselineModel, targe
 	}
 	baselineMin, baselineMax := tokenBounds(baseline)
 	targetMin, targetMax := tokenBounds(target)
-	deviationRate := pairedTokenDeviationRate(baseline, target, policy.MinSamples)
-	structureDetail := BuildStructureSimilarityDetail(baseline, target)
+	deviationRate := tokenDetail.DeviationRate
 	structureDetail.Version = StructureSimilarityDetailVersion
 	structureDetail.WindowStartedAt = windowStart
 	structureDetail.WindowEndedAt = windowEnd
@@ -88,12 +89,16 @@ func AggregatePairWindow(groupID uint, targetChannelID int, baselineModel, targe
 	if err != nil {
 		return nil, err
 	}
+	encodedTokenDetail, err := common.Marshal(tokenDetail)
+	if err != nil {
+		return nil, err
+	}
 	run := model.ChannelPurityPairRun{
 		GroupID: groupID, BaselineChannelID: baselineID, TargetChannelID: targetChannelID, ActualModel: comparisonKey,
 		BaselineModel: baselineModel, TargetModel: targetModel,
 		WindowStartedAt: windowStart, WindowEndedAt: windowEnd, BaselineSampleCount: len(baseline), TargetSampleCount: len(target),
 		PairedSampleCount: len(baseline), BaselineInvalidCount: baselineInvalid, TargetInvalidCount: targetInvalid,
-		UnmatchedBaselineCount: baselineUnmatched, UnmatchedTargetCount: targetUnmatched, StructureSimilarity: structure, StructureSimilarityDetail: string(encodedStructureDetail), TokenSimilarity: token,
+		UnmatchedBaselineCount: baselineUnmatched, UnmatchedTargetCount: targetUnmatched, StructureSimilarity: structure, StructureSimilarityDetail: string(encodedStructureDetail), TokenSimilarity: token, TokenSimilarityDetail: string(encodedTokenDetail),
 		BaselineTokenMin: baselineMin, BaselineTokenMax: baselineMax, TargetTokenMin: targetMin, TargetTokenMax: targetMax,
 		TokenDeviationRate: deviationRate, AnomalyEvidenceJSON: evidenceJSON, Confidence: confidence, State: next.State, CreatedAt: now,
 	}
@@ -155,26 +160,32 @@ type StructureDimensionDifference struct {
 	TargetCount   int    `json:"target_count"`
 }
 
-const StructureSimilarityDetailVersion = "structure_similarity.v2"
+const StructureSimilarityDetailVersion = "structure_similarity.v3"
 
 type StructureSimilarityDetail struct {
-	Version              string                         `json:"version"`
-	Method               string                         `json:"method"`
-	WindowStartedAt      int64                          `json:"window_started_at"`
-	WindowEndedAt        int64                          `json:"window_ended_at"`
-	PairedSampleCount    int                            `json:"paired_sample_count"`
-	MatchedCount         int                            `json:"matched_count"`
-	BaselineOnlyCount    int                            `json:"baseline_only_count"`
-	TargetOnlyCount      int                            `json:"target_only_count"`
-	IntersectionCount    int                            `json:"intersection_count"`
-	UnionCount           int                            `json:"union_count"`
-	Differences          []StructureDifference          `json:"differences"`
-	FieldDifferences     []FieldProfileDifference       `json:"field_differences,omitempty"`
-	DimensionDifferences []StructureDimensionDifference `json:"dimension_differences,omitempty"`
-	FieldPathsAvailable  bool                           `json:"field_paths_available"`
-	DetailAvailable      bool                           `json:"detail_available"`
-	ScoreAvailable       bool                           `json:"score_available"`
-	Limitation           string                         `json:"limitation"`
+	Version                      string                         `json:"version"`
+	Method                       string                         `json:"method"`
+	WindowStartedAt              int64                          `json:"window_started_at"`
+	WindowEndedAt                int64                          `json:"window_ended_at"`
+	PairedSampleCount            int                            `json:"paired_sample_count"`
+	MatchedCount                 int                            `json:"matched_count"`
+	BaselineOnlyCount            int                            `json:"baseline_only_count"`
+	TargetOnlyCount              int                            `json:"target_only_count"`
+	IntersectionCount            int                            `json:"intersection_count"`
+	UnionCount                   int                            `json:"union_count"`
+	Differences                  []StructureDifference          `json:"differences"`
+	FieldDifferences             []FieldProfileDifference       `json:"field_differences,omitempty"`
+	DimensionDifferences         []StructureDimensionDifference `json:"dimension_differences,omitempty"`
+	BaselineFieldProfileSamples  int                            `json:"baseline_field_profile_samples"`
+	TargetFieldProfileSamples    int                            `json:"target_field_profile_samples"`
+	BaselineMetadataSamples      int                            `json:"baseline_metadata_samples"`
+	TargetMetadataSamples        int                            `json:"target_metadata_samples"`
+	FieldPathsAvailable          bool                           `json:"field_paths_available"`
+	FieldProfileCoverageComplete bool                           `json:"field_profile_coverage_complete"`
+	MetadataCoverageComplete     bool                           `json:"metadata_coverage_complete"`
+	DetailAvailable              bool                           `json:"detail_available"`
+	ScoreAvailable               bool                           `json:"score_available"`
+	Limitation                   string                         `json:"limitation"`
 }
 
 // BuildStructureSimilarityDetail uses the same already-paired samples as CompareSamples.
@@ -195,12 +206,23 @@ func BuildStructureSimilarityDetail(baseline, target []model.ChannelPuritySample
 		ScoreAvailable:      len(baseline) > 0 && len(baseline) == len(target),
 		Limitation:          "detail_unavailable_for_legacy_anonymous_samples",
 	}
+	detail.BaselineFieldProfileSamples = samplesWithPayload(baseline, func(sample model.ChannelPuritySample) string { return sample.StructureProfileJSON })
+	detail.TargetFieldProfileSamples = samplesWithPayload(target, func(sample model.ChannelPuritySample) string { return sample.StructureProfileJSON })
+	detail.BaselineMetadataSamples = samplesWithPayload(baseline, func(sample model.ChannelPuritySample) string { return sample.StructureMetadataJSON })
+	detail.TargetMetadataSamples = samplesWithPayload(target, func(sample model.ChannelPuritySample) string { return sample.StructureMetadataJSON })
 	detail.FieldDifferences = buildFieldProfileDifferences(baseline, target)
 	detail.DimensionDifferences = buildStructureDimensionDifferences(baseline, target)
-	if fieldProfilesAvailable(baseline) && fieldProfilesAvailable(target) {
-		detail.FieldPathsAvailable = true
-		detail.DetailAvailable = true
-		detail.Limitation = "sanitized_field_paths_and_types_only_values_never_retained"
+	detail.FieldPathsAvailable = detail.BaselineFieldProfileSamples > 0 && detail.TargetFieldProfileSamples > 0
+	detail.FieldProfileCoverageComplete = detail.FieldPathsAvailable && detail.BaselineFieldProfileSamples == len(baseline) && detail.TargetFieldProfileSamples == len(target)
+	detail.MetadataCoverageComplete = detail.BaselineMetadataSamples == len(baseline) && detail.TargetMetadataSamples == len(target)
+	detail.DetailAvailable = len(detail.FieldDifferences) > 0 || len(detail.DimensionDifferences) > 0
+	switch {
+	case detail.FieldProfileCoverageComplete && detail.MetadataCoverageComplete:
+		detail.Limitation = "sanitized_parameters_cover_all_paired_samples_values_never_retained"
+	case detail.DetailAvailable:
+		detail.Limitation = "sanitized_parameters_cover_only_samples_collected_after_detail_upgrade"
+	default:
+		detail.Limitation = "detail_unavailable_for_legacy_anonymous_samples"
 	}
 	for key := range keys {
 		matched := minInt(bf[key], tf[key])
@@ -220,16 +242,14 @@ func BuildStructureSimilarityDetail(baseline, target []model.ChannelPuritySample
 	return detail
 }
 
-func fieldProfilesAvailable(samples []model.ChannelPuritySample) bool {
-	if len(samples) == 0 {
-		return false
-	}
+func samplesWithPayload(samples []model.ChannelPuritySample, value func(model.ChannelPuritySample) string) int {
+	count := 0
 	for _, sample := range samples {
-		if strings.TrimSpace(sample.StructureProfileJSON) == "" {
-			return false
+		if strings.TrimSpace(value(sample)) != "" {
+			count++
 		}
 	}
-	return true
+	return count
 }
 
 func buildFieldProfileDifferences(baseline, target []model.ChannelPuritySample) []FieldProfileDifference {
@@ -275,7 +295,7 @@ func buildFieldProfileDifferences(baseline, target []model.ChannelPuritySample) 
 	}
 	consume(baseline, true)
 	consume(target, false)
-	out := make([]FieldProfileDifference, 0)
+	out := make([]FieldProfileDifference, 0, len(values))
 	for path, value := range values {
 		baselineTypes, targetTypes := sortedSet(value.baselineTypes), sortedSet(value.targetTypes)
 		change := "frequency_changed"
@@ -287,7 +307,7 @@ func buildFieldProfileDifferences(baseline, target []model.ChannelPuritySample) 
 		case strings.Join(baselineTypes, "\x00") != strings.Join(targetTypes, "\x00"):
 			change = "type_changed"
 		case value.baseline == value.target:
-			continue
+			change = "matched"
 		}
 		out = append(out, FieldProfileDifference{Path: path, Change: change, BaselineTypes: baselineTypes, TargetTypes: targetTypes, BaselineCount: value.baseline, TargetCount: value.target})
 	}
@@ -306,6 +326,9 @@ func buildStructureDimensionDifferences(baseline, target []model.ChannelPuritySa
 			values := map[string][]string{
 				"protocol": {metadata.Protocol}, "model_family": {metadata.ModelFamily},
 				"finish_reason": metadata.FinishReasons,
+			}
+			if metadata.StatusCode > 0 {
+				values["status_code"] = []string{fmt.Sprintf("%d", metadata.StatusCode)}
 			}
 			if len(metadata.EventSequence) > 0 {
 				values["event_sequence"] = []string{strings.Join(metadata.EventSequence, " → ")}
@@ -336,17 +359,16 @@ func buildStructureDimensionDifferences(baseline, target []model.ChannelPuritySa
 	}
 	consume(baseline, 0)
 	consume(target, 1)
-	out := make([]StructureDimensionDifference, 0)
+	out := make([]StructureDimensionDifference, 0, len(counts))
 	for key, count := range counts {
-		if count[0] == count[1] {
-			continue
-		}
 		parts := strings.SplitN(key, "\x00", 2)
 		change := "frequency_changed"
 		if count[0] == 0 {
 			change = "added"
 		} else if count[1] == 0 {
 			change = "missing"
+		} else if count[0] == count[1] {
+			change = "matched"
 		}
 		out = append(out, StructureDimensionDifference{Dimension: parts[0], Value: parts[1], Change: change, BaselineCount: count[0], TargetCount: count[1]})
 	}
@@ -384,6 +406,18 @@ func DecodeStructureSimilarityDetail(run *model.ChannelPurityPairRun) (*Structur
 			detail.DetailAvailable = false
 			detail.Limitation = "detail_unavailable_for_legacy_anonymous_samples"
 		}
+	}
+	// v2 introduced sanitized field and protocol details, and only marked them
+	// available when every paired sample carried the new payload. Restore those
+	// implicit coverage facts so historical v2 runs are not shown as 0 / N.
+	if detail.Version == "structure_similarity.v2" && detail.FieldPathsAvailable {
+		detail.BaselineFieldProfileSamples = detail.PairedSampleCount
+		detail.TargetFieldProfileSamples = detail.PairedSampleCount
+		detail.BaselineMetadataSamples = detail.PairedSampleCount
+		detail.TargetMetadataSamples = detail.PairedSampleCount
+		detail.FieldProfileCoverageComplete = true
+		detail.MetadataCoverageComplete = true
+		detail.Limitation = "sanitized_parameters_cover_all_paired_samples_values_never_retained"
 	}
 	return &detail, nil
 }
@@ -443,7 +477,7 @@ func sampleDiagnostics(samples []model.ChannelPuritySample, paired int) (invalid
 func tokenBounds(samples []model.ChannelPuritySample) (int, int) {
 	minimum, maximum, initialized := 0, 0, false
 	for _, sample := range samples {
-		if !sample.Valid || sample.TotalTokens < 0 {
+		if !sample.Valid || sample.TotalTokens <= 0 {
 			continue
 		}
 		if !initialized || sample.TotalTokens < minimum {
@@ -457,23 +491,114 @@ func tokenBounds(samples []model.ChannelPuritySample) (int, int) {
 	return minimum, maximum
 }
 
-func pairedTokenDeviationRate(baseline, target []model.ChannelPuritySample, minSamples int) float64 {
-	pairs := make([]TokenPair, 0, len(baseline))
-	for i := range baseline {
-		pair, ok := NewTokenPair(baseline[i].ActualModel, "purity_probe", target[i].TotalTokens, baseline[i].TotalTokens, target[i].TotalTokens, baseline[i].TotalTokens)
+const TokenSimilarityDetailVersion = "token_similarity.v1"
+
+type TokenPairDetail struct {
+	BaselineTokens int     `json:"baseline_tokens"`
+	TargetTokens   int     `json:"target_tokens"`
+	Ratio          float64 `json:"ratio"`
+	Outside        bool    `json:"outside"`
+}
+
+type TokenSimilarityDetail struct {
+	Version              string            `json:"version"`
+	BaselineValidSamples int               `json:"baseline_valid_samples"`
+	TargetValidSamples   int               `json:"target_valid_samples"`
+	PairedCount          int               `json:"paired_count"`
+	BaselineMin          int               `json:"baseline_min"`
+	BaselineMax          int               `json:"baseline_max"`
+	BaselineP50          float64           `json:"baseline_p50"`
+	BaselineP95          float64           `json:"baseline_p95"`
+	TargetMin            int               `json:"target_min"`
+	TargetMax            int               `json:"target_max"`
+	TargetP50            float64           `json:"target_p50"`
+	TargetP95            float64           `json:"target_p95"`
+	RatioMedian          float64           `json:"ratio_median"`
+	Q1                   float64           `json:"q1"`
+	Q3                   float64           `json:"q3"`
+	MAD                  float64           `json:"mad"`
+	RobustLower          float64           `json:"robust_lower"`
+	RobustUpper          float64           `json:"robust_upper"`
+	OutsideCount         int               `json:"outside_count"`
+	DeviationRate        float64           `json:"deviation_rate"`
+	ScoreAvailable       bool              `json:"score_available"`
+	Pairs                []TokenPairDetail `json:"pairs,omitempty"`
+}
+
+func BuildTokenSimilarityDetail(baseline, target []model.ChannelPuritySample, minSamples int) TokenSimilarityDetail {
+	detail := TokenSimilarityDetail{Version: TokenSimilarityDetailVersion, Pairs: []TokenPairDetail{}}
+	baselineValues, targetValues := make([]float64, 0, len(baseline)), make([]float64, 0, len(target))
+	pairs := make([]TokenPair, 0, minInt(len(baseline), len(target)))
+	for _, sample := range baseline {
+		if sample.Valid && sample.TotalTokens > 0 {
+			detail.BaselineValidSamples++
+			baselineValues = append(baselineValues, float64(sample.TotalTokens))
+		}
+	}
+	for _, sample := range target {
+		if sample.Valid && sample.TotalTokens > 0 {
+			detail.TargetValidSamples++
+			targetValues = append(targetValues, float64(sample.TotalTokens))
+		}
+	}
+	for i := 0; i < len(baseline) && i < len(target); i++ {
+		pair, ok := NewTokenPair(actualModelFamily(baseline[i], target[i]), "purity_probe", target[i].TotalTokens, baseline[i].TotalTokens, target[i].TotalTokens, baseline[i].TotalTokens)
 		if ok {
 			pairs = append(pairs, pair)
 		}
 	}
+	detail.PairedCount = len(pairs)
+	if len(baselineValues) > 0 {
+		sort.Float64s(baselineValues)
+		detail.BaselineMin, detail.BaselineMax = int(baselineValues[0]), int(baselineValues[len(baselineValues)-1])
+		detail.BaselineP50, detail.BaselineP95 = quantile(baselineValues, .5), quantile(baselineValues, .95)
+	}
+	if len(targetValues) > 0 {
+		sort.Float64s(targetValues)
+		detail.TargetMin, detail.TargetMax = int(targetValues[0]), int(targetValues[len(targetValues)-1])
+		detail.TargetP50, detail.TargetP95 = quantile(targetValues, .5), quantile(targetValues, .95)
+	}
 	if len(pairs) == 0 {
-		return 0
+		return detail
 	}
 	interval := AnalyzeTokenRatios(pairs[0].ModelFamily, "purity_probe", pairs, minSamples)
-	outside := 0
+	detail.ScoreAvailable = true
+	detail.RatioMedian, detail.Q1, detail.Q3, detail.MAD = interval.Median, interval.Q1, interval.Q3, interval.MAD
+	detail.RobustLower, detail.RobustUpper = interval.Lower, interval.Upper
 	for _, pair := range pairs {
-		if pair.Ratio < interval.Lower || pair.Ratio > interval.Upper {
-			outside++
+		outside := pair.Ratio < interval.Lower || pair.Ratio > interval.Upper
+		if outside {
+			detail.OutsideCount++
 		}
+		detail.Pairs = append(detail.Pairs, TokenPairDetail{BaselineTokens: pair.BaselineUnified, TargetTokens: pair.TargetUnified, Ratio: pair.Ratio, Outside: outside})
 	}
-	return math.Min(1, float64(outside)/float64(len(pairs)))
+	detail.DeviationRate = float64(detail.OutsideCount) / float64(detail.PairedCount)
+	return detail
+}
+
+func combinedSimilarity(structure float64, structureAvailable bool, token float64, tokenAvailable bool) (float64, bool) {
+	switch {
+	case structureAvailable && tokenAvailable:
+		return structure*.65 + token*.35, true
+	case structureAvailable:
+		return structure, true
+	case tokenAvailable:
+		return token, true
+	default:
+		return 0, false
+	}
+}
+
+func DecodeTokenSimilarityDetail(run *model.ChannelPurityPairRun) (*TokenSimilarityDetail, error) {
+	if strings.TrimSpace(run.TokenSimilarityDetail) == "" {
+		return nil, nil
+	}
+	var detail TokenSimilarityDetail
+	if err := common.Unmarshal([]byte(run.TokenSimilarityDetail), &detail); err != nil {
+		return nil, err
+	}
+	if detail.Version == "" {
+		return nil, errors.New("unknown token similarity detail")
+	}
+	return &detail, nil
 }

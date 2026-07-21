@@ -69,11 +69,12 @@ func TestExtractSSECodexEvidence(t *testing.T) {
 
 func TestStructureMetadataPreservesModelAndEventOrder(t *testing.T) {
 	encoded := EncodeStructureMetadata(AnonymousFeatures{
-		Protocol: "sse", ModelFamily: "gpt-5", EventSequence: []string{"response.created", "response.completed", "done"},
+		Protocol: "sse", StatusCode: 200, ModelFamily: "gpt-5", EventSequence: []string{"response.created", "response.completed", "done"},
 		FinishReasons: []string{"stop"}, HeaderPresence: map[string]bool{"x-request-id": true}, HasSignatureID: true,
 	})
 	var metadata StructureMetadata
 	require.NoError(t, json.Unmarshal([]byte(encoded), &metadata))
+	assert.Equal(t, 200, metadata.StatusCode)
 	assert.Equal(t, "gpt-5", metadata.ModelFamily)
 	assert.Equal(t, []string{"response.created", "response.completed", "done"}, metadata.EventSequence)
 	assert.NotContains(t, encoded, "header-value")

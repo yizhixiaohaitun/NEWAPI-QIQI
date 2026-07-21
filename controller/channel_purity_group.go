@@ -337,6 +337,7 @@ func GetLatestChannelPurityAssessment(c *gin.Context) {
 		return
 	}
 	structureDetail, _ := channelpurity.DecodeStructureSimilarityDetail(run)
+	tokenDetail, _ := channelpurity.DecodeTokenSimilarityDetail(run)
 	group, err := model.GetPurityGroup(uint(groupID))
 	if err != nil {
 		common.ApiError(c, err)
@@ -351,7 +352,7 @@ func GetLatestChannelPurityAssessment(c *gin.Context) {
 		"id": value.ID, "group_id": value.GroupID, "target_channel_id": value.TargetChannelID,
 		"actual_model": value.ActualModel, "latest_pair_run_id": value.LatestPairRunID,
 		"state": value.State, "confidence": value.Confidence, "updated_at": value.UpdatedAt,
-		"pair_run":                    purityPairRunResponse(run, structureDetail),
+		"pair_run":                    purityPairRunResponse(run, structureDetail, tokenDetail),
 		"window_started_at":           run.WindowStartedAt,
 		"window_ended_at":             run.WindowEndedAt,
 		"structure_similarity":        purityStructureScore(run, structureDetail),
@@ -387,7 +388,32 @@ func purityStructureScore(run *model.ChannelPurityPairRun, detail *channelpurity
 	return run.StructureSimilarity
 }
 
-func purityPairRunResponse(run *model.ChannelPurityPairRun, detail *channelpurity.StructureSimilarityDetail) gin.H {
+func purityTokenScore(run *model.ChannelPurityPairRun, detail *channelpurity.TokenSimilarityDetail) any {
+	if detail != nil && !detail.ScoreAvailable {
+		return nil
+	}
+	if detail == nil && run.PairedSampleCount <= 0 {
+		return nil
+	}
+	return run.TokenSimilarity
+}
+
+func purityCombinedScore(run *model.ChannelPurityPairRun, structureDetail *channelpurity.StructureSimilarityDetail, tokenDetail *channelpurity.TokenSimilarityDetail) any {
+	structureAvailable := purityStructureScore(run, structureDetail) != nil
+	tokenAvailable := purityTokenScore(run, tokenDetail) != nil
+	switch {
+	case structureAvailable && tokenAvailable:
+		return run.StructureSimilarity*.65 + run.TokenSimilarity*.35
+	case structureAvailable:
+		return run.StructureSimilarity
+	case tokenAvailable:
+		return run.TokenSimilarity
+	default:
+		return nil
+	}
+}
+
+func purityPairRunResponse(run *model.ChannelPurityPairRun, detail *channelpurity.StructureSimilarityDetail, tokenDetail *channelpurity.TokenSimilarityDetail) gin.H {
 	return gin.H{
 		"id": run.ID, "group_id": run.GroupID, "baseline_channel_id": run.BaselineChannelID, "target_channel_id": run.TargetChannelID,
 		"actual_model": run.ActualModel, "baseline_model": run.BaselineModel, "target_model": run.TargetModel,
@@ -396,7 +422,7 @@ func purityPairRunResponse(run *model.ChannelPurityPairRun, detail *channelpurit
 		"baseline_invalid_count": run.BaselineInvalidCount, "target_invalid_count": run.TargetInvalidCount,
 		"unmatched_baseline_count": run.UnmatchedBaselineCount, "unmatched_target_count": run.UnmatchedTargetCount,
 		"structure_similarity": purityStructureScore(run, detail), "structure_similarity_detail": detail,
-		"token_similarity": run.TokenSimilarity, "baseline_token_min": run.BaselineTokenMin, "baseline_token_max": run.BaselineTokenMax,
+		"token_similarity": purityTokenScore(run, tokenDetail), "token_similarity_detail": tokenDetail, "combined_similarity": purityCombinedScore(run, detail, tokenDetail), "baseline_token_min": run.BaselineTokenMin, "baseline_token_max": run.BaselineTokenMax,
 		"target_token_min": run.TargetTokenMin, "target_token_max": run.TargetTokenMax, "token_deviation_rate": run.TokenDeviationRate,
 		"confidence": run.Confidence, "state": run.State, "error_class": run.ErrorClass, "evidence": purityPairRunEvidence(run), "created_at": run.CreatedAt,
 	}
@@ -419,7 +445,8 @@ func ListChannelPurityHistory(c *gin.Context) {
 	items := make([]gin.H, 0, len(values))
 	for i := range values {
 		detail, _ := channelpurity.DecodeStructureSimilarityDetail(&values[i])
-		items = append(items, purityPairRunResponse(&values[i], detail))
+		tokenDetail, _ := channelpurity.DecodeTokenSimilarityDetail(&values[i])
+		items = append(items, purityPairRunResponse(&values[i], detail, tokenDetail))
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"items": items, "total": total, "page": page.GetPage(), "page_size": page.GetPageSize()}})
 }
@@ -580,8 +607,10 @@ func purityStatusExplanation(assessment *model.ChannelPurityAssessment, run *mod
 	case model.ChannelPurityStateDetectorError:
 		summary, action = "检测链路执行失败", "查看错误类别后重试"
 	}
+	structureDetail, _ := channelpurity.DecodeStructureSimilarityDetail(run)
+	tokenDetail, _ := channelpurity.DecodeTokenSimilarityDetail(run)
 	return gin.H{"code": assessment.State, "summary": summary, "suggested_action": action,
-		"combined_similarity": run.StructureSimilarity*.65 + run.TokenSimilarity*.35,
+		"combined_similarity": purityCombinedScore(run, structureDetail, tokenDetail),
 		"suspect_threshold":   group.SuspectThreshold, "alert_threshold": group.AlertThreshold,
 		"consecutive_anomalies": assessment.ConsecutiveAnomalies, "consecutive_healthy": assessment.ConsecutiveHealthy,
 		"baseline_available": run.BaselineSampleCount > 0}
@@ -618,6 +647,7 @@ func buildPurityGroupResponse(group *model.ChannelPurityGroup) (gin.H, error) {
 			continue
 		}
 		structureDetail, _ := channelpurity.DecodeStructureSimilarityDetail(run)
+		tokenDetail, _ := channelpurity.DecodeTokenSimilarityDetail(run)
 		var reasonCodes []string
 		_ = common.Unmarshal([]byte(run.AnomalyEvidenceJSON), &reasonCodes)
 		evidence := make([]gin.H, 0, len(reasonCodes))
@@ -642,12 +672,12 @@ func buildPurityGroupResponse(group *model.ChannelPurityGroup) (gin.H, error) {
 			baselineModel, targetModel = run.ActualModel, run.ActualModel
 		}
 		result := gin.H{
-			"id": assessment.ID, "target_channel_id": assessment.TargetChannelID, "target_channel_name": fallbackChannelName(channelNames, assessment.TargetChannelID),
-			"baseline_channel_id": baselineID, "baseline_channel_name": fallbackChannelName(channelNames, baselineID), "model": assessment.ActualModel,
+			"id": assessment.ID, "target_channel_id": run.TargetChannelID, "target_channel_name": fallbackChannelName(channelNames, run.TargetChannelID),
+			"baseline_channel_id": run.BaselineChannelID, "baseline_channel_name": fallbackChannelName(channelNames, run.BaselineChannelID), "model": assessment.ActualModel,
 			"baseline_model": baselineModel, "target_model": targetModel,
 			"status": assessment.State, "samples": run.PairedSampleCount, "field_similarity": purityStructureScore(run, structureDetail),
 			"structure_similarity_detail": structureDetail,
-			"token_similarity":            run.TokenSimilarity, "confidence": assessment.Confidence,
+			"token_similarity":            purityTokenScore(run, tokenDetail), "token_similarity_detail": tokenDetail, "confidence": assessment.Confidence,
 			"baseline_token_range": gin.H{"min": run.BaselineTokenMin, "max": run.BaselineTokenMax},
 			"target_token_range":   gin.H{"min": run.TargetTokenMin, "max": run.TargetTokenMax}, "deviation_rate": run.TokenDeviationRate,
 			"evidence": evidence, "alerts": alertMessages, "incidents": incidents,

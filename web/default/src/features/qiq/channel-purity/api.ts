@@ -23,6 +23,7 @@ import type {
   QuickProbeResult,
   TargetResult,
   StructureSimilarityDetail,
+  TokenSimilarityDetail,
   TokenRange,
   TrendPoint,
 } from './types'
@@ -52,6 +53,18 @@ function range(value: unknown): TokenRange | undefined {
   if (item.min === undefined || item.max === undefined) return undefined
   return { min: number(item.min), max: number(item.max), p50: optionalNumber(item.p50), p95: optionalNumber(item.p95) }
 }
+export function normalizeTokenSimilarityDetail(value: unknown): TokenSimilarityDetail | undefined {
+  const item = record(value)
+  if (!Object.keys(item).length) return undefined
+  return {
+    version: String(item.version ?? ''), baseline_valid_samples: number(item.baseline_valid_samples), target_valid_samples: number(item.target_valid_samples), paired_count: number(item.paired_count),
+    baseline_min: number(item.baseline_min), baseline_max: number(item.baseline_max), baseline_p50: number(item.baseline_p50), baseline_p95: number(item.baseline_p95),
+    target_min: number(item.target_min), target_max: number(item.target_max), target_p50: number(item.target_p50), target_p95: number(item.target_p95),
+    ratio_median: number(item.ratio_median), q1: number(item.q1), q3: number(item.q3), mad: number(item.mad), robust_lower: number(item.robust_lower), robust_upper: number(item.robust_upper),
+    outside_count: number(item.outside_count), deviation_rate: number(item.deviation_rate), score_available: Boolean(item.score_available),
+    pairs: array(item.pairs).map((raw) => { const pair = record(raw); return { baseline_tokens: number(pair.baseline_tokens), target_tokens: number(pair.target_tokens), ratio: number(pair.ratio), outside: Boolean(pair.outside) } }),
+  }
+}
 function structureDetail(value: unknown): StructureSimilarityDetail | undefined {
   const item = record(value)
   if (!Object.keys(item).length) return undefined
@@ -68,6 +81,10 @@ function structureDetail(value: unknown): StructureSimilarityDetail | undefined 
       target_count: number(difference.target_count), matched_count: number(difference.matched_count),
     } }),
     field_paths_available: Boolean(item.field_paths_available),
+    baseline_field_profile_samples: optionalNumber(item.baseline_field_profile_samples), target_field_profile_samples: optionalNumber(item.target_field_profile_samples),
+    baseline_metadata_samples: optionalNumber(item.baseline_metadata_samples), target_metadata_samples: optionalNumber(item.target_metadata_samples),
+    field_profile_coverage_complete: item.field_profile_coverage_complete == null ? undefined : Boolean(item.field_profile_coverage_complete),
+    metadata_coverage_complete: item.metadata_coverage_complete == null ? undefined : Boolean(item.metadata_coverage_complete),
     detail_available: item.detail_available == null ? undefined : Boolean(item.detail_available),
     score_available: item.score_available == null ? undefined : Boolean(item.score_available),
     field_differences: array(item.field_differences).map((raw) => { const difference = record(raw); return {
@@ -133,6 +150,7 @@ function normalizeResult(value: unknown, group: Record<string, unknown>): Target
     token_similarity: { value: optionalNumber(token.value ?? item.token_similarity), sample_size: number(token.sample_size ?? item.samples) },
     confidence: optionalNumber(item.confidence), baseline_token_range: range(item.baseline_token_range),
     target_token_range: range(item.target_token_range), deviation_rate: optionalNumber(item.deviation_rate),
+    token_detail: normalizeTokenSimilarityDetail(item.token_similarity_detail),
     latest_evidence: item.latest_evidence ? evidence(item.latest_evidence, -1) : evidenceItems[0], evidence: evidenceItems,
     alerts: array(item.alerts).map((alert) => typeof alert === 'string' ? alert : String(record(alert).message ?? record(alert).status ?? '')),
     incidents: array(item.incidents ?? item.alert_records).map(incident),
@@ -268,9 +286,12 @@ export async function getPurityResultDetail(result: TargetResult): Promise<Targe
   const detail = structureDetail(latest.structure_similarity_detail)
   const pairRun = record(latest.pair_run)
   const run = Object.keys(pairRun).length ? pairRun : latest
+  const tokenWindow = normalizeTokenSimilarityDetail(run.token_similarity_detail)
   const evidenceItems = array(latest.evidence ?? latest.anomaly_evidence).map(evidence)
   return {
     ...result,
+    baseline_channel_id: number(run.baseline_channel_id, result.baseline_channel_id), target_channel_id: number(run.target_channel_id, result.target_channel_id),
+    baseline_model: String(run.baseline_model ?? result.baseline_model), target_model: String(run.target_model ?? result.target_model),
     status: status(latest.state ?? latest.status ?? run.state ?? result.status),
     confidence: optionalNumber(latest.confidence) ?? optionalNumber(run.confidence) ?? result.confidence,
     samples: number(run.paired_sample_count ?? detail?.paired_sample_count ?? result.samples),
@@ -280,7 +301,8 @@ export async function getPurityResultDetail(result: TargetResult): Promise<Targe
       sample_size: number(run.paired_sample_count ?? detail?.paired_sample_count ?? result.field_similarity.sample_size),
       detail,
     },
-    token_similarity: { ...result.token_similarity, value: optionalNumber(run.token_similarity) ?? result.token_similarity.value },
+    token_similarity: { ...result.token_similarity, value: tokenWindow?.score_available === false ? undefined : optionalNumber(run.token_similarity) ?? result.token_similarity.value, sample_size: tokenWindow?.paired_count ?? result.token_similarity.sample_size },
+    token_detail: tokenWindow ?? result.token_detail,
     baseline_token_range: run.baseline_token_min === undefined ? result.baseline_token_range : { min: number(run.baseline_token_min), max: number(run.baseline_token_max) },
     target_token_range: run.target_token_min === undefined ? result.target_token_range : { min: number(run.target_token_min), max: number(run.target_token_max) },
     deviation_rate: optionalNumber(run.token_deviation_rate) ?? result.deviation_rate,

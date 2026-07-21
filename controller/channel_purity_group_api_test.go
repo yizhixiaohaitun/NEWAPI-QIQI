@@ -3,6 +3,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,12 +12,36 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	channelpurity "github.com/QuantumNous/new-api/service/channel_purity"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestPurityObservationMetadataIncludesStatusCodeWithoutChangingSignature(t *testing.T) {
+	observation := relaycommon.PurityObservation{Protocol: "json", StatusCode: http.StatusCreated, ModelFamily: "gpt-5"}
+	var metadata channelpurity.StructureMetadata
+	require.NoError(t, json.Unmarshal([]byte(purityObservationMetadataJSON(observation)), &metadata))
+	assert.Equal(t, http.StatusCreated, metadata.StatusCode)
+
+	otherStatus := observation
+	otherStatus.StatusCode = http.StatusNoContent
+	assert.Equal(t, purityObservationSignature(observation), purityObservationSignature(otherStatus))
+}
+
+func TestPurityScoresRemainUnavailableWhenDetailsHaveNoData(t *testing.T) {
+	run := &model.ChannelPurityPairRun{PairedSampleCount: 0, StructureSimilarityDetail: `{"version":"structure_similarity.v3","score_available":false}`, TokenSimilarityDetail: `{"version":"token_similarity.v1","score_available":false}`}
+	structureDetail, err := channelpurity.DecodeStructureSimilarityDetail(run)
+	require.NoError(t, err)
+	tokenDetail, err := channelpurity.DecodeTokenSimilarityDetail(run)
+	require.NoError(t, err)
+	assert.Nil(t, purityStructureScore(run, structureDetail))
+	assert.Nil(t, purityTokenScore(run, tokenDetail))
+	assert.Nil(t, purityCombinedScore(run, structureDetail, tokenDetail))
+}
 
 func setupPurityAPITestDB(t *testing.T) {
 	t.Helper()
@@ -97,7 +122,7 @@ func TestChannelPurityGroupCRUDAndListContract(t *testing.T) {
 		StructureSimilarityDetail: `{"version":"structure_similarity.v1","method":"multiset_jaccard","window_started_at":100,"window_ended_at":200,"paired_sample_count":3,"matched_count":2,"baseline_only_count":1,"target_only_count":1,"intersection_count":2,"union_count":4,"differences":[{"signature":"shared","baseline_count":2,"target_count":2,"matched_count":2},{"signature":"baseline-only","baseline_count":1,"target_count":0,"matched_count":0},{"signature":"target-only","baseline_count":0,"target_count":1,"matched_count":0}],"field_paths_available":false,"limitation":"Only anonymous structure-signature hashes are retained."}`,
 		TokenSimilarity:           0.8,
 		BaselineTokenMin:          10, BaselineTokenMax: 20, TargetTokenMin: 11, TargetTokenMax: 22,
-		TokenDeviationRate: 0.1, AnomalyEvidenceJSON: `["token_interval_shift"]`, Confidence: 0.75,
+		TokenDeviationRate: 0.1, TokenSimilarityDetail: `{"version":"token_similarity.v1","baseline_valid_samples":3,"target_valid_samples":3,"paired_count":3,"baseline_min":10,"baseline_max":20,"baseline_p50":15,"baseline_p95":20,"target_min":11,"target_max":22,"target_p50":16,"target_p95":22,"ratio_median":1.1,"q1":1,"q3":1.2,"mad":0.1,"robust_lower":0.7,"robust_upper":1.4,"outside_count":1,"deviation_rate":0.333,"score_available":true,"pairs":[]}`, AnomalyEvidenceJSON: `["token_interval_shift"]`, Confidence: 0.75,
 		State: model.ChannelPurityStateSuspect, CreatedAt: 200,
 	}
 	require.NoError(t, model.DB.Create(run).Error)
@@ -134,6 +159,12 @@ func TestChannelPurityGroupCRUDAndListContract(t *testing.T) {
 	assert.Equal(t, float64(1), detail["baseline_only_count"])
 	assert.Equal(t, float64(1), detail["target_only_count"])
 	assert.Equal(t, false, detail["field_paths_available"])
+	pairRun := latestData["pair_run"].(map[string]any)
+	tokenDetail := pairRun["token_similarity_detail"].(map[string]any)
+	assert.Equal(t, "token_similarity.v1", tokenDetail["version"])
+	assert.Equal(t, float64(3), tokenDetail["paired_count"])
+	assert.Equal(t, 0.8, pairRun["token_similarity"])
+	assert.InDelta(t, 0.605, pairRun["combined_similarity"].(float64), 0.0001)
 
 	update := purityRequest(t, http.MethodPut, fmt.Sprintf("/api/channel/purity/groups/%d", groupID), `{
 		"name":"api-acceptance-updated","enabled":true,
