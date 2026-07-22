@@ -144,6 +144,17 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models exposed by this channel',
     },
   },
+  59: {
+    id: 59,
+    name: CHANNEL_TYPES[59],
+    icon: 'FishAudio',
+    defaultBaseUrl: 'https://api.fish.audio',
+    hints: {
+      baseUrl: 'Default: https://api.fish.audio',
+      key: 'Fish Audio API Key',
+      models: 'Fish Audio TTS model IDs',
+    },
+  },
 }
 
 /**
