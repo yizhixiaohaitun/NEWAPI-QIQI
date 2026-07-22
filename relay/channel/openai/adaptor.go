@@ -41,6 +41,26 @@ type Adaptor struct {
 	ResponseFormat string
 }
 
+type fishAudioTTSRequest struct {
+	Text        string `json:"text"`
+	ReferenceID string `json:"reference_id,omitempty"`
+	Format      string `json:"format"`
+}
+
+func isFishAudioTTS(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.RelayMode != relayconstant.RelayModeAudioSpeech || info.ChannelType != constant.ChannelTypeCustom {
+		return false
+	}
+	endpoint, err := url.Parse(strings.TrimSpace(info.ChannelBaseUrl))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(endpoint.Scheme, "https") &&
+		strings.EqualFold(endpoint.Host, "api.fish.audio") &&
+		strings.TrimSuffix(endpoint.EscapedPath(), "/") == "/v1/tts" &&
+		endpoint.RawQuery == "" && endpoint.Fragment == ""
+}
+
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
 	result, err := service.ConvertRequest(c, info, types.RelayFormatOpenAI, request)
 	if err != nil {
@@ -223,6 +243,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 			header.Set("Authorization", "Bearer "+info.ApiKey)
 		}
 	}
+	if isFishAudioTTS(info) {
+		header.Set("model", strings.TrimSpace(info.UpstreamModelName))
+	}
 	if info.ChannelType == constant.ChannelTypeOpenRouter {
 		if header.Get("HTTP-Referer") == "" {
 			header.Set("HTTP-Referer", "https://www.newapi.ai")
@@ -370,7 +393,27 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
 	a.ResponseFormat = request.ResponseFormat
 	if info.RelayMode == relayconstant.RelayModeAudioSpeech {
-		jsonData, err := common.Marshal(request)
+		var payload any = request
+		if isFishAudioTTS(info) {
+			if strings.TrimSpace(request.Input) == "" {
+				return nil, errors.New("input is required")
+			}
+			format := strings.ToLower(strings.TrimSpace(request.ResponseFormat))
+			if format == "" {
+				format = "mp3"
+			}
+			switch format {
+			case "mp3", "wav", "pcm", "opus":
+			default:
+				return nil, fmt.Errorf("unsupported Fish Audio response format: %s", format)
+			}
+			payload = fishAudioTTSRequest{
+				Text:        request.Input,
+				ReferenceID: strings.TrimSpace(request.Voice),
+				Format:      format,
+			}
+		}
+		jsonData, err := common.Marshal(payload)
 		if err != nil {
 			return nil, fmt.Errorf("error marshalling object: %w", err)
 		}
