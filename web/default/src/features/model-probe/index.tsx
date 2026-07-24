@@ -22,6 +22,7 @@ type ProbeResult = {
   created_at: number
   channel_id: number
   channel_name: string
+  request_model: string
   declared_model: string
   actual_model: string
   id_status: string
@@ -132,8 +133,8 @@ export function ModelProbeDashboard() {
         {loading ? <p className='p-6 text-muted-foreground'>{t('Loading...')}</p> : (
           <div className='overflow-x-auto'>
             <table className='w-full min-w-[980px] text-sm'>
-              <thead className='bg-muted/50 text-left'><tr><th className='p-3'>{t('Time')}</th><th className='p-3'>{t('Channel')}</th><th className='p-3'>{t('Declared / actual model')}</th><th className='p-3'>{t('ID match')}</th><th className='p-3'>{t('Expected / actual input tokens')}</th><th className='p-3'>{t('Delta / tolerance')}</th><th className='p-3'>{t('Token result')}</th><th className='p-3'>{t('Conclusion')}</th></tr></thead>
-              <tbody>{results.map((result) => <tr key={result.id} className='border-t align-top'><td className='p-3'>{new Date(result.created_at * 1000).toLocaleString()}</td><td className='p-3'>{result.channel_name || `#${result.channel_id}`}</td><td className='p-3'>{result.declared_model}<br/><span className='text-muted-foreground'>{result.actual_model || t('Not returned')}</span></td><td className={`p-3 font-medium ${statusClass(result.id_status)}`}>{t(result.id_status)}</td><td className='p-3'>{result.expected_tokens ?? t('unknown')} / {result.actual_tokens ?? t('unknown')}</td><td className='p-3'>{result.token_delta ?? '—'} / ±{result.token_tolerance || '—'}</td><td className={`p-3 font-medium ${statusClass(result.token_status)}`}>{t(result.token_status)}</td><td className={`p-3 font-medium ${statusClass(result.conclusion)}`}>{t(result.conclusion)}{result.error ? <div className='mt-1 max-w-xs text-xs font-normal text-muted-foreground'>{result.error}</div> : null}</td></tr>)}</tbody>
+              <thead className='bg-muted/50 text-left'><tr><th className='p-3'>{t('Time')}</th><th className='p-3'>{t('Channel')}</th><th className='p-3'>{t('Request / declared / actual model')}</th><th className='p-3'>{t('ID match')}</th><th className='p-3'>{t('Expected / actual input tokens')}</th><th className='p-3'>{t('Delta / tolerance')}</th><th className='p-3'>{t('Token result')}</th><th className='p-3'>{t('Conclusion')}</th></tr></thead>
+              <tbody>{results.map((result) => <tr key={result.id} className='border-t align-top'><td className='p-3'>{new Date(result.created_at * 1000).toLocaleString()}</td><td className='p-3'>{result.channel_name || `#${result.channel_id}`}</td><td className='p-3'>{result.request_model}<br/><span className='text-muted-foreground'>{result.declared_model}</span><br/><span className='text-muted-foreground'>{result.actual_model || t('Not returned')}</span></td><td className={`p-3 font-medium ${statusClass(result.id_status)}`}>{t(result.id_status)}</td><td className='p-3'>{result.expected_tokens ?? t('unknown')} / {result.actual_tokens ?? t('unknown')}</td><td className='p-3'>{result.token_delta ?? '—'} / ±{result.token_tolerance || '—'}</td><td className={`p-3 font-medium ${statusClass(result.token_status)}`}>{t(result.token_status)}</td><td className={`p-3 font-medium ${statusClass(result.conclusion)}`}>{t(result.conclusion)}{result.error ? <div className='mt-1 max-w-xs text-xs font-normal text-muted-foreground'>{result.error}</div> : null}</td></tr>)}</tbody>
             </table>
             {results.length === 0 ? <p className='p-6 text-center text-muted-foreground'>{t('No probe results yet')}</p> : null}
           </div>

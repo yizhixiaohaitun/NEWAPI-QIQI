@@ -9,6 +9,7 @@ type ModelProbeResult struct {
 	CreatedAt      int64  `json:"created_at" gorm:"bigint;index"`
 	ChannelId      int    `json:"channel_id" gorm:"index"`
 	ChannelName    string `json:"channel_name" gorm:"type:varchar(191)"`
+	RequestModel   string `json:"request_model" gorm:"type:varchar(191);index"`
 	DeclaredModel  string `json:"declared_model" gorm:"type:varchar(191);index"`
 	ActualModel    string `json:"actual_model" gorm:"type:varchar(191)"`
 	IdStatus       string `json:"id_status" gorm:"type:varchar(24)"`

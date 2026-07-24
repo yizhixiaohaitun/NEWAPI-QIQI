@@ -106,7 +106,7 @@ func StoreAndNotifyModelProbe(result *model.ModelProbeResult) error {
 	modelProbeNotifyState.last[key] = now
 	modelProbeNotifyState.Unlock()
 
-	content := fmt.Sprintf("渠道 #%d %s 的模型抽检结果为 %s；声明模型=%s，实际模型=%s，ID=%s，Token=%s。", result.ChannelId, result.ChannelName, result.Conclusion, result.DeclaredModel, result.ActualModel, result.IdStatus, result.TokenStatus)
+	content := fmt.Sprintf("渠道 #%d %s 的模型抽检结果为 %s；请求模型=%s，声明模型=%s，实际模型=%s，ID=%s，Token=%s。", result.ChannelId, result.ChannelName, result.Conclusion, result.RequestModel, result.DeclaredModel, result.ActualModel, result.IdStatus, result.TokenStatus)
 	// This is an explicit admin action, so invoke the existing notification
 	// chain immediately after persistence. Avoid spawning an unbounded goroutine.
 	modelProbeNotifier(dto.NotifyTypeChannelTest, "模型抽检异常", content)

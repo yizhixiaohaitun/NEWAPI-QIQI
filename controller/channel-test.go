@@ -1015,7 +1015,15 @@ func ProbeModelOfficiality(c *gin.Context) {
 		return
 	}
 	result := testChannelWithOptions(c.Request.Context(), channel, testUserID, request.TargetModelID, string(constant.EndpointTypeOpenAI), false, channelTestOptions{recordConsumeLog: true, modelProbe: true})
-	probeResult := &model.ModelProbeResult{ChannelId: channel.Id, ChannelName: channel.Name, DeclaredModel: request.OfficialModelID, ActualModel: result.responseModelID, ExpectedTokens: result.expectedInputTokens, ActualTokens: result.actualInputTokens}
+	probeResult := &model.ModelProbeResult{
+		ChannelId:      channel.Id,
+		ChannelName:    channel.Name,
+		RequestModel:   request.TargetModelID,
+		DeclaredModel:  request.OfficialModelID,
+		ActualModel:    result.responseModelID,
+		ExpectedTokens: result.expectedInputTokens,
+		ActualTokens:   result.actualInputTokens,
+	}
 	if result.localErr != nil {
 		probeResult.Error = result.localErr.Error()
 	}
