@@ -592,7 +592,12 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 			Group:            info.UsingGroup,
 			Other:            other,
 		})
-		common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+		if !options.modelProbe {
+			common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+		}
+	}
+	if options.modelProbe {
+		common.SysLog(fmt.Sprintf("model probe completed for channel #%d", channel.Id))
 	}
 	resultStatus := result.StatusCode
 	if resultStatus == 0 {
@@ -1019,7 +1024,11 @@ func ProbeModelOfficiality(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	result := testChannelWithOptions(c.Request.Context(), channel, testUserID, request.TargetModelID, string(constant.EndpointTypeOpenAI), false, channelTestOptions{recordConsumeLog: true, modelProbe: true})
+	result := testChannelWithOptions(c.Request.Context(), channel, testUserID, request.TargetModelID, string(constant.EndpointTypeOpenAI), false, channelTestOptions{
+		recordConsumeLog:  true,
+		allowMissingUsage: true,
+		modelProbe:        true,
+	})
 	probeResult := &model.ModelProbeResult{
 		ChannelId:      channel.Id,
 		ChannelName:    channel.Name,
