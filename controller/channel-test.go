@@ -484,7 +484,12 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 		if httpResp.StatusCode != http.StatusOK {
 			statusCode := httpResp.StatusCode
 			contentType := httpResp.Header.Get("Content-Type")
-			err := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
+			upstreamErr := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
+			var returnErr error = upstreamErr
+			if options.modelProbe {
+				// Probe failures must not expose or persist upstream response bodies.
+				returnErr = errors.New("active probe upstream request failed")
+			}
 			common.SysError(fmt.Sprintf(
 				"channel test bad response: channel_id=%d name=%s type=%d model=%s endpoint_type=%s status=%d err=%v",
 				channel.Id,
@@ -493,12 +498,12 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 				testModel,
 				endpointType,
 				statusCode,
-				err,
+				returnErr,
 			))
 			return testResult{
 				context:     c,
-				localErr:    err,
-				newAPIError: types.NewOpenAIError(err, types.ErrorCodeBadResponse, statusCode),
+				localErr:    returnErr,
+				newAPIError: types.NewOpenAIError(returnErr, types.ErrorCodeBadResponse, statusCode),
 				httpStatus:  statusCode,
 				contentType: contentType,
 				protocol:    relayFormat,
@@ -1025,9 +1030,20 @@ func ProbeModelOfficiality(c *gin.Context) {
 		ActualTokens:   result.actualInputTokens,
 	}
 	if result.localErr != nil {
-		probeResult.Error = result.localErr.Error()
+		// Upstream errors can embed response payloads. Persist only a bounded,
+		// body-free category; the detailed error is returned to the administrator
+		// for this request but never stored in probe history or notifications.
+		probeResult.Error = "active probe request failed"
 	}
-	service.LogModelProbeStoreError(service.StoreAndNotifyModelProbe(probeResult))
+	if storeErr := service.StoreAndNotifyModelProbe(probeResult); storeErr != nil {
+		service.LogModelProbeStoreError(storeErr)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "model probe completed but its result could not be persisted",
+		})
+		return
+	}
+
 	if result.localErr != nil {
 		response := gin.H{"success": false, "message": result.localErr.Error(), "data": probeResult}
 		if result.newAPIError != nil {

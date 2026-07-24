@@ -50,6 +50,27 @@ func TestEvaluateActiveModelProbeFailureWins(t *testing.T) {
 	assert.Equal(t, ProbeConclusionFailed, result.Conclusion)
 }
 
+func TestStoreAndNotifyModelProbeDoesNotNotifyWhenPersistenceFails(t *testing.T) {
+	originalDB := model.DB
+	originalNotifier := modelProbeNotifier
+	model.DB = nil
+	notifications := 0
+	modelProbeNotifier = func(_ string, _ string, _ string) { notifications++ }
+	t.Cleanup(func() {
+		model.DB = originalDB
+		modelProbeNotifier = originalNotifier
+	})
+
+	err := StoreAndNotifyModelProbe(&model.ModelProbeResult{
+		ChannelId:     7,
+		DeclaredModel: "gpt-4o",
+		ActualModel:   "gpt-4o-mini",
+	})
+
+	require.ErrorContains(t, err, "database is not initialized")
+	assert.Zero(t, notifications, "a result that was not persisted must not notify")
+}
+
 func TestStoreAndNotifyModelProbePersistsBeforeNotificationAndDeduplicates(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

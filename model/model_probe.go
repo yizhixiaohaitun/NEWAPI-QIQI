@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // ModelProbeResult persists only fixed-probe metadata. Probe request and response
 // bodies are deliberately excluded from this schema.
@@ -25,8 +28,11 @@ type ModelProbeResult struct {
 func (ModelProbeResult) TableName() string { return "model_probe_results" }
 
 func CreateModelProbeResult(result *ModelProbeResult) error {
-	if result == nil || DB == nil {
-		return nil
+	if result == nil {
+		return errors.New("model probe result is nil")
+	}
+	if DB == nil {
+		return errors.New("model probe database is not initialized")
 	}
 	if result.CreatedAt == 0 {
 		result.CreatedAt = time.Now().Unix()
