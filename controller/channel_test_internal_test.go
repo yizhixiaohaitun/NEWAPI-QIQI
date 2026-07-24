@@ -73,6 +73,40 @@ func TestBuildTestLogOtherInjectsTieredInfo(t *testing.T) {
 	require.NotEmpty(t, other["expr_b64"])
 }
 
+func TestExtractTestResponseModelID(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "chat completion", body: `{"model":"gpt-4o-2024-08-06"}`, want: "gpt-4o-2024-08-06"},
+		{name: "responses envelope", body: `{"response":{"model":"gpt-5-2025-08-07"}}`, want: "gpt-5-2025-08-07"},
+		{name: "stream event", body: "data: {\"response\":{\"model\":\"gpt-5-mini\"}}\n\ndata: [DONE]\n", want: "gpt-5-mini"},
+		{name: "missing model", body: `{"usage":{"prompt_tokens":8}}`, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, extractTestResponseModelID([]byte(tt.body)))
+		})
+	}
+}
+
+func TestExtractRawProbeSignals(t *testing.T) {
+	modelID, tokens := extractRawProbeSignals([]byte(`{"model":"gpt-4o","usage":{"prompt_tokens":8}}`))
+	require.Equal(t, "gpt-4o", modelID)
+	require.NotNil(t, tokens)
+	require.Equal(t, 8, *tokens)
+
+	streamModel, streamTokens := extractRawProbeSignals([]byte("data: {\"model\":\"gpt-4o\"}\n\ndata: {\"usage\":{\"input_tokens\":9}}\n\ndata: [DONE]\n"))
+	require.Equal(t, "gpt-4o", streamModel)
+	require.NotNil(t, streamTokens)
+	require.Equal(t, 9, *streamTokens)
+
+	_, missing := extractRawProbeSignals([]byte(`{"model":"gpt-4o"}`))
+	require.Nil(t, missing)
+}
+
 func TestResolveChannelTestUserIDUsesRequestUser(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

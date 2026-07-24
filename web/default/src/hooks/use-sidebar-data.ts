@@ -26,6 +26,7 @@ import {
   LayoutDashboard,
   ListTodo,
   MessageSquare,
+  ScanSearch,
   Radio,
   ServerCog,
   Settings,
@@ -130,6 +131,11 @@ export function useSidebarData(): SidebarData {
             title: t('Channels'),
             url: '/channels',
             icon: Radio,
+          },
+          {
+            title: t('Model Probe'),
+            url: '/model-probe',
+            icon: ScanSearch,
           },
           {
             title: t('Models'),

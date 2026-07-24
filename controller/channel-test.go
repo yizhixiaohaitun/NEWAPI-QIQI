@@ -36,17 +36,25 @@ import (
 )
 
 type testResult struct {
-	context      *gin.Context
-	localErr     error
-	newAPIError  *types.NewAPIError
-	responseBody []byte
-	httpStatus   int
-	contentType  string
-	protocol     types.RelayFormat
-	mappedModel  string
-	usage        *dto.Usage
-	usagePresent bool
-	latencyMS    int64
+	context             *gin.Context
+	localErr            error
+	newAPIError         *types.NewAPIError
+	responseBody        []byte
+	httpStatus          int
+	contentType         string
+	protocol            types.RelayFormat
+	mappedModel         string
+	usage               *dto.Usage
+	usagePresent        bool
+	latencyMS           int64
+	responseModelID     string
+	actualInputTokens   *int
+	expectedInputTokens *int
+}
+
+type modelOfficialityProbeRequest struct {
+	TargetModelID   string `json:"target_model_id"`
+	OfficialModelID string `json:"official_model_id"`
 }
 
 type channelTestOptions struct {
@@ -56,6 +64,7 @@ type channelTestOptions struct {
 	purityDetectionRequest bool
 	purityPairID           string
 	purityObserver         func(relaycommon.PurityObservation)
+	modelProbe             bool
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
@@ -314,6 +323,13 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 		}
 	}
 
+	var expectedInputTokens *int
+	if options.modelProbe && apiType == constant.APITypeOpenAI && info.RelayFormat == types.RelayFormatOpenAI && len(info.ParamOverride) == 0 {
+		if tokens, tokenErr := service.EstimateRequestToken(c, request.GetTokenCountMeta(), info); tokenErr == nil && tokens > 0 {
+			expectedInputTokens = &tokens
+		}
+	}
+
 	var priceData types.PriceData
 	if options.recordConsumeLog {
 		common.SysLog(fmt.Sprintf("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
@@ -462,6 +478,7 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 		}
 	}
 	var httpResp *http.Response
+	var rawUpstreamBody []byte
 	if resp != nil {
 		httpResp = resp.(*http.Response)
 		if httpResp.StatusCode != http.StatusOK {
@@ -487,6 +504,13 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 				protocol:    relayFormat,
 				mappedModel: testModel,
 			}
+		}
+		if options.modelProbe {
+			rawUpstreamBody, err = io.ReadAll(io.LimitReader(httpResp.Body, 2<<20))
+			if err != nil {
+				return testResult{context: c, localErr: err, newAPIError: types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)}
+			}
+			httpResp.Body = io.NopCloser(bytes.NewReader(rawUpstreamBody))
 		}
 	}
 	usageA, respErr := adaptor.DoResponse(c, httpResp, info)
@@ -538,6 +562,11 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 		}
 	}
 	info.SetEstimatePromptTokens(usage.PromptTokens)
+	var responseModelID string
+	var actualInputTokens *int
+	if options.modelProbe {
+		responseModelID, actualInputTokens = extractRawProbeSignals(rawUpstreamBody)
+	}
 
 	tok := time.Now()
 	milliseconds := tok.Sub(tik).Milliseconds()
@@ -569,18 +598,79 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 		capturedBody = append([]byte(nil), respBody...)
 	}
 	return testResult{
-		context:      c,
-		localErr:     nil,
-		newAPIError:  nil,
-		responseBody: capturedBody,
-		httpStatus:   resultStatus,
-		contentType:  result.Header.Get("Content-Type"),
-		protocol:     relayFormat,
-		mappedModel:  testModel,
-		usage:        usage,
-		usagePresent: usagePresent,
-		latencyMS:    milliseconds,
+		context:             c,
+		localErr:            nil,
+		newAPIError:         nil,
+		responseBody:        capturedBody,
+		httpStatus:          resultStatus,
+		contentType:         result.Header.Get("Content-Type"),
+		protocol:            relayFormat,
+		mappedModel:         testModel,
+		usage:               usage,
+		usagePresent:        usagePresent,
+		latencyMS:           milliseconds,
+		responseModelID:     responseModelID,
+		actualInputTokens:   actualInputTokens,
+		expectedInputTokens: expectedInputTokens,
 	}
+}
+
+func extractTestResponseModelID(respBody []byte) string {
+	body := bytes.TrimSpace(respBody)
+	if len(body) == 0 {
+		return ""
+	}
+	if value := strings.TrimSpace(gjson.GetBytes(body, "model").String()); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(gjson.GetBytes(body, "response.model").String()); value != "" {
+		return value
+	}
+	for _, line := range bytes.Split(body, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+			continue
+		}
+		if value := strings.TrimSpace(gjson.GetBytes(payload, "model").String()); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(gjson.GetBytes(payload, "response.model").String()); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func extractRawProbeSignals(body []byte) (string, *int) {
+	modelID := extractTestResponseModelID(body)
+	for _, path := range []string{"usage.prompt_tokens", "usage.input_tokens", "usageMetadata.promptTokenCount", "response.usage.prompt_tokens", "response.usage.input_tokens"} {
+		if value := gjson.GetBytes(body, path); value.Exists() {
+			tokens := int(value.Int())
+			return modelID, &tokens
+		}
+	}
+	for _, line := range bytes.Split(body, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+			continue
+		}
+		streamModel, tokens := extractRawProbeSignals(payload)
+		if modelID == "" {
+			modelID = streamModel
+		}
+		if tokens != nil {
+			return modelID, tokens
+		}
+	}
+	return modelID, nil
 }
 
 func attachTestBillingRequestInput(info *relaycommon.RelayInfo, request dto.Request) error {
@@ -888,6 +978,57 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 	}
 
 	return testRequest
+}
+
+func ProbeModelOfficiality(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var request modelOfficialityProbeRequest
+	if err = common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	request.TargetModelID = strings.TrimSpace(request.TargetModelID)
+	request.OfficialModelID = strings.TrimSpace(request.OfficialModelID)
+	if request.TargetModelID == "" || request.OfficialModelID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "target_model_id and official_model_id are required"})
+		return
+	}
+	channel, err := model.CacheGetChannel(channelID)
+	if err != nil {
+		channel, err = model.GetChannelById(channelID, true)
+	}
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !lo.Contains(channel.GetModels(), request.TargetModelID) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "target_model_id is not enabled on this channel"})
+		return
+	}
+	testUserID, err := resolveChannelTestUserID(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result := testChannelWithOptions(c.Request.Context(), channel, testUserID, request.TargetModelID, string(constant.EndpointTypeOpenAI), false, channelTestOptions{recordConsumeLog: true, modelProbe: true})
+	probeResult := &model.ModelProbeResult{ChannelId: channel.Id, ChannelName: channel.Name, DeclaredModel: request.OfficialModelID, ActualModel: result.responseModelID, ExpectedTokens: result.expectedInputTokens, ActualTokens: result.actualInputTokens}
+	if result.localErr != nil {
+		probeResult.Error = result.localErr.Error()
+	}
+	service.LogModelProbeStoreError(service.StoreAndNotifyModelProbe(probeResult))
+	if result.localErr != nil {
+		response := gin.H{"success": false, "message": result.localErr.Error(), "data": probeResult}
+		if result.newAPIError != nil {
+			response["error_code"] = result.newAPIError.GetErrorCode()
+		}
+		c.JSON(http.StatusOK, response)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": probeResult})
 }
 
 func TestChannel(c *gin.Context) {
