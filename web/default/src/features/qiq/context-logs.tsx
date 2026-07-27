@@ -13,7 +13,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Textarea } from '@/components/ui/textarea'
 
 import {
   deleteLogs,
@@ -39,6 +38,21 @@ function copy(text: string) {
   void navigator.clipboard.writeText(text)
   toast.success('已复制')
 }
+
+function formatDetailText(value: string) {
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
+    return value
+  }
+}
+
+const detailSections = [
+  { key: 'request_headers', label: '请求 Headers', kind: 'headers' },
+  { key: 'response_headers', label: '响应 Headers', kind: 'headers' },
+  { key: 'request_body', label: '请求正文', kind: 'body' },
+  { key: 'response_body', label: '响应正文', kind: 'body' },
+] as const
 export function ContextLogs() {
   const qc = useQueryClient()
   const [filters, setFilters] = useState<Record<string, string | number>>({
@@ -351,56 +365,95 @@ export function ContextLogs() {
         open={detailId !== null}
         onOpenChange={(open) => !open && setDetailId(null)}
       >
-        <DialogContent className='max-h-[90vh] max-w-5xl overflow-auto'>
-          <DialogHeader>
-            <DialogTitle>请求详情 {selected?.request_id}</DialogTitle>
+        <DialogContent className='flex h-[min(90vh,56rem)] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] flex-col overflow-hidden p-3 sm:w-[96vw] sm:max-w-6xl sm:p-5'>
+          <DialogHeader className='min-w-0 shrink-0 pr-10'>
+            <DialogTitle className='truncate'>请求详情</DialogTitle>
           </DialogHeader>
+          {detail.isPending && (
+            <div className='text-muted-foreground flex min-h-32 items-center justify-center'>
+              正在读取详情…
+            </div>
+          )}
+          {detail.isError && (
+            <div className='bg-destructive/10 text-destructive rounded-lg p-3'>
+              读取详情失败，请稍后重试。
+            </div>
+          )}
           {selected && (
-            <div className='space-y-3'>
-              <p>
-                模型：{selected.model_name} · 渠道：
-                {selected.channel_name || selected.channel_id} · 状态：
-                {selected.status_code} · 规则：
-                {selected.rule_name || selected.decision_source}
-              </p>
-              {selected.error && (
-                <pre className='bg-destructive/10 rounded p-2 whitespace-pre-wrap'>
-                  {selected.error}
-                </pre>
-              )}
-              {(
-                [
-                  'request_headers',
-                  'request_body',
-                  'response_headers',
-                  'response_body',
-                ] as const
-              ).map((key) => (
-                <div key={key}>
-                  <div className='flex justify-between'>
-                    <Label>
-                      {key}
-                      {((key === 'request_body' &&
-                        selected.request_body_truncated) ||
-                        (key === 'response_body' &&
-                          selected.response_body_truncated)) &&
-                        '（已截断）'}
-                    </Label>
-                    <Button
-                      size='sm'
-                      variant='ghost'
-                      onClick={() => copy(String(selected[key] ?? ''))}
-                    >
-                      复制
-                    </Button>
-                  </div>
-                  <Textarea
-                    readOnly
-                    className='min-h-32 font-mono'
-                    value={selected[key] ?? ''}
-                  />
+            <div className='min-h-0 flex-1 space-y-4 overflow-y-auto pr-1'>
+              <div className='bg-muted/20 grid min-w-0 gap-2 rounded-lg border p-3 text-sm sm:grid-cols-2 xl:grid-cols-4'>
+                <div className='min-w-0'>
+                  <span className='text-muted-foreground'>请求 ID</span>
+                  <code className='mt-1 block font-mono text-xs break-all'>
+                    {selected.request_id}
+                  </code>
                 </div>
-              ))}
+                <div className='min-w-0'>
+                  <span className='text-muted-foreground'>模型 / 渠道</span>
+                  <span className='mt-1 block break-words'>
+                    {selected.model_name} /{' '}
+                    {selected.channel_name || selected.channel_id}
+                  </span>
+                </div>
+                <div>
+                  <span className='text-muted-foreground'>状态 / 延迟</span>
+                  <span className='mt-1 block'>
+                    {selected.status_code} / {selected.latency_ms}ms
+                  </span>
+                </div>
+                <div className='min-w-0'>
+                  <span className='text-muted-foreground'>命中规则</span>
+                  <span className='mt-1 block break-words'>
+                    {selected.rule_name || selected.decision_source}
+                  </span>
+                </div>
+              </div>
+              {selected.error && (
+                <div className='min-w-0'>
+                  <Label className='mb-2 block'>错误</Label>
+                  <pre className='bg-destructive/10 max-h-48 overflow-auto rounded-lg p-3 font-mono text-xs break-words whitespace-pre-wrap'>
+                    {selected.error}
+                  </pre>
+                </div>
+              )}
+              <div className='grid min-w-0 gap-4 xl:grid-cols-2'>
+                {detailSections.map(({ key, label, kind }) => {
+                  const raw = String(selected[key] ?? '')
+                  const display =
+                    kind === 'headers' ? formatDetailText(raw) : raw
+                  const truncated =
+                    (key === 'request_body' &&
+                      selected.request_body_truncated) ||
+                    (key === 'response_body' &&
+                      selected.response_body_truncated)
+                  return (
+                    <section
+                      key={key}
+                      className='bg-muted/10 min-w-0 overflow-hidden rounded-lg border'
+                    >
+                      <div className='flex min-w-0 items-center justify-between gap-2 border-b px-3 py-2'>
+                        <Label className='min-w-0 truncate'>
+                          {label}
+                          {truncated ? '（已截断）' : ''}
+                        </Label>
+                        <Button
+                          className='shrink-0'
+                          size='sm'
+                          variant='ghost'
+                          onClick={() => copy(display)}
+                        >
+                          复制
+                        </Button>
+                      </div>
+                      <pre
+                        className={`min-h-32 overflow-auto p-3 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap ${kind === 'body' ? 'max-h-[min(42vh,36rem)]' : 'max-h-[min(34vh,28rem)]'}`}
+                      >
+                        {display || '（空）'}
+                      </pre>
+                    </section>
+                  )
+                })}
+              </div>
             </div>
           )}
         </DialogContent>
