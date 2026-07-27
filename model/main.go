@@ -316,6 +316,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := migrateContextRequestLogOnMainDB(); err != nil {
+		return err
+	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
@@ -401,6 +404,9 @@ func migrateDBFast() error {
 			return err
 		}
 	}
+	if err := migrateContextRequestLogOnMainDB(); err != nil {
+		return err
+	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
@@ -412,6 +418,13 @@ func migrateDBFast() error {
 	}
 	common.SysLog("database migrated")
 	return nil
+}
+
+func migrateContextRequestLogOnMainDB() error {
+	if os.Getenv("LOG_SQL_DSN") != "" {
+		return nil
+	}
+	return DB.AutoMigrate(&ContextRequestLog{})
 }
 
 func migrateLOGDB() error {
