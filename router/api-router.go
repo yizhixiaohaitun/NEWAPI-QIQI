@@ -208,6 +208,19 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.GET("/waffo-pancake/subscription-product-options", controller.ListWaffoPancakeSubscriptionProductOptions)
 		}
 
+		contextLogRoute := apiRouter.Group("/qiqi/context-logs")
+		contextLogRoute.Use(middleware.RootAuth())
+		{
+			contextLogRoute.GET("/rules", controller.ListContextLogRules)
+			contextLogRoute.POST("/rules", controller.CreateContextLogRule)
+			contextLogRoute.PUT("/rules/:id", controller.UpdateContextLogRule)
+			contextLogRoute.DELETE("/rules/:id", controller.DeleteContextLogRule)
+			contextLogRoute.GET("/logs", controller.ListContextRequestLogs)
+			contextLogRoute.GET("/logs/:id", controller.GetContextRequestLog)
+			contextLogRoute.DELETE("/logs/:id", controller.DeleteContextRequestLog)
+			contextLogRoute.POST("/logs/batch-delete", controller.DeleteContextRequestLogs)
+		}
+
 		// Custom OAuth provider management (root only)
 		customOAuthRoute := apiRouter.Group("/custom-oauth-provider")
 		customOAuthRoute.Use(middleware.RootAuth())

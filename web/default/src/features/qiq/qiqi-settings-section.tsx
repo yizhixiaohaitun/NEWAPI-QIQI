@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, ShieldCheck } from 'lucide-react'
+import { ArrowRight, FileText, ShieldCheck } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -217,6 +217,29 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
                   render={<Link to='/qiq/channel-purity' />}
                 >
                   {t('Open channel purity')}
+                  <ArrowRight />
+                </Button>
+              </div>
+
+              <div className='bg-muted/30 flex flex-col gap-3 rounded-md border px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4'>
+                <div className='flex items-start gap-3'>
+                  <FileText className='text-primary mt-0.5 size-5 shrink-0' />
+                  <div>
+                    <p className='text-sm font-medium'>{t('Context logs')}</p>
+                    <p className='text-muted-foreground text-sm'>
+                      {t(
+                        'Manage selective capture rules and inspect captured relay context.'
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type='button'
+                  variant='outline'
+                  className='shrink-0'
+                  render={<Link to='/qiq/context-logs' />}
+                >
+                  {t('Manage logs')}
                   <ArrowRight />
                 </Button>
               </div>

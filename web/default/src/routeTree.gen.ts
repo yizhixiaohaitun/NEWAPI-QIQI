@@ -55,6 +55,7 @@ import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authe
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedUsageLogsSectionRouteImport } from './routes/_authenticated/usage-logs/$section'
 import { Route as AuthenticatedQiqChannelPurityRouteImport } from './routes/_authenticated/qiq/channel-purity'
+import { Route as AuthenticatedQiqContextLogsRouteImport } from './routes/_authenticated/qiq/context-logs'
 import { Route as AuthenticatedModelsSectionRouteImport } from './routes/_authenticated/models/$section'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
@@ -319,6 +320,12 @@ const AuthenticatedQiqChannelPurityRoute =
     path: '/qiq/channel-purity',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedQiqContextLogsRoute =
+  AuthenticatedQiqContextLogsRouteImport.update({
+    id: '/qiq/context-logs',
+    path: '/qiq/context-logs',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedModelsSectionRoute =
   AuthenticatedModelsSectionRouteImport.update({
     id: '/models/$section',
@@ -464,6 +471,7 @@ export interface FileRoutesByFullPath {
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/qiq/channel-purity': typeof AuthenticatedQiqChannelPurityRoute
+  '/qiq/context-logs': typeof AuthenticatedQiqContextLogsRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
@@ -528,6 +536,7 @@ export interface FileRoutesByTo {
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/qiq/channel-purity': typeof AuthenticatedQiqChannelPurityRoute
+  '/qiq/context-logs': typeof AuthenticatedQiqContextLogsRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
@@ -596,6 +605,7 @@ export interface FileRoutesById {
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/qiq/channel-purity': typeof AuthenticatedQiqChannelPurityRoute
+  '/_authenticated/qiq/context-logs': typeof AuthenticatedQiqContextLogsRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
@@ -663,6 +673,7 @@ export interface FileRouteTypes {
     | '/errors/$error'
     | '/models/$section'
     | '/qiq/channel-purity'
+    | '/qiq/context-logs'
     | '/usage-logs/$section'
     | '/channels/'
     | '/dashboard/'
@@ -727,6 +738,7 @@ export interface FileRouteTypes {
     | '/errors/$error'
     | '/models/$section'
     | '/qiq/channel-purity'
+    | '/qiq/context-logs'
     | '/usage-logs/$section'
     | '/channels'
     | '/dashboard'
@@ -794,6 +806,7 @@ export interface FileRouteTypes {
     | '/_authenticated/errors/$error'
     | '/_authenticated/models/$section'
     | '/_authenticated/qiq/channel-purity'
+    | '/_authenticated/qiq/context-logs'
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
@@ -1174,6 +1187,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedQiqChannelPurityRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/qiq/context-logs': {
+      id: '/_authenticated/qiq/context-logs'
+      path: '/qiq/context-logs'
+      fullPath: '/qiq/context-logs'
+      preLoaderRoute: typeof AuthenticatedQiqContextLogsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/models/$section': {
       id: '/_authenticated/models/$section'
       path: '/models/$section'
@@ -1401,6 +1421,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedQiqChannelPurityRoute: typeof AuthenticatedQiqChannelPurityRoute
+  AuthenticatedQiqContextLogsRoute: typeof AuthenticatedQiqContextLogsRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
@@ -1428,6 +1449,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedQiqChannelPurityRoute: AuthenticatedQiqChannelPurityRoute,
+  AuthenticatedQiqContextLogsRoute: AuthenticatedQiqContextLogsRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,

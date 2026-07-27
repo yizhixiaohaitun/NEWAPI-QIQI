@@ -41,6 +41,36 @@ func TestCloneSanitizedAuditHeadersRedactsSecrets(t *testing.T) {
 	assert.Equal(t, []string{"new-api-test"}, cloned["User-Agent"])
 }
 
+func TestAuditResponseCaptureTruncates(t *testing.T) {
+	w := &contextRequestAuditResponseWriter{}
+	payload := make([]byte, contextAuditBodyLimit+100)
+	w.capture(payload)
+	assert.Equal(t, contextAuditBodyLimit, int64(w.body.Len()))
+	assert.Equal(t, int64(len(payload)), w.total)
+}
+
+func TestRedactAuditJSONPreservesContent(t *testing.T) {
+	input := []byte(`{"api_key":"secret","nested":{"authorization":"Bearer x"},"messages":[{"content":"keep me"}]}`)
+	got := string(redactAuditJSON(input, "application/json", false))
+	assert.NotContains(t, got, "secret")
+	assert.NotContains(t, got, "Bearer x")
+	assert.Contains(t, got, "keep me")
+}
+
+func TestRedactAuditJSONHandlesMalformedSensitiveFields(t *testing.T) {
+	input := []byte(`{"api-key":"secret","messages":[{"content":"keep me"}]`)
+	got := string(redactAuditJSON(input, "application/json", false))
+	assert.NotContains(t, got, "secret")
+	assert.Contains(t, got, "keep me")
+}
+
+func TestRedactAuditJSONOmitsUnsafeTruncatedJSON(t *testing.T) {
+	input := []byte(`{"messages":[{"content":"keep me"}],"api_key":"partial`)
+	got := string(redactAuditJSON(input, "application/json", true))
+	assert.Equal(t, auditUnsafeTruncatedJSON, got)
+	assert.NotContains(t, got, "partial")
+}
+
 func TestSanitizeAuditRequestURIRedactsSensitiveQueryValues(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

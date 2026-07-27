@@ -278,7 +278,7 @@ func migrateDB() error {
 		&Redemption{},
 		&Ability{},
 		&Log{},
-		&ContextRequestLog{},
+		&ContextRequestLogRule{},
 		&ModelProbeResult{},
 		&Midjourney{},
 		&TopUp{},
@@ -345,7 +345,7 @@ func migrateDBFast() error {
 		{&Redemption{}, "Redemption"},
 		{&Ability{}, "Ability"},
 		{&Log{}, "Log"},
-		{&ContextRequestLog{}, "ContextRequestLog"},
+		{&ContextRequestLogRule{}, "ContextRequestLogRule"},
 		{&ModelProbeResult{}, "ModelProbeResult"},
 		{&Midjourney{}, "Midjourney"},
 		{&TopUp{}, "TopUp"},
@@ -427,6 +427,9 @@ func migrateClickHouseLogDB() error {
 		return err
 	}
 	if err := LOG_DB.Exec(clickHouseContextRequestLogCreateTableSQL(ttlDays)).Error; err != nil {
+		return err
+	}
+	if err := migrateClickHouseContextRequestLogColumns(); err != nil {
 		return err
 	}
 	if err := syncClickHouseLogTTL(ttlDays); err != nil {
@@ -515,18 +518,36 @@ CREATE TABLE IF NOT EXISTS qiqi_context_request_logs (
 	channel_name String DEFAULT '',
 	channel_type Int32 DEFAULT 0,
 	node_name String DEFAULT '',
+	rule_id Int32 DEFAULT 0,
+	rule_name String DEFAULT '',
+	decision_source String DEFAULT '',
 	request_headers String DEFAULT '',
 	response_headers String DEFAULT '',
 	request_body String DEFAULT '',
 	request_body_encoding String DEFAULT '',
 	request_body_size Int64 DEFAULT 0,
+	request_body_truncated UInt8 DEFAULT 0,
 	response_body String DEFAULT '',
 	response_body_encoding String DEFAULT '',
-	response_body_size Int64 DEFAULT 0
+	response_body_size Int64 DEFAULT 0,
+	response_body_truncated UInt8 DEFAULT 0
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(toDateTime(created_at))
 ORDER BY (created_at, request_id)%s`, clickHouseLogTTLClause(ttlDays))
+}
+
+func migrateClickHouseContextRequestLogColumns() error {
+	columns := []string{
+		"rule_id Int32 DEFAULT 0", "rule_name String DEFAULT ''", "decision_source String DEFAULT ''",
+		"request_body_truncated UInt8 DEFAULT 0", "response_body_truncated UInt8 DEFAULT 0",
+	}
+	for _, column := range columns {
+		if err := LOG_DB.Exec("ALTER TABLE qiqi_context_request_logs ADD COLUMN IF NOT EXISTS " + column).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func syncClickHouseContextRequestLogTTL(ttlDays int) error {
