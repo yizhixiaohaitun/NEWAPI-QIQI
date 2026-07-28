@@ -573,10 +573,17 @@ func SyncClickHouseContextRequestLogTTL(ttlDays int) error {
 	return syncClickHouseTableTTL("qiqi_context_request_logs", ttlDays)
 }
 
-func syncClickHouseTableTTL(tableName string, ttlDays int) error {
+func clickHouseModifyTTLStatement(tableName string, ttlDays int) string {
 	expression := clickHouseLogTTLExpression(ttlDays)
-	if expression != "" {
-		return LOG_DB.Exec(fmt.Sprintf("ALTER TABLE %s MODIFY TTL %s", tableName, expression)).Error
+	if expression == "" {
+		return ""
+	}
+	return fmt.Sprintf("ALTER TABLE %s MODIFY TTL %s", tableName, expression)
+}
+
+func syncClickHouseTableTTL(tableName string, ttlDays int) error {
+	if statement := clickHouseModifyTTLStatement(tableName, ttlDays); statement != "" {
+		return LOG_DB.Exec(statement).Error
 	}
 
 	hasTTL, err := clickHouseTableHasTTL(tableName)

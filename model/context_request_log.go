@@ -180,12 +180,22 @@ func DeleteContextRequestLogsBeforeBatch(ctx context.Context, cutoff int64, limi
 		return 0, errors.New("ClickHouse context log retention must be applied with TTL")
 	}
 
-	// The subquery is portable across SQLite, MySQL, and PostgreSQL and keeps
-	// each delete transaction bounded. The threshold is strict so rows exactly
-	// at the retention boundary are retained.
-	ids := LOG_DB.WithContext(ctx).Model(&ContextRequestLog{}).
-		Select("id").Where("created_at < ?", cutoff).Order("created_at asc, id asc").Limit(limit)
-	result := LOG_DB.WithContext(ctx).Where("id IN (?)", ids).Delete(&ContextRequestLog{})
+	// Select IDs first instead of deleting through a self-referencing subquery:
+	// MySQL rejects some DELETE ... IN (SELECT ... FROM same_table) forms. The
+	// bounded ID list is portable across SQLite, MySQL, and PostgreSQL. The
+	// threshold is strict so rows exactly at the retention boundary are kept.
+	var ids []int
+	if err := LOG_DB.WithContext(ctx).Model(&ContextRequestLog{}).
+		Where("created_at < ?", cutoff).
+		Order("created_at asc, id asc").
+		Limit(limit).
+		Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := LOG_DB.WithContext(ctx).Where("id IN ?", ids).Delete(&ContextRequestLog{})
 	return result.RowsAffected, result.Error
 }
 

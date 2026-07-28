@@ -77,6 +77,14 @@ func TestClickHouseLogTTLClause(t *testing.T) {
 	assert.Equal(t, "\nTTL toDateTime(created_at) + INTERVAL 7 DAY DELETE", clickHouseLogTTLClause(7))
 }
 
+func TestClickHouseContextRequestLogTTLSQL(t *testing.T) {
+	assert.Equal(t,
+		"ALTER TABLE qiqi_context_request_logs MODIFY TTL toDateTime(created_at) + INTERVAL 30 DAY DELETE",
+		clickHouseModifyTTLStatement("qiqi_context_request_logs", 30),
+	)
+	assert.Equal(t, "", clickHouseModifyTTLStatement("qiqi_context_request_logs", 0))
+}
+
 func TestClickHouseLogCreateTableSQL(t *testing.T) {
 	withoutTTL := clickHouseLogCreateTableSQL(0)
 	assert.Contains(t, withoutTTL, "CREATE TABLE IF NOT EXISTS logs")
