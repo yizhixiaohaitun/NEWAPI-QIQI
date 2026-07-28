@@ -13,6 +13,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { getSystemOptions } from '@/features/system-settings/api'
+import { useUpdateOption } from '@/features/system-settings/hooks/use-update-option'
 
 import {
   deleteLogs,
@@ -61,6 +63,19 @@ export function ContextLogs() {
   })
   const [editing, setEditing] = useState<Partial<ContextLogRule> | null>(null)
   const [detailId, setDetailId] = useState<number | null>(null)
+  const [retentionDays, setRetentionDays] = useState<number | null>(null)
+  const updateOption = useUpdateOption()
+  const options = useQuery({
+    queryKey: ['system-options'],
+    queryFn: getSystemOptions,
+  })
+  const configuredRetentionDays = Number(
+    options.data?.data?.find(
+      (option) =>
+        option.key === 'qiqi_setting.context_request_log_retention_days'
+    )?.value ?? 0
+  )
+  const displayedRetentionDays = retentionDays ?? configuredRetentionDays
   const rules = useQuery({ queryKey: ['context-log-rules'], queryFn: getRules })
   const logs = useQuery({
     queryKey: ['context-logs', filters],
@@ -93,6 +108,46 @@ export function ContextLogs() {
         <p className='text-muted-foreground text-sm'>
           仅 Root 可访问。正文按每侧 2 MiB 上限捕获，截断项会明确标记。
         </p>
+      </div>
+      <div className='rounded-lg border p-4'>
+        <div className='flex flex-col gap-3 md:flex-row md:items-end md:justify-between'>
+          <div className='space-y-1'>
+            <Label htmlFor='context-log-retention'>自动清理保留天数</Label>
+            <p className='text-muted-foreground text-sm'>
+              0 表示永久保留；N 表示自动删除 N
+              天前的上下文日志。仅影响上下文日志，不影响普通系统日志。 SQL
+              日志库每日分批清理；ClickHouse 使用该设置动态维护本表 TTL。
+            </p>
+          </div>
+          <div className='flex items-center gap-2'>
+            <Input
+              id='context-log-retention'
+              className='w-32'
+              type='number'
+              min={0}
+              max={3650}
+              value={displayedRetentionDays}
+              onChange={(e) => setRetentionDays(Number(e.target.value))}
+            />
+            <Button
+              disabled={
+                updateOption.isPending ||
+                !Number.isInteger(displayedRetentionDays) ||
+                displayedRetentionDays < 0 ||
+                displayedRetentionDays > 3650
+              }
+              onClick={async () => {
+                await updateOption.mutateAsync({
+                  key: 'qiqi_setting.context_request_log_retention_days',
+                  value: String(displayedRetentionDays),
+                })
+                setRetentionDays(null)
+              }}
+            >
+              保存保留策略
+            </Button>
+          </div>
+        </div>
       </div>
       <Tabs defaultValue='logs'>
         <TabsList>

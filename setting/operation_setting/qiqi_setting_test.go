@@ -29,6 +29,23 @@ func TestResponsesStreamErrorRetryTimesValidationAndBounds(t *testing.T) {
 	assert.Equal(t, MaxResponsesStreamErrorRetryTimes, GetResponsesStreamErrorRetryTimes())
 }
 
+func TestContextRequestLogRetentionDaysValidationAndFallback(t *testing.T) {
+	require.NoError(t, ValidateContextRequestLogRetentionDays("0"))
+	require.NoError(t, ValidateContextRequestLogRetentionDays("30"))
+	require.NoError(t, ValidateContextRequestLogRetentionDays("3650"))
+	require.Error(t, ValidateContextRequestLogRetentionDays("-1"))
+	require.Error(t, ValidateContextRequestLogRetentionDays("3651"))
+	require.Error(t, ValidateContextRequestLogRetentionDays("forever"))
+
+	setting := GetQiqiSetting()
+	original := *setting
+	t.Cleanup(func() { *setting = original })
+	setting.ContextRequestLogRetentionDays = -1
+	assert.Zero(t, GetContextRequestLogRetentionDays())
+	setting.ContextRequestLogRetentionDays = MaxContextRequestLogRetentionDays + 1
+	assert.Zero(t, GetContextRequestLogRetentionDays())
+}
+
 func TestChannelPurityInspectionIntervalValidationAndFallback(t *testing.T) {
 	require.NoError(t, ValidateChannelPurityInspectionIntervalMinutes("5"))
 	require.NoError(t, ValidateChannelPurityInspectionIntervalMinutes("8"))

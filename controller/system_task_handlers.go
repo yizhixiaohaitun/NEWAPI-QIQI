@@ -24,6 +24,96 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
 	service.RegisterSystemTaskHandler(channelPurityInspectionHandler{})
 	service.RegisterSystemTaskHandler(channelPurityGroupDetectionHandler{})
+	service.RegisterSystemTaskHandler(contextRequestLogCleanupHandler{})
+}
+
+const (
+	contextRequestLogCleanupInterval  = 24 * time.Hour
+	contextRequestLogCleanupBatchSize = 500
+)
+
+type contextRequestLogCleanupHandler struct{}
+
+type contextRequestLogCleanupPayload struct {
+	RetentionDays int   `json:"retention_days"`
+	Cutoff        int64 `json:"cutoff"`
+	BatchSize     int   `json:"batch_size"`
+}
+
+type contextRequestLogCleanupResult struct {
+	DeletedCount  int64 `json:"deleted_count"`
+	RetentionDays int   `json:"retention_days"`
+	Cutoff        int64 `json:"cutoff"`
+}
+
+func (contextRequestLogCleanupHandler) Type() string {
+	return model.SystemTaskTypeContextLogCleanup
+}
+func (contextRequestLogCleanupHandler) Enabled() bool {
+	return operation_setting.GetContextRequestLogRetentionDays() > 0
+}
+func (contextRequestLogCleanupHandler) Interval() time.Duration {
+	return contextRequestLogCleanupInterval
+}
+func (contextRequestLogCleanupHandler) NewPayload() any {
+	days := operation_setting.GetContextRequestLogRetentionDays()
+	return contextRequestLogCleanupPayload{
+		RetentionDays: days,
+		Cutoff:        common.GetTimestamp() - int64(days)*86400,
+		BatchSize:     contextRequestLogCleanupBatchSize,
+	}
+}
+func (contextRequestLogCleanupHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	payload := contextRequestLogCleanupPayload{}
+	if err := task.DecodePayload(&payload); err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	if payload.RetentionDays <= 0 || payload.Cutoff <= 0 {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, fmt.Errorf("invalid context log cleanup payload"))
+		return
+	}
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		err := model.SyncClickHouseContextRequestLogTTL(payload.RetentionDays)
+		finishSystemTaskHandler(task, runnerID, statusForSystemTaskError(err), contextRequestLogCleanupResult{RetentionDays: payload.RetentionDays, Cutoff: payload.Cutoff}, err)
+		return
+	}
+	if payload.BatchSize <= 0 {
+		payload.BatchSize = contextRequestLogCleanupBatchSize
+	}
+	var deleted int64
+	for {
+		if err := ctx.Err(); err != nil {
+			finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+			return
+		}
+		count, err := model.CountContextRequestLogsBefore(ctx, payload.Cutoff)
+		if err != nil {
+			finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+			return
+		}
+		if count == 0 {
+			break
+		}
+		rows, err := model.DeleteContextRequestLogsBeforeBatch(ctx, payload.Cutoff, payload.BatchSize)
+		if err != nil {
+			finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+			return
+		}
+		if rows == 0 {
+			finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, fmt.Errorf("context log cleanup made no progress with %d rows remaining", count))
+			return
+		}
+		deleted += rows
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, contextRequestLogCleanupResult{DeletedCount: deleted, RetentionDays: payload.RetentionDays, Cutoff: payload.Cutoff}, nil)
+}
+
+func statusForSystemTaskError(err error) model.SystemTaskStatus {
+	if err != nil {
+		return model.SystemTaskStatusFailed
+	}
+	return model.SystemTaskStatusSucceeded
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and

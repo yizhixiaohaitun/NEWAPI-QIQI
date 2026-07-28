@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"time"
@@ -157,6 +158,35 @@ func GetContextRequestLog(id int) (*ContextRequestLog, error) {
 		err = LOG_DB.First(&item, id).Error
 	}
 	return &item, err
+}
+
+func CountContextRequestLogsBefore(ctx context.Context, cutoff int64) (int64, error) {
+	if LOG_DB == nil {
+		return 0, errors.New("log database is not initialized")
+	}
+	var count int64
+	err := LOG_DB.WithContext(ctx).Model(&ContextRequestLog{}).Where("created_at < ?", cutoff).Count(&count).Error
+	return count, err
+}
+
+func DeleteContextRequestLogsBeforeBatch(ctx context.Context, cutoff int64, limit int) (int64, error) {
+	if LOG_DB == nil {
+		return 0, errors.New("log database is not initialized")
+	}
+	if limit <= 0 {
+		return 0, errors.New("batch size must be positive")
+	}
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		return 0, errors.New("ClickHouse context log retention must be applied with TTL")
+	}
+
+	// The subquery is portable across SQLite, MySQL, and PostgreSQL and keeps
+	// each delete transaction bounded. The threshold is strict so rows exactly
+	// at the retention boundary are retained.
+	ids := LOG_DB.WithContext(ctx).Model(&ContextRequestLog{}).
+		Select("id").Where("created_at < ?", cutoff).Order("created_at asc, id asc").Limit(limit)
+	result := LOG_DB.WithContext(ctx).Where("id IN (?)", ids).Delete(&ContextRequestLog{})
+	return result.RowsAffected, result.Error
 }
 
 func DeleteContextRequestLogs(ids []int) (int64, error) {

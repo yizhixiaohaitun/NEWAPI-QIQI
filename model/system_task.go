@@ -17,6 +17,7 @@ const (
 	SystemTaskStatusFailed    SystemTaskStatus = "failed"
 
 	SystemTaskTypeLogCleanup             = "log_cleanup"
+	SystemTaskTypeContextLogCleanup      = "context_request_log_cleanup"
 	SystemTaskTypeChannelTest            = "channel_test"
 	SystemTaskTypeModelUpdate            = "model_update"
 	SystemTaskTypeMidjourneyPoll         = "midjourney_poll"

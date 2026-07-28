@@ -14,10 +14,14 @@ const (
 	DefaultChannelPurityInspectionIntervalMinutes = 5
 	MinChannelPurityInspectionIntervalMinutes     = 5
 	MaxChannelPurityInspectionIntervalMinutes     = 10
+
+	DefaultContextRequestLogRetentionDays = 0
+	MaxContextRequestLogRetentionDays     = 3650
 )
 
 type QiqiSetting struct {
 	ContextRequestLoggingEnabled              bool `json:"context_request_logging_enabled"`
+	ContextRequestLogRetentionDays            int  `json:"context_request_log_retention_days"`
 	ResponsesMissingReasoningItemRetryEnabled bool `json:"responses_missing_reasoning_item_retry_enabled"`
 	AzureResponsesResourceAffinityEnabled     bool `json:"azure_responses_resource_affinity_enabled"`
 	ResponsesStreamErrorRetryEnabled          bool `json:"responses_stream_error_retry_enabled"`
@@ -28,6 +32,7 @@ type QiqiSetting struct {
 
 var qiqiSetting = QiqiSetting{
 	ContextRequestLoggingEnabled:              false,
+	ContextRequestLogRetentionDays:            DefaultContextRequestLogRetentionDays,
 	ResponsesMissingReasoningItemRetryEnabled: true,
 	AzureResponsesResourceAffinityEnabled:     true,
 	ResponsesStreamErrorRetryEnabled:          true,
@@ -46,6 +51,22 @@ func GetQiqiSetting() *QiqiSetting {
 
 func IsContextRequestLoggingEnabled() bool {
 	return qiqiSetting.ContextRequestLoggingEnabled
+}
+
+func GetContextRequestLogRetentionDays() int {
+	days := qiqiSetting.ContextRequestLogRetentionDays
+	if days < 0 || days > MaxContextRequestLogRetentionDays {
+		return DefaultContextRequestLogRetentionDays
+	}
+	return days
+}
+
+func ValidateContextRequestLogRetentionDays(value string) error {
+	days, err := strconv.Atoi(value)
+	if err != nil || days < 0 || days > MaxContextRequestLogRetentionDays {
+		return fmt.Errorf("Context request log retention days must be an integer from 0 to %d", MaxContextRequestLogRetentionDays)
+	}
+	return nil
 }
 
 func IsResponsesMissingReasoningItemRetryEnabled() bool {

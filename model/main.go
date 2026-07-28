@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/clickhouse"
@@ -439,7 +440,9 @@ func migrateClickHouseLogDB() error {
 	if err := LOG_DB.Exec(clickHouseLogCreateTableSQL(ttlDays)).Error; err != nil {
 		return err
 	}
-	if err := LOG_DB.Exec(clickHouseContextRequestLogCreateTableSQL(ttlDays)).Error; err != nil {
+	// Context logs have their own runtime retention setting. Do not inherit the
+	// general LOG_SQL_CLICKHOUSE_TTL_DAYS value, which still applies to logs.
+	if err := LOG_DB.Exec(clickHouseContextRequestLogCreateTableSQL(0)).Error; err != nil {
 		return err
 	}
 	if err := migrateClickHouseContextRequestLogColumns(); err != nil {
@@ -448,7 +451,7 @@ func migrateClickHouseLogDB() error {
 	if err := syncClickHouseLogTTL(ttlDays); err != nil {
 		return err
 	}
-	return syncClickHouseContextRequestLogTTL(ttlDays)
+	return SyncClickHouseContextRequestLogTTL(operation_setting.GetContextRequestLogRetentionDays())
 }
 
 func clickHouseLogTTLDays() int {
@@ -563,7 +566,10 @@ func migrateClickHouseContextRequestLogColumns() error {
 	return nil
 }
 
-func syncClickHouseContextRequestLogTTL(ttlDays int) error {
+func SyncClickHouseContextRequestLogTTL(ttlDays int) error {
+	if !common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		return nil
+	}
 	return syncClickHouseTableTTL("qiqi_context_request_logs", ttlDays)
 }
 

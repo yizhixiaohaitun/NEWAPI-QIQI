@@ -304,6 +304,15 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "qiqi_setting.context_request_log_retention_days":
+		err = operation_setting.ValidateContextRequestLogRetentionDays(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
 	case "qiqi_setting.responses_stream_error_retry_times":
 		err = operation_setting.ValidateResponsesStreamErrorRetryTimes(option.Value.(string))
 		if err != nil {
@@ -363,6 +372,16 @@ func UpdateOption(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if option.Key == "qiqi_setting.context_request_log_retention_days" && common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		// A zero value disables scheduled cleanup, so synchronize here as well to
+		// remove an existing TTL immediately. Non-zero changes also take effect
+		// without waiting for the next daily task.
+		err = model.SyncClickHouseContextRequestLogTTL(operation_setting.GetContextRequestLogRetentionDays())
+		if err != nil {
+			common.ApiError(c, fmt.Errorf("failed to update ClickHouse context log TTL: %w", err))
+			return
+		}
 	}
 	// 出于安全考虑只记录被修改的配置项名称，不记录配置值（可能含密钥等敏感信息）。
 	recordManageAudit(c, "option.update", map[string]interface{}{
