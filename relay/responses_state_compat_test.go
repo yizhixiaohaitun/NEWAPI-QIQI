@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -29,6 +31,14 @@ func TestEncryptedContentVerificationErrorMatchesWithoutRetainingCiphertext(t *t
 	require.Contains(t, userError.Error(), "加密推理内容")
 	require.NotContains(t, userError.Error(), ciphertext)
 	require.True(t, types.IsSkipRetryError(userError))
+
+	codexError := types.WithOpenAIError(types.OpenAIError{
+		Message: "The encrypted content for item rs_07759506f47f208a016a688d586e688196ae01eebbe8f91fe2 could not be verified. Reason: Encrypted content could not be decrypted or parsed.",
+		Type:    "invalid_request_error",
+		Param:   "",
+		Code:    "invalid_encrypted_content",
+	}, http.StatusBadRequest)
+	require.True(t, isEncryptedContentVerificationError(codexError))
 
 	unrelated := types.WithOpenAIError(types.OpenAIError{
 		Message: "The encrypted content is invalid",
@@ -78,6 +88,84 @@ func TestRetryUndecryptableResponsesReasoningContentRetriesOnlyOnce(t *testing.T
 	require.Equal(t, service.ResponsesEncryptedContentRecoveryRule.ID, events[0].RuleID)
 	require.Equal(t, 1, events[0].Count)
 	require.True(t, events[0].Retried)
+}
+
+func TestRetryUndecryptableResponsesReasoningContentPreservesRealCodexRequestShape(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+
+	input := make([]any, 0, 223)
+	for i := 0; i < 43; i++ {
+		input = append(input, map[string]any{
+			"type":              "reasoning",
+			"id":                fmt.Sprintf("rs_encrypted_%03d", i),
+			"encrypted_content": fmt.Sprintf("encrypted-%03d", i),
+		})
+	}
+	preservedIDs := make([]string, 0, 180)
+	preservedTypes := []string{
+		"additional_tools",
+		"custom_tool_call",
+		"custom_tool_call_output",
+		"function_call",
+		"function_call_output",
+		"message",
+	}
+	for i := 0; i < 180; i++ {
+		id := fmt.Sprintf("keep_%03d", i)
+		preservedIDs = append(preservedIDs, id)
+		input = append(input, map[string]any{
+			"type":    preservedTypes[i%len(preservedTypes)],
+			"id":      id,
+			"content": fmt.Sprintf("preserved-%03d", i),
+		})
+	}
+	requestBody, err := json.Marshal(map[string]any{
+		"model":  "gpt-5.6-sol",
+		"input":  input,
+		"stream": true,
+	})
+	require.NoError(t, err)
+	storage, err := common.CreateBodyStorage(requestBody)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = storage.Close() })
+
+	upstreamError := types.WithOpenAIError(types.OpenAIError{
+		Message: "The encrypted content for item rs_07759506f47f208a016a688d586e688196ae01eebbe8f91fe2 could not be verified. Reason: Encrypted content could not be decrypted or parsed.",
+		Type:    "invalid_request_error",
+		Param:   "",
+		Code:    "invalid_encrypted_content",
+	}, http.StatusBadRequest)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 29}}
+	requestCount := 0
+	doRequest := func(reader io.Reader) (any, error) {
+		requestCount++
+		retryBody, readErr := io.ReadAll(reader)
+		require.NoError(t, readErr)
+
+		var retriedPayload map[string]any
+		require.NoError(t, json.Unmarshal(retryBody, &retriedPayload))
+		retriedInput, ok := retriedPayload["input"].([]any)
+		require.True(t, ok)
+		require.Len(t, retriedInput, 180)
+		for i, rawItem := range retriedInput {
+			item, itemOK := rawItem.(map[string]any)
+			require.True(t, itemOK)
+			require.Equal(t, preservedIDs[i], item["id"])
+			require.NotEqual(t, "reasoning", item["type"])
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	}
+
+	resp, retryErr, retried := retryUndecryptableResponsesReasoningContent(ctx, info, storage, upstreamError, doRequest)
+	require.True(t, retried)
+	require.Nil(t, retryErr)
+	require.NotNil(t, resp)
+	require.Equal(t, 1, requestCount)
+
+	_, _, retried = retryUndecryptableResponsesReasoningContent(ctx, info, storage, upstreamError, doRequest)
+	require.False(t, retried)
+	require.Equal(t, 1, requestCount)
 }
 
 func TestMissingResponsesReasoningItemIDMatchesExactUpstreamError(t *testing.T) {

@@ -21,8 +21,10 @@ const (
 	ginKeyResponsesEncryptedContentRetried     = "responses_encrypted_content_retried"
 )
 
+const responsesInvalidEncryptedContentErrorCode types.ErrorCode = "invalid_encrypted_content"
+
 var missingResponsesItemPattern = regexp.MustCompile(`(?i)^item with id ['"](rs_[a-z0-9]+)['"] not found\.?$`)
-var encryptedContentVerificationPattern = regexp.MustCompile(`(?i)^the encrypted content\s+\S+\s+could not be verified\.\s*reason:\s*encrypted content could not be decrypted or parsed\.?$`)
+var encryptedContentVerificationPattern = regexp.MustCompile(`(?i)^the encrypted content\s+(?:for\s+item\s+rs_[a-z0-9]+|\S+)\s+could not be verified\.\s*reason:\s*encrypted content could not be decrypted or parsed\.?$`)
 
 type responsesRetryRequestFunc func(io.Reader) (any, error)
 
@@ -205,6 +207,9 @@ func retryUndecryptableResponsesReasoningContent(
 func isEncryptedContentVerificationError(err *types.NewAPIError) bool {
 	if err == nil || err.StatusCode != http.StatusBadRequest || err.GetErrorType() != types.ErrorTypeOpenAIError {
 		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(string(err.GetErrorCode())), string(responsesInvalidEncryptedContentErrorCode)) {
+		return true
 	}
 	return encryptedContentVerificationPattern.MatchString(strings.TrimSpace(err.ToOpenAIError().Message))
 }
