@@ -263,7 +263,7 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
                       </div>
                       <FormDescription>
                         {t(
-                          'Persist relay request and response payloads for debugging.'
+                          'Master switch for context capture. When disabled, no rule can capture relay request or response payloads; changes apply immediately to new requests.'
                         )}
                       </FormDescription>
                     </SettingsSwitchContent>

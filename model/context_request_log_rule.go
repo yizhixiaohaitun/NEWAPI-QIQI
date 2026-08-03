@@ -138,7 +138,10 @@ func ContextLogRulesNeedModel(userId int) bool {
 }
 
 func GetContextLogDecision(userId int, modelName string) ContextLogDecision {
-	return MatchContextLogRules(cachedContextLogRules(), userId, modelName, operation_setting.IsContextRequestLoggingEnabled())
+	if !operation_setting.IsContextRequestLoggingEnabled() {
+		return ContextLogDecision{Capture: false, Source: "global_disabled"}
+	}
+	return MatchContextLogRules(cachedContextLogRules(), userId, modelName, true)
 }
 
 func InvalidateContextLogRuleCache() {

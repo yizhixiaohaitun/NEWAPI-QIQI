@@ -2,26 +2,131 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 )
 
 const (
-	auditRedactedValue       = "[REDACTED]"
-	auditUnsafeTruncatedJSON = "[TRUNCATED JSON BODY OMITTED: unable to safely redact]"
-	contextAuditBodyLimit    = int64(2 * 1024 * 1024)
+	auditRedactedValue          = "[REDACTED]"
+	auditUnsafeTruncatedJSON    = "[TRUNCATED JSON BODY OMITTED: unable to safely redact]"
+	contextAuditBodyLimit       = int64(2 * 1024 * 1024)
+	contextAuditQueueSize       = 32
+	contextAuditWorkerCount     = 2
+	contextAuditQueuedByteLimit = uint64(16 * 1024 * 1024)
+	contextAuditWarnInterval    = time.Minute
 )
+
+var contextAuditStore = newContextAuditStore(contextAuditQueueSize, contextAuditWorkerCount, contextAuditQueuedByteLimit, model.RecordContextRequestLog)
+
+type contextAuditQueueItem struct {
+	entry *model.ContextRequestLog
+	bytes uint64
+}
+
+type contextAuditQueue struct {
+	queue       chan contextAuditQueueItem
+	record      func(*model.ContextRequestLog) error
+	stop        chan struct{}
+	done        chan struct{}
+	mu          sync.RWMutex
+	stopOnce    sync.Once
+	workers     sync.WaitGroup
+	byteLimit   uint64
+	queuedBytes uint64
+	dropped     atomic.Uint64
+	lastWarning atomic.Int64
+}
+
+func newContextAuditStore(capacity, workers int, byteLimit uint64, record func(*model.ContextRequestLog) error) *contextAuditQueue {
+	store := &contextAuditQueue{queue: make(chan contextAuditQueueItem, capacity), record: record, stop: make(chan struct{}), done: make(chan struct{}), byteLimit: byteLimit}
+	store.workers.Add(workers)
+	for range workers {
+		go func() {
+			defer store.workers.Done()
+			for item := range store.queue {
+				if err := store.record(item.entry); err != nil {
+					common.SysLog("failed to record context request log: " + err.Error())
+				}
+				store.mu.Lock()
+				store.queuedBytes -= item.bytes
+				store.mu.Unlock()
+			}
+		}()
+	}
+	go func() { store.workers.Wait(); close(store.done) }()
+	return store
+}
+func (store *contextAuditQueue) enqueue(entry *model.ContextRequestLog) bool {
+	item := contextAuditQueueItem{entry: entry, bytes: estimateContextAuditLogBytes(entry)}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	select {
+	case <-store.stop:
+		return false
+	default:
+	}
+	if item.bytes > store.byteLimit-store.queuedBytes {
+		store.warnDropped("byte budget exceeded")
+		return false
+	}
+	select {
+	case store.queue <- item:
+		store.queuedBytes += item.bytes
+		return true
+	default:
+		store.warnDropped("queue full")
+		return false
+	}
+}
+
+func (store *contextAuditQueue) warnDropped(reason string) {
+	dropped := store.dropped.Add(1)
+	now := time.Now().UnixNano()
+	last := store.lastWarning.Load()
+	if now-last >= int64(contextAuditWarnInterval) && store.lastWarning.CompareAndSwap(last, now) {
+		common.SysLog("context request audit " + reason + "; dropping records (total dropped: " + strconv.FormatUint(dropped, 10) + ")")
+	}
+}
+
+func estimateContextAuditLogBytes(entry *model.ContextRequestLog) uint64 {
+	if entry == nil {
+		return 0
+	}
+	// Account for the fixed struct (including string descriptors) plus every
+	// string backing store retained by an accepted queue item.
+	fixedBytes := uint64(unsafe.Sizeof(*entry))
+	return fixedBytes + uint64(len(entry.RequestId)+len(entry.Method)+len(entry.Path)+len(entry.Ip)+
+		len(entry.UserAgent)+len(entry.Username)+len(entry.TokenName)+len(entry.ModelName)+len(entry.Group)+
+		len(entry.Error)+len(entry.ChannelName)+len(entry.NodeName)+len(entry.RuleName)+len(entry.DecisionSource)+
+		len(entry.RequestHeaders)+len(entry.ResponseHeaders)+len(entry.RequestBody)+len(entry.RequestBodyEncoding)+
+		len(entry.ResponseBody)+len(entry.ResponseBodyEncoding))
+}
+func (store *contextAuditQueue) shutdown(ctx context.Context) error {
+	store.stopOnce.Do(func() { store.mu.Lock(); close(store.stop); close(store.queue); store.mu.Unlock() })
+	select {
+	case <-store.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func ShutdownContextRequestAudit(ctx context.Context) error { return contextAuditStore.shutdown(ctx) }
 
 var auditSensitiveJSONFieldPattern = regexp.MustCompile(`(?i)("(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|client[_-]?secret|secret|password)"\s*:\s*)"(?:\\.|[^"\\])*"`)
 
@@ -52,6 +157,11 @@ func (w *contextRequestAuditResponseWriter) capture(data []byte) {
 
 func ContextRequestAudit() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// The global setting is a hard gate: the disabled path does not touch rules or bodies.
+		if !operation_setting.IsContextRequestLoggingEnabled() {
+			c.Next()
+			return
+		}
 		modelName := c.GetString("original_model")
 		if modelName == "" && model.ContextLogRulesNeedModel(c.GetInt("id")) {
 			modelName = auditOriginalModel(c)
@@ -113,8 +223,7 @@ func recordContextRequestAudit(c *gin.Context, start time.Time, writer *contextR
 	requestBody, requestSize, requestTruncated, requestBodyErr := readAuditRequestBody(c)
 	requestBody = redactAuditJSON(requestBody, c.Request.Header.Get("Content-Type"), requestTruncated)
 	requestBodyText, requestBodyEncoding := encodeAuditBody(requestBody, c.Request.Header.Get("Content-Type"))
-	responseBody := append([]byte(nil), writer.body.Bytes()...)
-	responseBody = redactAuditJSON(responseBody, c.Writer.Header().Get("Content-Type"), writer.total > contextAuditBodyLimit)
+	responseBody := redactAuditJSON(writer.body.Bytes(), c.Writer.Header().Get("Content-Type"), writer.total > contextAuditBodyLimit)
 	responseBodyText, responseBodyEncoding := encodeAuditBody(responseBody, c.Writer.Header().Get("Content-Type"))
 	errorText := strings.TrimSpace(c.Errors.String())
 	if requestBodyErr != nil {
@@ -139,11 +248,7 @@ func recordContextRequestAudit(c *gin.Context, start time.Time, writer *contextR
 	if entry.Group == "" {
 		entry.Group = common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
 	}
-	gopool.Go(func() {
-		if err := model.RecordContextRequestLog(entry); err != nil {
-			common.SysLog("failed to record context request log: " + err.Error())
-		}
-	})
+	contextAuditStore.enqueue(entry)
 }
 
 func auditRequestId(c *gin.Context) string {
