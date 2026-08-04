@@ -53,6 +53,11 @@ func TestStreamAbnormalEmptyError_ZeroDataAbnormalEnd(t *testing.T) {
 	// ping_fail / panic → 502
 	require.NotNil(t, StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonPingFail, 0)))
 	require.NotNil(t, StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonPanic, 0)))
+
+	// eof + 0 数据 = SSE 未正常收尾（上游 200 后一条数据未投递就关闭连接）→ 502
+	err = StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonEOF, 0))
+	require.NotNil(t, err)
+	assert.Equal(t, http.StatusBadGateway, err.StatusCode)
 }
 
 // 有部分数据 → 维持旧行为（返回 nil，照常走既有计费路径）
@@ -62,11 +67,11 @@ func TestStreamAbnormalEmptyError_PartialDataKeepsBilling(t *testing.T) {
 	assert.Nil(t, StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonScannerErr, 100)))
 }
 
-// 正常流（done/eof/handler_stop）→ 不受影响
+// 正常流（done/handler_stop，以及 eof+有数据）→ 不受影响
 func TestStreamAbnormalEmptyError_NormalEndUnaffected(t *testing.T) {
 	assert.Nil(t, StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonDone, 0)))
 	assert.Nil(t, StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonDone, 10)))
-	assert.Nil(t, StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonEOF, 0)))
+	assert.Nil(t, StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonEOF, 10)))
 	assert.Nil(t, StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonHandlerStop, 0)))
 }
 
