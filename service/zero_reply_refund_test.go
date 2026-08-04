@@ -94,10 +94,12 @@ func TestZeroReplyAutoRefundEnabledHit(t *testing.T) {
 	assert.Equal(t, 1000, getQuota(t, 1))
 	assert.Equal(t, 1000, getTokenRemain(t, 10))
 
-	// 原消耗日志参数保留不动（保证 0回复统计/筛选口径不变）
-	assert.Equal(t, 50, params.Quota)
-	assert.Equal(t, "模型倍率 1.00", params.Content)
-	assert.Nil(t, params.Other)
+	// 原消耗日志参数被改写：净扣费 0，注明原始金额
+	assert.Equal(t, 0, params.Quota)
+	assert.Contains(t, params.Content, "已自动回退")
+	assert.Equal(t, true, params.Other["zero_reply_auto_refund"])
+	assert.Equal(t, 50, params.Other["zero_reply_refunded_quota"])
+	// 0回复筛选口径字段保持不动
 	assert.Equal(t, 120, params.PromptTokens)
 	assert.Equal(t, 0, params.CompletionTokens)
 
@@ -122,7 +124,7 @@ func TestZeroReplyAutoRefundDisabledNoChange(t *testing.T) {
 	assert.Equal(t, 1000, getQuota(t, 1))
 	assert.Equal(t, 1000, getTokenRemain(t, 10))
 	assert.Equal(t, 50, params.Quota)
-	assert.Equal(t, "模型倍率 1.00", params.Content)
+	assert.NotContains(t, params.Content, "已自动回退")
 	assert.Equal(t, int64(0), countRefundLogs(t))
 }
 

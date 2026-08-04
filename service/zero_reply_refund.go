@@ -20,11 +20,11 @@ import (
 // 的 quota 原路退回（钱包或订阅 + 令牌额度 + 用户额度缓存，复用
 // PostConsumeQuota 的负数路径），并另写一条 LogTypeRefund 日志用于对账。
 //
-// 原消耗日志保留不动（quota/prompt/completion/content 均不修改），保证既有的
-// 0回复统计徽章（zero_reply_count/zero_reply_quota）与伪类型筛选口径
-// （type=消耗 AND prompt>0 AND completion=0）完全不受影响；回退金额与原因
-// 只体现在新增的 LogTypeRefund 退款日志里（内容注明 zero-reply auto refund，
-// 带 request id 便于对账）。
+// 退款成功后就地修改传入的消耗日志参数：quota 置 0、other 里记录
+// zero_reply_auto_refund 与原始扣费金额。这样原消耗日志保留（0回复伪类型
+// 筛选依旧命中：type=消耗 AND prompt>0 AND completion=0），而 0回复统计
+// 徽章的金额（sum(quota)）自动等于实际净扣费，且对 ClickHouse 日志库
+// 无需任何 UPDATE。
 //
 // 通过 gin.Context 上的 ContextKeyZeroReplyAutoRefunded 标记保证同一请求
 // 至多退款一次（结算路径存在多个出口时也不会重复加钱）。
@@ -65,8 +65,19 @@ func MaybeAutoRefundZeroReplyQuota(ctx *gin.Context, relayInfo *relaycommon.Rela
 	logger.LogInfo(ctx, fmt.Sprintf("zero-reply auto refund: refunded %s to user %d (model %s, request id %s)",
 		logger.FormatQuota(refundQuota), relayInfo.UserId, params.ModelName, requestId))
 
-	// 另写一条退款日志用于对账（复用任务退款的 LogTypeRefund 惯例）；
-	// 原消耗日志参数不做任何修改，保证 0回复统计/筛选口径不变。
+	// 就地修改即将落库的消耗日志：净扣费为 0，原始金额与原因写入 other
+	params.Quota = 0
+	if params.Other == nil {
+		params.Other = map[string]interface{}{}
+	}
+	params.Other["zero_reply_auto_refund"] = true
+	params.Other["zero_reply_refunded_quota"] = refundQuota
+	if params.Content != "" {
+		params.Content += "，"
+	}
+	params.Content += fmt.Sprintf("已自动回退 %s（0回复）", logger.FormatQuota(refundQuota))
+
+	// 另写一条退款日志用于对账（复用任务退款的 LogTypeRefund 惯例）
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    relayInfo.UserId,
 		LogType:   model.LogTypeRefund,
