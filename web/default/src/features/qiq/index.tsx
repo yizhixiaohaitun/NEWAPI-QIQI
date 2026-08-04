@@ -29,6 +29,7 @@ export { ChannelPurity } from './channel-purity'
 
 type QiqiSettingsValues = {
   'qiqi_setting.context_request_logging_enabled': boolean
+  'qiqi_setting.zero_reply_auto_refund_enabled': boolean
   [RESPONSES_MISSING_REASONING_ITEM_RULE.settingKey]: boolean
   [RESPONSES_STREAM_ERROR_RETRY_RULE.settingKey]: boolean
   [RESPONSES_STREAM_ERROR_RETRY_RULE.retryTimesSettingKey]: number
@@ -37,6 +38,7 @@ type QiqiSettingsValues = {
 
 const defaultQiqiSettings: QiqiSettingsValues = {
   'qiqi_setting.context_request_logging_enabled': false,
+  'qiqi_setting.zero_reply_auto_refund_enabled': false,
   [RESPONSES_MISSING_REASONING_ITEM_RULE.settingKey]: true,
   [RESPONSES_STREAM_ERROR_RETRY_RULE.settingKey]: true,
   [RESPONSES_STREAM_ERROR_RETRY_RULE.retryTimesSettingKey]: 2,
@@ -57,6 +59,8 @@ export function QiqiSettings() {
           defaultValues={{
             'qiqi_setting.context_request_logging_enabled':
               settings['qiqi_setting.context_request_logging_enabled'],
+            'qiqi_setting.zero_reply_auto_refund_enabled':
+              settings['qiqi_setting.zero_reply_auto_refund_enabled'],
             [RESPONSES_MISSING_REASONING_ITEM_RULE.settingKey]:
               settings[RESPONSES_MISSING_REASONING_ITEM_RULE.settingKey],
             [RESPONSES_STREAM_ERROR_RETRY_RULE.settingKey]:

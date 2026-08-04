@@ -414,6 +414,7 @@ type RecordTaskBillingLogParams struct {
 	Group     string
 	Other     map[string]interface{}
 	NodeName  string // 任务发起节点；为空时回退当前节点
+	RequestId string // 原请求 request id；为空时 createLog 自动生成（用于退款对账）
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -440,6 +441,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		ChannelId: params.ChannelId,
 		TokenId:   params.TokenId,
 		Group:     params.Group,
+		RequestId: params.RequestId,
 		Other:     common.MapToJsonStr(params.Other),
 	}
 	err := createLog(log)

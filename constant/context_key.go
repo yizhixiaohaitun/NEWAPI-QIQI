@@ -67,6 +67,13 @@ const (
 	ContextKeyLanguage ContextKey = "language"
 	ContextKeyIsStream ContextKey = "is_stream"
 
+	// ContextKeyZeroReplyAutoRefunded marks that the current request has already
+	// been refunded by the qiqi zero-reply auto refund feature. A request may
+	// reach a post-consume settle path more than once in theory (retry loops /
+	// multiple settle exits), so this flag guarantees at most one refund per
+	// client request.
+	ContextKeyZeroReplyAutoRefunded ContextKey = "qiqi_zero_reply_auto_refunded"
+
 	// ContextKeyAuditLogged marks that the current request has already recorded
 	// a manage/operation audit log inside the handler. When set, the admin-audit
 	// fallback in authHelper (finishAdminAudit) skips its record to avoid

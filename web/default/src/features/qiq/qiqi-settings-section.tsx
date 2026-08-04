@@ -58,6 +58,8 @@ import {
 
 const qiqiContextRequestLoggingOption =
   'qiqi_setting.context_request_logging_enabled' as const
+const qiqiZeroReplyAutoRefundOption =
+  'qiqi_setting.zero_reply_auto_refund_enabled' as const
 const qiqiResponsesMissingReasoningItemRetryOption =
   RESPONSES_MISSING_REASONING_ITEM_RULE.settingKey
 const qiqiResponsesStreamErrorRetryOption =
@@ -69,6 +71,7 @@ const qiqiAzureResponsesResourceAffinityOption =
 
 const qiqiSettingsSchema = z.object({
   contextRequestLoggingEnabled: z.boolean(),
+  zeroReplyAutoRefundEnabled: z.boolean(),
   responsesMissingReasoningItemRetryEnabled: z.boolean(),
   responsesStreamErrorRetryEnabled: z.boolean(),
   responsesStreamErrorRetryTimes: z
@@ -86,6 +89,7 @@ type QiqiSettingsFormValues = z.infer<typeof qiqiSettingsSchema>
 type QiqiSettingsSectionProps = {
   defaultValues: {
     [qiqiContextRequestLoggingOption]: boolean
+    [qiqiZeroReplyAutoRefundOption]?: boolean
     [qiqiResponsesMissingReasoningItemRetryOption]: boolean
     [qiqiResponsesStreamErrorRetryOption]: boolean
     [qiqiResponsesStreamErrorRetryTimesOption]: number
@@ -100,6 +104,8 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
   const formDefaults: QiqiSettingsFormValues = {
     contextRequestLoggingEnabled:
       props.defaultValues[qiqiContextRequestLoggingOption],
+    zeroReplyAutoRefundEnabled:
+      props.defaultValues[qiqiZeroReplyAutoRefundOption] ?? false,
     responsesMissingReasoningItemRetryEnabled:
       props.defaultValues[qiqiResponsesMissingReasoningItemRetryOption],
     responsesStreamErrorRetryEnabled:
@@ -116,6 +122,7 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
   })
   const { dirtyFields, isDirty, isSubmitting } = form.formState
   const contextLoggingEnabled = form.watch('contextRequestLoggingEnabled')
+  const zeroReplyAutoRefundEnabled = form.watch('zeroReplyAutoRefundEnabled')
   const responsesMissingReasoningItemRetryEnabled = form.watch(
     'responsesMissingReasoningItemRetryEnabled'
   )
@@ -134,6 +141,11 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
         key: qiqiContextRequestLoggingOption,
         value: values.contextRequestLoggingEnabled,
         savedValue: props.defaultValues[qiqiContextRequestLoggingOption],
+      },
+      {
+        key: qiqiZeroReplyAutoRefundOption,
+        value: values.zeroReplyAutoRefundEnabled,
+        savedValue: props.defaultValues[qiqiZeroReplyAutoRefundOption] ?? false,
       },
       {
         key: qiqiResponsesMissingReasoningItemRetryOption,
@@ -264,6 +276,40 @@ export function QiqiSettingsSection(props: QiqiSettingsSectionProps) {
                       <FormDescription>
                         {t(
                           'Master switch for context capture. When disabled, no rule can capture relay request or response payloads; changes apply immediately to new requests.'
+                        )}
+                      </FormDescription>
+                    </SettingsSwitchContent>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        disabled={updateOption.isPending || isSubmitting}
+                      />
+                    </FormControl>
+                  </SettingsSwitchItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='zeroReplyAutoRefundEnabled'
+                render={({ field }) => (
+                  <SettingsSwitchItem className='bg-muted/30 items-start rounded-md px-3 py-3 sm:px-4'>
+                    <SettingsSwitchContent className='max-w-xl space-y-1'>
+                      <div className='flex flex-wrap items-center gap-2'>
+                        <FormLabel>{t('Zero-reply auto refund')}</FormLabel>
+                        <Badge variant='secondary'>
+                          {t(zeroReplyAutoRefundEnabled ? 'Enabled' : 'Disabled')}
+                        </Badge>
+                        {dirtyFields.zeroReplyAutoRefundEnabled ? (
+                          <Badge variant='outline'>
+                            {t('Unsaved changes')}
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <FormDescription>
+                        {t(
+                          'When enabled, billed requests that end with prompt tokens but zero completion tokens are refunded in real time at settlement. The original consume log is kept, and a refund log with the request id is written for reconciliation.'
                         )}
                       </FormDescription>
                     </SettingsSwitchContent>

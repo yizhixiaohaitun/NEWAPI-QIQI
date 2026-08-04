@@ -21,6 +21,7 @@ const (
 
 type QiqiSetting struct {
 	ContextRequestLoggingEnabled              bool `json:"context_request_logging_enabled"`
+	ZeroReplyAutoRefundEnabled                bool `json:"zero_reply_auto_refund_enabled"`
 	ContextRequestLogRetentionDays            int  `json:"context_request_log_retention_days"`
 	ResponsesMissingReasoningItemRetryEnabled bool `json:"responses_missing_reasoning_item_retry_enabled"`
 	AzureResponsesResourceAffinityEnabled     bool `json:"azure_responses_resource_affinity_enabled"`
@@ -32,6 +33,7 @@ type QiqiSetting struct {
 
 var qiqiSetting = QiqiSetting{
 	ContextRequestLoggingEnabled:              false,
+	ZeroReplyAutoRefundEnabled:                false,
 	ContextRequestLogRetentionDays:            DefaultContextRequestLogRetentionDays,
 	ResponsesMissingReasoningItemRetryEnabled: true,
 	AzureResponsesResourceAffinityEnabled:     true,
@@ -51,6 +53,13 @@ func GetQiqiSetting() *QiqiSetting {
 
 func IsContextRequestLoggingEnabled() bool {
 	return qiqiSetting.ContextRequestLoggingEnabled
+}
+
+// IsZeroReplyAutoRefundEnabled 返回「0回复自动回退额度」开关状态。
+// 开启后，最终结算为消耗类、prompt_tokens>0 且 completion_tokens=0 的请求
+// 会在结算时实时退回已扣 quota（详见 service.MaybeAutoRefundZeroReplyQuota）。
+func IsZeroReplyAutoRefundEnabled() bool {
+	return qiqiSetting.ZeroReplyAutoRefundEnabled
 }
 
 func GetContextRequestLogRetentionDays() int {
