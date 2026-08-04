@@ -102,6 +102,17 @@ export function CommonLogsStats() {
         value={stats?.tpm || 0}
         accent='bg-slate-400/70'
       />
+      {/* Zero-reply: consume logs billed with prompt tokens but no completion
+          (usually an aborted/error stream), shown as "count / billed quota". */}
+      <StatBadge
+        label={t('Zero Reply')}
+        value={
+          sensitiveVisible
+            ? `${stats?.zero_reply_count || 0} / ${formatLogQuota(stats?.zero_reply_quota || 0)}`
+            : '••••'
+        }
+        accent='bg-amber-500/70'
+      />
     </div>
   )
 }

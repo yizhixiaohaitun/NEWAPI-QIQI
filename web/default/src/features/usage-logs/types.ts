@@ -252,6 +252,10 @@ export interface LogStatistics {
   quota: number
   rpm: number
   tpm: number
+  /** Consume logs with prompt_tokens > 0 but completion_tokens = 0 (billed but no reply) */
+  zero_reply_count?: number
+  /** Total quota billed by the zero-reply logs above */
+  zero_reply_quota?: number
 }
 
 // ============================================================================
