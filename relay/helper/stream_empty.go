@@ -21,8 +21,11 @@ import (
 //
 // 边界（避免误伤正常流）：
 //   - 上游已投递过任何数据（ReceivedResponseCount > 0）→ 返回 nil，维持现有计费行为；
-//   - 正常收尾（done / eof / handler_stop）→ 返回 nil，即使 0 数据也不改变现有行为
-//     （eof 0 数据由各渠道既有的 usage 兜底逻辑处理，保持保守不扩大判定范围）。
+//   - done / handler_stop 收尾 → 返回 nil（这两种只能由上游 [DONE] 或 dataHandler
+//     主动触发，不会出现在 0 数据场景之外的误判）；
+//   - eof + 0 数据 → 视为「SSE 未正常收尾」按失败处理：上游 200 后未投递任何
+//     数据就关闭连接，各协议（OpenAI [DONE] / Claude message_stop / Dify
+//     message_end）正常完成时必然先有数据，因此该组合不可能是正常完成。
 //
 // 状态码约定与 Responses 流的 responsesStreamPrematureEndError 保持一致：
 //   - client_gone → 499 + SkipRetry（客户端已断开，重试无意义）；
@@ -35,10 +38,13 @@ func StreamAbnormalEmptyError(c *gin.Context, info *relaycommon.RelayInfo) *type
 	if info.ReceivedResponseCount > 0 {
 		return nil
 	}
-	if info.StreamStatus.IsNormalEnd() {
+	reason := info.StreamStatus.EndReason
+	// done / handler_stop 由上游 [DONE] 或 dataHandler 显式触发，维持现状；
+	// eof 属于「SSE 未正常收尾」——上游 200 后一条数据都没投递就关闭了连接，
+	// 与 timeout/scanner_error 同样按失败处理。
+	if reason == relaycommon.StreamEndReasonDone || reason == relaycommon.StreamEndReasonHandlerStop {
 		return nil
 	}
-	reason := info.StreamStatus.EndReason
 	logger.LogError(c, fmt.Sprintf("stream ended abnormally with zero upstream data (reason=%s), treat as failure without billing", reason))
 	switch reason {
 	case relaycommon.StreamEndReasonClientGone:
