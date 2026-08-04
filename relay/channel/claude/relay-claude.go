@@ -189,6 +189,12 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	if err != nil {
 		return nil, err
 	}
+	// 流异常结束（timeout/client_gone/scanner_error 等）且未收到任何上游数据时，
+	// 按失败返回错误、不进入计费兜底（避免用本地估算 prompt tokens 对 0 数据请求扣费），
+	// 让上层 shouldRetry/换渠道逻辑接管。
+	if emptyErr := helper.StreamAbnormalEmptyError(c, info); emptyErr != nil {
+		return nil, emptyErr
+	}
 
 	HandleStreamFinalResponse(c, info, claudeInfo)
 	return claudeInfo.Usage, nil

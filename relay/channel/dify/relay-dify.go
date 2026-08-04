@@ -255,6 +255,10 @@ func difyStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 			sr.Error(err)
 		}
 	})
+	// 流异常结束且 0 上游数据：按失败处理，不走本地估算计费兜底
+	if emptyErr := helper.StreamAbnormalEmptyError(c, info); emptyErr != nil {
+		return nil, emptyErr
+	}
 	helper.Done(c)
 	if usage.TotalTokens == 0 {
 		usage = service.ResponseText2Usage(c, responseText, info.UpstreamModelName, info.GetEstimatePromptTokens())

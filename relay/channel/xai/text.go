@@ -67,6 +67,12 @@ func xAIStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		}
 	})
 
+	// 流异常结束且 0 上游数据：按失败处理，不走本地估算计费兜底
+	if emptyErr := helper.StreamAbnormalEmptyError(c, info); emptyErr != nil {
+		service.CloseResponseBodyGracefully(resp)
+		return nil, emptyErr
+	}
+
 	if !containStreamUsage {
 		usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
 		usage.CompletionTokens += toolCount * 7

@@ -173,6 +173,12 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		}
 	})
 
+	// 流异常结束且 0 上游数据：按失败处理（原逻辑此时 usage 为空、扣费为 0，
+	// 但会按成功返回；改为返回错误让上层 shouldRetry/换渠道接管）
+	if emptyErr := helper.StreamAbnormalEmptyError(c, info); emptyErr != nil {
+		return nil, emptyErr
+	}
+
 	if !hasBillableUsageMetadata {
 		if info.ReceivedResponseCount > 0 {
 			usage = service.ResponseText2Usage(c, responseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())

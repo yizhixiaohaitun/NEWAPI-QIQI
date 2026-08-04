@@ -144,6 +144,11 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		}
 	})
 
+	// 流异常结束且 0 上游数据：按失败处理，不走本地估算计费兜底
+	if emptyErr := helper.StreamAbnormalEmptyError(c, info); emptyErr != nil {
+		return nil, emptyErr
+	}
+
 	// 对音频模型，从倒数第二个stream data中提取usage信息
 	if isAudioModel && secondLastStreamData != "" {
 		var streamResp struct {

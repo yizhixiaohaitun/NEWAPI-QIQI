@@ -310,6 +310,10 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	if streamErr != nil {
 		return nil, streamErr
 	}
+	// 流异常结束且 0 上游数据：按失败处理，不走本地估算计费兜底
+	if emptyErr := helper.StreamAbnormalEmptyError(c, info); emptyErr != nil {
+		return nil, emptyErr
+	}
 
 	usage := state.Usage()
 	if usage == nil || usage.TotalTokens == 0 {
