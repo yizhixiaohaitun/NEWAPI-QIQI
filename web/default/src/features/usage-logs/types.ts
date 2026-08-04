@@ -318,6 +318,8 @@ export interface GetLogsParams {
   p?: number
   page_size?: number
   type?: number
+  /** Pseudo "Zero Reply" filter: 1 narrows to consume logs with prompt_tokens>0 and completion_tokens=0 */
+  zero_reply?: number
   username?: string
   token_name?: string
   model_name?: string
@@ -342,6 +344,8 @@ export interface GetLogsResponse {
 
 export interface GetLogStatsParams {
   type?: number
+  /** Pseudo "Zero Reply" filter, same semantics as GetLogsParams.zero_reply */
+  zero_reply?: number
   username?: string
   token_name?: string
   model_name?: string

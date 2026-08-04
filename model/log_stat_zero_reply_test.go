@@ -42,7 +42,7 @@ func TestSumUsedQuotaCountsZeroReplyLogs(t *testing.T) {
 		require.NoError(t, LOG_DB.Create(l).Error)
 	}
 
-	stat, err := SumUsedQuota(LogTypeUnknown, 0, 0, "", "", "", 0, "")
+	stat, err := SumUsedQuota(LogTypeUnknown, 0, 0, "", "", "", 0, "", false)
 	require.NoError(t, err)
 	assert.Equal(t, 5410, stat.Quota, "quota should still sum all consume logs")
 	assert.Equal(t, 2, stat.ZeroReplyCount)
@@ -61,7 +61,7 @@ func TestSumUsedQuotaZeroReplyRespectsFilters(t *testing.T) {
 		require.NoError(t, LOG_DB.Create(l).Error)
 	}
 
-	stat, err := SumUsedQuota(LogTypeUnknown, 0, 0, "claude-3", "alice", "", 0, "")
+	stat, err := SumUsedQuota(LogTypeUnknown, 0, 0, "claude-3", "alice", "", 0, "", false)
 	require.NoError(t, err)
 	assert.Equal(t, 500, stat.Quota)
 	assert.Equal(t, 1, stat.ZeroReplyCount)
@@ -71,8 +71,28 @@ func TestSumUsedQuotaZeroReplyRespectsFilters(t *testing.T) {
 func TestSumUsedQuotaZeroReplyEmptyResult(t *testing.T) {
 	setupZeroReplyStatDB(t)
 
-	stat, err := SumUsedQuota(LogTypeUnknown, 0, 0, "", "", "", 0, "")
+	stat, err := SumUsedQuota(LogTypeUnknown, 0, 0, "", "", "", 0, "", false)
 	require.NoError(t, err)
 	assert.Equal(t, 0, stat.ZeroReplyCount)
 	assert.Equal(t, 0, stat.ZeroReplyQuota)
+}
+
+func TestSumUsedQuotaZeroReplyModeNarrowsQuota(t *testing.T) {
+	setupZeroReplyStatDB(t)
+
+	now := time.Now().Unix()
+	logs := []*Log{
+		{Type: LogTypeConsume, CreatedAt: now, ModelName: "claude-3", Username: "alice", Quota: 5000, PromptTokens: 3191361, CompletionTokens: 0},
+		{Type: LogTypeConsume, CreatedAt: now, ModelName: "claude-3", Username: "alice", Quota: 100, PromptTokens: 50, CompletionTokens: 20},
+	}
+	for _, l := range logs {
+		require.NoError(t, LOG_DB.Create(l).Error)
+	}
+
+	// zeroReply=true: quota 也按 0回复口径过滤，与列表数据一致
+	stat, err := SumUsedQuota(LogTypeUnknown, 0, 0, "", "", "", 0, "", true)
+	require.NoError(t, err)
+	assert.Equal(t, 5000, stat.Quota, "quota should only include zero-reply logs when filter active")
+	assert.Equal(t, 1, stat.ZeroReplyCount)
+	assert.Equal(t, 5000, stat.ZeroReplyQuota)
 }

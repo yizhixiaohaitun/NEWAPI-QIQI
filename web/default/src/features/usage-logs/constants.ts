@@ -70,6 +70,14 @@ export const LOG_TYPE_ENUM = {
  */
 export const LOG_TYPE_ALL_VALUE = '0' as const
 
+/**
+ * Pseudo log type for the "Zero Reply" filter option. It is NOT a real
+ * backend type enum value: when selected, the request carries zero_reply=1
+ * (no type param) and the backend narrows results to consume logs with
+ * prompt_tokens > 0 and completion_tokens = 0 (billed but no reply).
+ */
+export const LOG_TYPE_ZERO_REPLY_VALUE = 'zero_reply' as const
+
 // ============================================================================
 // Time Range Presets
 // ============================================================================
@@ -115,6 +123,9 @@ export const LOG_TYPE_FILTERS = [
       value: String(type.value),
     })
   ),
+  // Pseudo type: consume logs billed with prompt tokens but no completion
+  // (aborted/error streams). Mapped to zero_reply=1 in buildApiParams.
+  { label: 'Zero Reply', value: LOG_TYPE_ZERO_REPLY_VALUE },
 ] as const
 
 // ============================================================================

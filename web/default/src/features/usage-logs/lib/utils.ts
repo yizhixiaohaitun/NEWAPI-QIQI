@@ -29,6 +29,7 @@ import {
 } from '../api'
 import {
   LOG_TYPES,
+  LOG_TYPE_ZERO_REPLY_VALUE,
   DISPLAYABLE_LOG_TYPES,
   TIMING_LOG_TYPES,
 } from '../constants'
@@ -179,27 +180,37 @@ export function buildApiParams(config: {
 }): GetLogsParams {
   const { page, pageSize, searchParams, columnFilters = [], isAdmin } = config
 
-  // Helper to process type parameter (single value from array)
-  const processType = (value: unknown): number | undefined => {
-    const parseType = (raw: unknown): number | undefined => {
-      const type = Number(raw)
-      return Number.isFinite(type) ? type : undefined
-    }
-
+  // Helper to unwrap the single value from the type search param
+  const unwrapType = (value: unknown): string | undefined => {
     if (Array.isArray(value) && value.length === 1) {
-      return parseType(value[0])
+      return typeof value[0] === 'string' ? value[0] : undefined
     }
     if (typeof value === 'string' && value !== '') {
-      return parseType(value)
+      return value
     }
     return undefined
   }
+
+  // Helper to process type parameter (single value from array).
+  // The pseudo "zero_reply" type is handled separately and never sent as type.
+  const processType = (value: unknown): number | undefined => {
+    const raw = unwrapType(value)
+    if (raw === undefined || raw === LOG_TYPE_ZERO_REPLY_VALUE) return undefined
+    const type = Number(raw)
+    return Number.isFinite(type) ? type : undefined
+  }
+
+  const isZeroReplyType = (value: unknown): boolean =>
+    unwrapType(value) === LOG_TYPE_ZERO_REPLY_VALUE
 
   // Build base params from search params
   const params: GetLogsParams = {
     p: page,
     page_size: pageSize,
     ...(searchParams.type ? { type: processType(searchParams.type) } : {}),
+    // Pseudo type: send zero_reply=1 so the backend narrows the results to
+    // consume logs with prompt_tokens>0 and completion_tokens=0
+    ...(isZeroReplyType(searchParams.type) ? { zero_reply: 1 } : {}),
     ...(searchParams.model ? { model_name: String(searchParams.model) } : {}),
     ...(searchParams.token ? { token_name: String(searchParams.token) } : {}),
     ...(searchParams.group ? { group: String(searchParams.group) } : {}),
@@ -226,6 +237,11 @@ export function buildApiParams(config: {
       switch (id) {
         case 'type':
           params.type = processType(value)
+          if (isZeroReplyType(value)) {
+            params.zero_reply = 1
+          } else {
+            delete params.zero_reply
+          }
           break
         case 'model_name':
           params.model_name = String(value)

@@ -25,7 +25,19 @@ import {
   USAGE_LOGS_DEFAULT_SECTION,
 } from '@/features/usage-logs/section-registry'
 
-const logTypeValues = ['0', '1', '2', '3', '4', '5', '6', '7'] as const
+// 'zero_reply' is a pseudo type (billed consume logs with no completion);
+// it is translated to the zero_reply=1 query param instead of a real type value.
+const logTypeValues = [
+  '0',
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  'zero_reply',
+] as const
 const logTypeSearchSchema = z
   .preprocess((value) => {
     if (value == null || value === '') return undefined

@@ -465,9 +465,16 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string, zeroReply bool) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
-	if logType == LogTypeUnknown {
+	if zeroReply {
+		// 「0回复」伪类型筛选：不是真实的 log type 枚举，强制按消耗类日志过滤
+		// （有输入却无输出，通常是 client_gone/stream_error 等流异常导致扣费但无回复），
+		// 忽略传入的 logType，避免与真实 type 语义冲突
+		tx = LOG_DB.Where("logs.type = ?", LogTypeConsume).
+			Where("logs.prompt_tokens > ?", 0).
+			Where("logs.completion_tokens = ?", 0)
+	} else if logType == LogTypeUnknown {
 		tx = LOG_DB
 	} else {
 		tx = LOG_DB.Where("logs.type = ?", logType)
@@ -561,9 +568,14 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 
 const logSearchCountLimit = 10000
 
-func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string, zeroReply bool) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
-	if logType == LogTypeUnknown {
+	if zeroReply {
+		// 「0回复」伪类型筛选：强制消耗类 + 有输入无输出，忽略传入的 logType（同 GetAllLogs）
+		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, LogTypeConsume).
+			Where("logs.prompt_tokens > ?", 0).
+			Where("logs.completion_tokens = ?", 0)
+	} else if logType == LogTypeUnknown {
 		tx = LOG_DB.Where("logs.user_id = ?", userId)
 	} else {
 		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
@@ -619,7 +631,11 @@ type Stat struct {
 	ZeroReplyQuota int `json:"zero_reply_quota"`
 }
 
-func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
+// SumUsedQuota 统计日志额度/RPM/TPM 与 0回复聚合。
+// zeroReply=true 时（前端选中「0回复」伪类型筛选），quota/rpm/tpm 也按
+// 0回复口径（type=消耗 且 prompt_tokens>0 且 completion_tokens=0）过滤，
+// 保证统计栏与列表数据口径一致；zeroReply 不影响 zero_reply_* 两个字段本身。
+func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, zeroReply bool) (stat Stat, err error) {
 	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
 
 	// 为rpm和tpm创建单独的查询
@@ -675,6 +691,12 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	tx = tx.Where("type = ?", LogTypeConsume)
 	rpmTpmQuery = rpmTpmQuery.Where("type = ?", LogTypeConsume)
 	zeroReplyQuery = zeroReplyQuery.Where("type = ?", LogTypeConsume)
+
+	if zeroReply {
+		// 选中「0回复」筛选时，总额度与 RPM/TPM 也收敛到 0回复口径，与列表一致
+		tx = tx.Where("prompt_tokens > ?", 0).Where("completion_tokens = ?", 0)
+		rpmTpmQuery = rpmTpmQuery.Where("prompt_tokens > ?", 0).Where("completion_tokens = ?", 0)
+	}
 
 	// 只统计最近60秒的rpm和tpm
 	rpmTpmQuery = rpmTpmQuery.Where("created_at >= ?", time.Now().Add(-60*time.Second).Unix())
