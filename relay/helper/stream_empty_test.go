@@ -31,12 +31,14 @@ func newRelayInfoWithStream(reason relaycommon.StreamEndReason, received int) *r
 	}
 }
 
-// 0数据 + 异常断流 → 返回错误（不进入计费）
+// 0数据 + 异常断流 → 返回错误（不进入计费），且一律 SkipRetry：
+// 用户决策——0 数据异常断流不做网关侧重试，错误码透传下游，由下游 agent 自行决定重试。
 func TestStreamAbnormalEmptyError_ZeroDataAbnormalEnd(t *testing.T) {
-	// timeout → 504
+	// timeout → 504 + skip retry
 	err := StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonTimeout, 0))
 	require.NotNil(t, err)
 	assert.Equal(t, http.StatusGatewayTimeout, err.StatusCode)
+	assert.True(t, types.IsSkipRetryError(err))
 
 	// client_gone → 499 + skip retry
 	err = StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonClientGone, 0))
@@ -44,20 +46,28 @@ func TestStreamAbnormalEmptyError_ZeroDataAbnormalEnd(t *testing.T) {
 	assert.Equal(t, 499, err.StatusCode)
 	assert.True(t, types.IsSkipRetryError(err))
 
-	// scanner_error → 502（可按配置重试换渠道）
+	// scanner_error → 502 + skip retry
 	err = StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonScannerErr, 0))
 	require.NotNil(t, err)
 	assert.Equal(t, http.StatusBadGateway, err.StatusCode)
-	assert.False(t, types.IsSkipRetryError(err))
+	assert.True(t, types.IsSkipRetryError(err))
 
-	// ping_fail / panic → 502
-	require.NotNil(t, StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonPingFail, 0)))
-	require.NotNil(t, StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonPanic, 0)))
+	// ping_fail / panic → 502 + skip retry
+	err = StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonPingFail, 0))
+	require.NotNil(t, err)
+	assert.Equal(t, http.StatusBadGateway, err.StatusCode)
+	assert.True(t, types.IsSkipRetryError(err))
 
-	// eof + 0 数据 = SSE 未正常收尾（上游 200 后一条数据未投递就关闭连接）→ 502
+	err = StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonPanic, 0))
+	require.NotNil(t, err)
+	assert.Equal(t, http.StatusBadGateway, err.StatusCode)
+	assert.True(t, types.IsSkipRetryError(err))
+
+	// eof + 0 数据 = SSE 未正常收尾（上游 200 后一条数据未投递就关闭连接）→ 502 + skip retry
 	err = StreamAbnormalEmptyError(newStreamEmptyTestCtx(), newRelayInfoWithStream(relaycommon.StreamEndReasonEOF, 0))
 	require.NotNil(t, err)
 	assert.Equal(t, http.StatusBadGateway, err.StatusCode)
+	assert.True(t, types.IsSkipRetryError(err))
 }
 
 // 有部分数据 → 维持旧行为（返回 nil，照常走既有计费路径）

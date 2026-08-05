@@ -29,8 +29,12 @@ import (
 //
 // 状态码约定与 Responses 流的 responsesStreamPrematureEndError 保持一致：
 //   - client_gone → 499 + SkipRetry（客户端已断开，重试无意义）；
-//   - timeout → 504（是否重试由「自动重试状态码」配置决定，默认 504 不重试）；
-//   - 其他异常（scanner_error / ping_fail / panic）→ 502，走默认重试配置。
+//   - timeout → 504 + SkipRetry；
+//   - 其他异常（eof / scanner_error / ping_fail / panic）→ 502 + SkipRetry。
+//
+// 重试策略（用户决策）：0 数据异常断流（上游切断连接）一律不做网关侧重试，
+// 三类分支全部 SkipRetry、仅保留各自状态码原样透传给下游——由下游 agent
+// 拿到真实错误码后自行决定是否重试，避免网关+下游双层重试叠加放大消耗。
 func StreamAbnormalEmptyError(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	if info == nil || info.StreamStatus == nil {
 		return nil
@@ -59,12 +63,14 @@ func StreamAbnormalEmptyError(c *gin.Context, info *relaycommon.RelayInfo) *type
 			fmt.Errorf("upstream stream timed out before producing any data"),
 			types.ErrorCodeBadResponse,
 			http.StatusGatewayTimeout,
+			types.ErrOptionWithSkipRetry(),
 		)
 	default:
 		return types.NewOpenAIError(
 			fmt.Errorf("upstream stream ended before producing any data (reason=%s)", reason),
 			types.ErrorCodeBadResponse,
 			http.StatusBadGateway,
+			types.ErrOptionWithSkipRetry(),
 		)
 	}
 }
