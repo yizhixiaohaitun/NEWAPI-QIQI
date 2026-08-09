@@ -27,8 +27,19 @@ type Token struct {
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
 	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
 	Group              string         `json:"group" gorm:"default:''"`
-	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
+	CrossGroupRetry    bool           `json:"cross_group_retry"`                            // 跨分组重试，仅auto分组有效
+	UpstreamTimeout    int            `json:"upstream_timeout" gorm:"not null;default:600"` // seconds; 0 disables the timeout
+	CacheVersion       int            `json:"cache_version" gorm:"-"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
+}
+
+const DefaultTokenUpstreamTimeout = 600
+
+func ValidateTokenUpstreamTimeout(seconds int) error {
+	if seconds < 0 {
+		return errors.New("上游超时不能为负数")
+	}
+	return nil
 }
 
 func (token *Token) Clean() {
@@ -284,9 +295,21 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 }
 
 func (token *Token) Insert() error {
-	var err error
-	err = DB.Create(token).Error
-	return err
+	return DB.Create(token).Error
+}
+
+func (token *Token) InsertWithExplicitUnlimitedTimeout() error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(token).Error; err != nil {
+			return err
+		}
+		// GORM replaces a zero value with the schema default during Create.
+		if err := tx.Model(token).UpdateColumn("upstream_timeout", 0).Error; err != nil {
+			return err
+		}
+		token.UpstreamTimeout = 0
+		return nil
+	})
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
@@ -302,7 +325,7 @@ func (token *Token) Update() (err error) {
 		}
 	}()
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
+		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "upstream_timeout").Updates(token).Error
 	return err
 }
 

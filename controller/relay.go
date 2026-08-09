@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -89,6 +90,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
+			if c.Writer.Written() {
+				return
+			}
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
@@ -212,6 +216,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		// One timeout covers the complete attempt, including streaming/body reads.
+		upstreamCtx, cancelUpstream := service.NewUpstreamRequestContext(c.Request.Context(), relayInfo.UpstreamTimeout)
+		relayInfo.UpstreamContext = upstreamCtx
+
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
 			newAPIError = relay.WssHelper(c, relayInfo)
@@ -221,6 +229,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = geminiRelayHandler(c, relayInfo)
 		default:
 			newAPIError = relayHandler(c, relayInfo)
+		}
+		cancelUpstream()
+		if errors.Is(upstreamCtx.Err(), context.DeadlineExceeded) {
+			newAPIError = service.NewUpstreamTimeoutError()
 		}
 
 		if newAPIError == nil {

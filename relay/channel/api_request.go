@@ -531,6 +531,11 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 	}
 
+	requestContext := c.Request.Context()
+	if info != nil && info.UpstreamContext != nil {
+		requestContext = info.UpstreamContext
+	}
+	req = req.WithContext(requestContext)
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.LogError(c, "do request failed: "+err.Error())

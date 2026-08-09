@@ -555,6 +555,35 @@ export function ApiKeysMutateDrawer({
 
                     <FormField
                       control={form.control}
+                      name='upstream_timeout'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Upstream request timeout')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              type='number'
+                              min='0'
+                              step='1'
+                              onChange={(event) =>
+                                field.onChange(
+                                  Number.parseInt(event.target.value, 10) || 0
+                                )
+                              }
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              'Timeout in seconds. Use 0 for no timeout. Timed-out upstream requests are cancelled and return HTTP 500.'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
                       name='allow_ips'
                       render={({ field }) => (
                         <FormItem>

@@ -356,6 +356,46 @@ func runTokenMigrationCompatibilityTest(t *testing.T, db *gorm.DB, dialect strin
 	}
 }
 
+func TestAddTokenUpstreamTimeoutDefaultUnlimitedAndValidation(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	base := map[string]any{"name": "default-timeout", "expired_time": -1, "unlimited_quota": true}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/", base, 1)
+	AddToken(ctx)
+	if response := decodeAPIResponse(t, recorder); !response.Success {
+		t.Fatalf("expected omitted timeout to succeed: %s", response.Message)
+	}
+	var token model.Token
+	if err := db.First(&token, "name = ?", "default-timeout").Error; err != nil {
+		t.Fatalf("failed to load token: %v", err)
+	}
+	if token.UpstreamTimeout != model.DefaultTokenUpstreamTimeout {
+		t.Fatalf("expected default timeout %d, got %d", model.DefaultTokenUpstreamTimeout, token.UpstreamTimeout)
+	}
+
+	base["name"] = "unlimited-timeout"
+	base["upstream_timeout"] = 0
+	ctx, recorder = newAuthenticatedContext(t, http.MethodPost, "/api/token/", base, 1)
+	AddToken(ctx)
+	if response := decodeAPIResponse(t, recorder); !response.Success {
+		t.Fatalf("expected zero timeout to succeed: %s", response.Message)
+	}
+	if err := db.First(&token, "name = ?", "unlimited-timeout").Error; err != nil {
+		t.Fatalf("failed to load unlimited token: %v", err)
+	}
+	if token.UpstreamTimeout != 0 {
+		t.Fatalf("expected unlimited timeout 0, got %d", token.UpstreamTimeout)
+	}
+
+	base["name"] = "invalid-timeout"
+	base["upstream_timeout"] = -1
+	ctx, recorder = newAuthenticatedContext(t, http.MethodPost, "/api/token/", base, 1)
+	AddToken(ctx)
+	if response := decodeAPIResponse(t, recorder); response.Success {
+		t.Fatal("expected negative timeout to be rejected")
+	}
+}
+
 func TestTokenAutoMigrateUsesVarchar128KeyColumn(t *testing.T) {
 	db := setupTokenControllerTestDB(t)
 

@@ -164,15 +164,30 @@ func GetTokenUsage(c *gin.Context) {
 	})
 }
 
+type tokenMutationRequest struct {
+	model.Token
+	UpstreamTimeout *int `json:"upstream_timeout"`
+}
+
 func AddToken(c *gin.Context) {
-	token := model.Token{}
-	err := c.ShouldBindJSON(&token)
+	request := tokenMutationRequest{}
+	err := c.ShouldBindJSON(&request)
+	token := request.Token
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
+		return
+	}
+	if request.UpstreamTimeout == nil {
+		token.UpstreamTimeout = model.DefaultTokenUpstreamTimeout
+	} else {
+		token.UpstreamTimeout = *request.UpstreamTimeout
+	}
+	if err := model.ValidateTokenUpstreamTimeout(token.UpstreamTimeout); err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	// 非无限额度时，检查额度值是否超出有效范围
@@ -221,8 +236,13 @@ func AddToken(c *gin.Context) {
 		AllowIps:           token.AllowIps,
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
+		UpstreamTimeout:    token.UpstreamTimeout,
 	}
-	err = cleanToken.Insert()
+	if request.UpstreamTimeout != nil && *request.UpstreamTimeout == 0 {
+		err = cleanToken.InsertWithExplicitUnlimitedTimeout()
+	} else {
+		err = cleanToken.Insert()
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -250,8 +270,9 @@ func DeleteToken(c *gin.Context) {
 func UpdateToken(c *gin.Context) {
 	userId := c.GetInt("id")
 	statusOnly := c.Query("status_only")
-	token := model.Token{}
-	err := c.ShouldBindJSON(&token)
+	request := tokenMutationRequest{}
+	err := c.ShouldBindJSON(&request)
+	token := request.Token
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -259,6 +280,13 @@ func UpdateToken(c *gin.Context) {
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
+	}
+	if request.UpstreamTimeout != nil {
+		token.UpstreamTimeout = *request.UpstreamTimeout
+		if err := model.ValidateTokenUpstreamTimeout(token.UpstreamTimeout); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	if !token.UnlimitedQuota {
 		if token.RemainQuota < 0 {
@@ -299,6 +327,9 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
+		if request.UpstreamTimeout != nil {
+			cleanToken.UpstreamTimeout = token.UpstreamTimeout
+		}
 	}
 	err = cleanToken.Update()
 	if err != nil {

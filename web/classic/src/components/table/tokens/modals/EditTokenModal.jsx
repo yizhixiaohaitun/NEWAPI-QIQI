@@ -81,6 +81,7 @@ const EditTokenModal = (props) => {
     allow_ips: '',
     group: '',
     cross_group_retry: false,
+    upstream_timeout: 600,
     tokenCount: 1,
   });
 
@@ -552,7 +553,10 @@ const EditTokenModal = (props) => {
                         ? `▾ ${t('收起原生额度输入')}`
                         : `▸ ${t('使用原生额度输入')}`}
                     </div>
-                    <div style={{ display: showQuotaInput ? 'block' : 'none' }} className='mt-2'>
+                    <div
+                      style={{ display: showQuotaInput ? 'block' : 'none' }}
+                      className='mt-2'
+                    >
                       <Form.InputNumber
                         field='remain_quota'
                         label={t('额度')}
@@ -623,6 +627,26 @@ const EditTokenModal = (props) => {
                       autoClearSearchValue={false}
                       searchPosition='dropdown'
                       showClear
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.InputNumber
+                      field='upstream_timeout'
+                      label={t('上游超时（秒）')}
+                      min={0}
+                      step={1}
+                      precision={0}
+                      extraText={t('默认 600 秒；0 表示不限制超时')}
+                      rules={[
+                        { required: true, message: t('请输入上游超时') },
+                        {
+                          validator: (_rule, value) =>
+                            value >= 0
+                              ? Promise.resolve()
+                              : Promise.reject(t('上游超时不能为负数')),
+                        },
+                      ]}
                       style={{ width: '100%' }}
                     />
                   </Col>

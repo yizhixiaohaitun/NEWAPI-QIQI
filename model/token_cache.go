@@ -8,8 +8,11 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 )
 
+const tokenCacheVersion = 1
+
 func cacheSetToken(token Token) error {
 	key := common.GenerateHMAC(token.Key)
+	token.CacheVersion = tokenCacheVersion
 	token.Clean()
 	err := common.RedisHSetObj(fmt.Sprintf("token:%s", key), &token, time.Duration(common.RedisKeyCacheSeconds())*time.Second)
 	if err != nil {
@@ -59,6 +62,9 @@ func cacheGetTokenByKey(key string) (*Token, error) {
 	err := common.RedisHGetObj(fmt.Sprintf("token:%s", hmacKey), &token)
 	if err != nil {
 		return nil, err
+	}
+	if token.CacheVersion != tokenCacheVersion {
+		return nil, fmt.Errorf("stale token cache version")
 	}
 	token.Key = key
 	return &token, nil
