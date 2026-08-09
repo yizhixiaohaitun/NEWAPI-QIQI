@@ -93,7 +93,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			if c.Writer.Written() {
 				return
 			}
-			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			if newAPIError.GetErrorCode() != types.ErrorCodeUpstreamResourceInsufficient {
+				newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			}
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
@@ -263,6 +265,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		gopool.Go(func() {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
+		// Retry/channel-health logic above must see the provider's original
+		// error. Only sanitize the terminal error that crosses the client boundary.
+		newAPIError = service.SanitizeFinalRelayError(newAPIError)
 	}
 }
 

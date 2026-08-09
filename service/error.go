@@ -94,6 +94,10 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 	var errResponse dto.GeneralErrorResponse
 	responseBodyText := string(responseBody)
 	responseBodyPreview := common.LocalLogPreview(responseBodyText)
+	if IsUpstreamResourceInsufficient(resp.StatusCode, responseBodyText) {
+		logger.LogWarn(ctx, fmt.Sprintf("upstream resource insufficient (status=%d)", resp.StatusCode))
+		return newUpstreamResourceInsufficientError(resp.StatusCode)
+	}
 	buildErrWithBody := func(message string) error {
 		if message == "" {
 			return fmt.Errorf("bad response status code %d, body: %s", resp.StatusCode, responseBodyText)

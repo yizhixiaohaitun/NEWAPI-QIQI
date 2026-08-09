@@ -325,6 +325,9 @@ func runTokenMigrationCompatibilityTest(t *testing.T, db *gorm.DB, dialect strin
 	if migratedToken.Name != "legacy-token" {
 		t.Fatalf("expected migrated token name to be preserved, got %q", migratedToken.Name)
 	}
+	if migratedToken.UpstreamTimeout != model.DefaultTokenUpstreamTimeout {
+		t.Fatalf("expected migrated legacy token timeout %d, got %d", model.DefaultTokenUpstreamTimeout, migratedToken.UpstreamTimeout)
+	}
 
 	inserted := model.Token{
 		UserId:             8,
@@ -381,6 +384,7 @@ func TestAddTokenUpstreamTimeoutDefaultUnlimitedAndValidation(t *testing.T) {
 	if response := decodeAPIResponse(t, recorder); !response.Success {
 		t.Fatalf("expected zero timeout to succeed: %s", response.Message)
 	}
+	token = model.Token{}
 	if err := db.First(&token, "name = ?", "unlimited-timeout").Error; err != nil {
 		t.Fatalf("failed to load unlimited token: %v", err)
 	}
