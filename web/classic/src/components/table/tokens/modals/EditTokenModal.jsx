@@ -81,7 +81,7 @@ const EditTokenModal = (props) => {
     allow_ips: '',
     group: '',
     cross_group_retry: false,
-    upstream_timeout: 600,
+    upstream_timeout: 0,
     tokenCount: 1,
   });
 
@@ -633,18 +633,20 @@ const EditTokenModal = (props) => {
                   <Col span={24}>
                     <Form.InputNumber
                       field='upstream_timeout'
-                      label={t('上游超时（秒）')}
+                      label={t('上游请求超时')}
                       min={0}
                       step={1}
                       precision={0}
-                      extraText={t('默认 600 秒；0 表示不限制超时')}
+                      extraText={t(
+                        '单位：秒。填写 0 表示不限制时间；超时后会断开上游请求并返回 HTTP 500。',
+                      )}
                       rules={[
                         { required: true, message: t('请输入上游超时') },
                         {
                           validator: (_rule, value) =>
                             value >= 0
                               ? Promise.resolve()
-                              : Promise.reject(t('上游超时不能为负数')),
+                              : Promise.reject(t('超时时间不能为负数')),
                         },
                       ]}
                       style={{ width: '100%' }}

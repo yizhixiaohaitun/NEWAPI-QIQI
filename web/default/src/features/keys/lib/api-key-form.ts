@@ -39,7 +39,7 @@ export function getApiKeyFormSchema(t: TFunction) {
       allow_ips: z.string().optional(),
       group: z.string().optional(),
       cross_group_retry: z.boolean().optional(),
-      upstream_timeout: z.number().min(0, t('Timeout must be zero or greater')),
+      upstream_timeout: z.number().min(0, t('超时时间不能为负数')),
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
@@ -75,7 +75,7 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   allow_ips: '',
   group: DEFAULT_GROUP,
   cross_group_retry: true,
-  upstream_timeout: 600,
+  upstream_timeout: 0,
   tokenCount: 1,
 }
 

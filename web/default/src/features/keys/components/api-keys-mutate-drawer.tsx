@@ -558,7 +558,7 @@ export function ApiKeysMutateDrawer({
                       name='upstream_timeout'
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>{t('Upstream request timeout')}</FormLabel>
+                          <FormLabel>{t('上游请求超时')}</FormLabel>
                           <FormControl>
                             <Input
                               {...field}
@@ -574,7 +574,7 @@ export function ApiKeysMutateDrawer({
                           </FormControl>
                           <FormDescription>
                             {t(
-                              'Timeout in seconds. Use 0 for no timeout. Timed-out upstream requests are cancelled and return HTTP 500.'
+                              '单位：秒。填写 0 表示不限制时间；超时后会断开上游请求并返回 HTTP 500。'
                             )}
                           </FormDescription>
                           <FormMessage />

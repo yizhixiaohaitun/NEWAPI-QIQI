@@ -27,17 +27,17 @@ type Token struct {
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
 	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
 	Group              string         `json:"group" gorm:"default:''"`
-	CrossGroupRetry    bool           `json:"cross_group_retry"`                            // 跨分组重试，仅auto分组有效
-	UpstreamTimeout    int            `json:"upstream_timeout" gorm:"not null;default:600"` // seconds; 0 disables the timeout
+	CrossGroupRetry    bool           `json:"cross_group_retry"`                          // 跨分组重试，仅auto分组有效
+	UpstreamTimeout    int            `json:"upstream_timeout" gorm:"not null;default:0"` // seconds; 0 disables the timeout
 	CacheVersion       int            `json:"cache_version" gorm:"-"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
 
-const DefaultTokenUpstreamTimeout = 600
+const DefaultTokenUpstreamTimeout = 0
 
 func ValidateTokenUpstreamTimeout(seconds int) error {
 	if seconds < 0 {
-		return errors.New("上游超时不能为负数")
+		return errors.New("超时时间不能为负数")
 	}
 	return nil
 }

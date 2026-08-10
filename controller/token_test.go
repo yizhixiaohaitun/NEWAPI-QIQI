@@ -43,8 +43,9 @@ type tokenKeyResponse struct {
 }
 
 type sqliteColumnInfo struct {
-	Name string `gorm:"column:name"`
-	Type string `gorm:"column:type"`
+	Name         string  `gorm:"column:name"`
+	Type         string  `gorm:"column:type"`
+	DefaultValue *string `gorm:"column:dflt_value"`
 }
 
 type legacyToken struct {
@@ -102,6 +103,25 @@ func migrateTokenControllerTestDB(t *testing.T, db *gorm.DB) {
 	if err := db.AutoMigrate(&model.Token{}); err != nil {
 		t.Fatalf("failed to migrate token table: %v", err)
 	}
+}
+
+func getSQLiteColumnDefault(t *testing.T, db *gorm.DB, columnName string) string {
+	t.Helper()
+
+	var columns []sqliteColumnInfo
+	if err := db.Raw("PRAGMA table_info(tokens)").Scan(&columns).Error; err != nil {
+		t.Fatalf("failed to inspect token columns: %v", err)
+	}
+	for _, column := range columns {
+		if column.Name == columnName {
+			if column.DefaultValue == nil {
+				return ""
+			}
+			return *column.DefaultValue
+		}
+	}
+	t.Fatalf("column %q not found", columnName)
+	return ""
 }
 
 func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
@@ -311,6 +331,12 @@ func runTokenMigrationCompatibilityTest(t *testing.T, db *gorm.DB, dialect strin
 
 	migrateTokenControllerTestDB(t, db)
 
+	if dialect == "sqlite" {
+		if got := getSQLiteColumnDefault(t, db, "upstream_timeout"); got != "0" {
+			t.Fatalf("expected migrated upstream_timeout column default 0, got %q", got)
+		}
+	}
+
 	if got := getTokenKeyColumnType(t, db, dialect); got != "varchar(128)" {
 		t.Fatalf("expected migrated key column type varchar(128), got %q", got)
 	}
@@ -356,6 +382,9 @@ func runTokenMigrationCompatibilityTest(t *testing.T, db *gorm.DB, dialect strin
 	}
 	if fetched.Key != longKey {
 		t.Fatalf("expected long token key %q, got %q", longKey, fetched.Key)
+	}
+	if fetched.UpstreamTimeout != 0 {
+		t.Fatalf("expected database default timeout 0 after migration, got %d", fetched.UpstreamTimeout)
 	}
 }
 
