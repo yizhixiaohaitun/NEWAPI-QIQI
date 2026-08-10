@@ -40,6 +40,18 @@ func TestNewUpstreamRequestContextDeadlineAndUnlimited(t *testing.T) {
 	})
 }
 
+func TestNewUpstreamRequestContextCancelsAtDeadline(t *testing.T) {
+	ctx, cancel := NewUpstreamRequestContext(context.Background(), 1)
+	defer cancel()
+
+	select {
+	case <-ctx.Done():
+		require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream context was not cancelled at its deadline")
+	}
+}
+
 func TestNewUpstreamTimeoutErrorReturnsHTTP500(t *testing.T) {
 	err := NewUpstreamTimeoutError()
 	require.NotNil(t, err)

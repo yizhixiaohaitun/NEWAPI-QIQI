@@ -31,12 +31,20 @@ func IsUpstreamResourceInsufficient(status int, text string) bool {
 }
 
 func NewUpstreamResourceInsufficientError() *types.NewAPIError {
-	return newUpstreamResourceInsufficientError(http.StatusInternalServerError)
-}
-
-func newUpstreamResourceInsufficientError(status int) *types.NewAPIError {
 	return types.NewErrorWithStatusCode(
 		errors.New(upstreamResourceInsufficientMessage),
+		types.ErrorCodeUpstreamResourceInsufficient,
+		http.StatusInternalServerError,
+	)
+}
+
+// newRawUpstreamResourceInsufficientError marks a provider response without
+// destroying it. Retry policy, channel health and internal logs still receive
+// the provider status/message; SanitizeFinalRelayError replaces it only at the
+// terminal client boundary.
+func newRawUpstreamResourceInsufficientError(status int, raw string) *types.NewAPIError {
+	return types.NewOpenAIError(
+		errors.New(raw),
 		types.ErrorCodeUpstreamResourceInsufficient,
 		status,
 	)

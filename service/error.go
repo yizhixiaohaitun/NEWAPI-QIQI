@@ -95,8 +95,8 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 	responseBodyText := string(responseBody)
 	responseBodyPreview := common.LocalLogPreview(responseBodyText)
 	if IsUpstreamResourceInsufficient(resp.StatusCode, responseBodyText) {
-		logger.LogWarn(ctx, fmt.Sprintf("upstream resource insufficient (status=%d)", resp.StatusCode))
-		return newUpstreamResourceInsufficientError(resp.StatusCode)
+		logger.LogWarn(ctx, fmt.Sprintf("upstream resource insufficient (status=%d): %s", resp.StatusCode, responseBodyPreview))
+		return newRawUpstreamResourceInsufficientError(resp.StatusCode, responseBodyText)
 	}
 	buildErrWithBody := func(message string) error {
 		if message == "" {

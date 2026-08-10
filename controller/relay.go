@@ -93,6 +93,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			if c.Writer.Written() {
 				return
 			}
+			// This is the single terminal HTTP/WS response boundary. Keep raw
+			// provider errors available to retries, channel health and logs above.
+			newAPIError = service.SanitizeFinalRelayError(newAPIError)
 			if newAPIError.GetErrorCode() != types.ErrorCodeUpstreamResourceInsufficient {
 				newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			}
@@ -265,9 +268,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		gopool.Go(func() {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
-		// Retry/channel-health logic above must see the provider's original
-		// error. Only sanitize the terminal error that crosses the client boundary.
-		newAPIError = service.SanitizeFinalRelayError(newAPIError)
 	}
 }
 

@@ -42,6 +42,14 @@ func TestSanitizeFinalRelayError(t *testing.T) {
 	assert.NotContains(t, sanitized.Error(), "-58.829585")
 	assert.NotContains(t, sanitized.Error(), "upstream-secret")
 
+	markedRaw := newRawUpstreamResourceInsufficientError(http.StatusForbidden, raw)
+	assert.Equal(t, http.StatusForbidden, markedRaw.StatusCode)
+	assert.Contains(t, markedRaw.Error(), "-58.829585")
+	assert.Contains(t, markedRaw.Error(), "upstream-secret")
+	markedSanitized := SanitizeFinalRelayError(markedRaw)
+	assert.Equal(t, http.StatusInternalServerError, markedSanitized.StatusCode)
+	assert.Equal(t, upstreamResourceInsufficientMessage, markedSanitized.Error())
+
 	nonQuota := types.NewOpenAIError(errors.New("invalid API key"), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
 	assert.Same(t, nonQuota, SanitizeFinalRelayError(nonQuota))
 

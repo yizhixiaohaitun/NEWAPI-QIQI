@@ -401,6 +401,38 @@ func TestAddTokenUpstreamTimeoutDefaultUnlimitedAndValidation(t *testing.T) {
 	}
 }
 
+func TestUpdateTokenUpstreamTimeoutExplicitZeroAndValidation(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "timeout-update", "timeout1234token5678")
+
+	base := map[string]any{
+		"id": token.Id, "name": token.Name, "expired_time": -1,
+		"remain_quota": 100, "unlimited_quota": true,
+		"model_limits_enabled": false, "model_limits": "",
+		"group": "default", "cross_group_retry": false,
+	}
+	base["upstream_timeout"] = 0
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", base, 1)
+	UpdateToken(ctx)
+	if response := decodeAPIResponse(t, recorder); !response.Success {
+		t.Fatalf("expected explicit zero update to succeed: %s", response.Message)
+	}
+	var updated model.Token
+	if err := db.First(&updated, token.Id).Error; err != nil {
+		t.Fatalf("failed to load updated token: %v", err)
+	}
+	if updated.UpstreamTimeout != 0 {
+		t.Fatalf("expected updated timeout 0, got %d", updated.UpstreamTimeout)
+	}
+
+	base["upstream_timeout"] = -1
+	ctx, recorder = newAuthenticatedContext(t, http.MethodPut, "/api/token/", base, 1)
+	UpdateToken(ctx)
+	if response := decodeAPIResponse(t, recorder); response.Success {
+		t.Fatal("expected negative timeout update to be rejected")
+	}
+}
+
 func TestTokenAutoMigrateUsesVarchar128KeyColumn(t *testing.T) {
 	db := setupTokenControllerTestDB(t)
 
