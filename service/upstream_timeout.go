@@ -12,8 +12,12 @@ import (
 // NewUpstreamRequestContext creates the context used for one complete upstream
 // attempt. Its lifetime covers both client.Do and response body reads.
 func NewUpstreamRequestContext(parent context.Context, timeoutSeconds int) (context.Context, context.CancelFunc) {
-	if timeoutSeconds == 0 {
+	if timeoutSeconds <= 0 {
 		return context.WithCancel(parent)
+	}
+	maxSeconds := int64(time.Duration(1<<63-1) / time.Second)
+	if int64(timeoutSeconds) > maxSeconds {
+		timeoutSeconds = int(maxSeconds)
 	}
 	return context.WithTimeout(parent, time.Duration(timeoutSeconds)*time.Second)
 }

@@ -95,7 +95,19 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *common.RelayInfo, requestBody 
 				break
 			}
 		}
-		time.Sleep(time.Second * 1)
+		requestContext := c.Request.Context()
+		if info.UpstreamContext != nil {
+			requestContext = info.UpstreamContext
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-timer.C:
+		case <-requestContext.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil, requestContext.Err()
+		}
 	}
 	// 发送获取消息请求
 	return getChatDetail(a, c, info)

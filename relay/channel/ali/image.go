@@ -1,6 +1,7 @@
 package ali
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -196,8 +197,12 @@ func updateTask(info *relaycommon.RelayInfo, taskID string) (*AliResponse, error
 	url := fmt.Sprintf("%s/api/v1/tasks/%s", info.ChannelBaseUrl, taskID)
 
 	var aliResponse AliResponse
+	ctx := context.Background()
+	if info.UpstreamContext != nil {
+		ctx = info.UpstreamContext
+	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return &aliResponse, err, nil
 	}
@@ -232,7 +237,23 @@ func asyncTaskWait(c *gin.Context, info *relaycommon.RelayInfo, taskID string) (
 	var taskResponse AliResponse
 	var responseBody []byte
 
-	time.Sleep(time.Duration(5) * time.Second)
+	requestContext := c.Request.Context()
+	if info.UpstreamContext != nil {
+		requestContext = info.UpstreamContext
+	}
+	wait := func(seconds int) error {
+		timer := time.NewTimer(time.Duration(seconds) * time.Second)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return nil
+		case <-requestContext.Done():
+			return requestContext.Err()
+		}
+	}
+	if err := wait(5); err != nil {
+		return nil, nil, err
+	}
 
 	for {
 		logger.LogDebug(c, "asyncTaskWait step %d/%d, wait %d seconds", step, maxStep, waitSeconds)
@@ -241,7 +262,9 @@ func asyncTaskWait(c *gin.Context, info *relaycommon.RelayInfo, taskID string) (
 		responseBody = body
 		if err != nil {
 			logger.LogWarn(c, "asyncTaskWait UpdateTask err: "+err.Error())
-			time.Sleep(time.Duration(waitSeconds) * time.Second)
+			if waitErr := wait(waitSeconds); waitErr != nil {
+				return nil, nil, waitErr
+			}
 			continue
 		}
 
@@ -262,7 +285,9 @@ func asyncTaskWait(c *gin.Context, info *relaycommon.RelayInfo, taskID string) (
 		if step >= maxStep {
 			break
 		}
-		time.Sleep(time.Duration(waitSeconds) * time.Second)
+		if err := wait(waitSeconds); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	return nil, nil, fmt.Errorf("aliAsyncTaskWait timeout")

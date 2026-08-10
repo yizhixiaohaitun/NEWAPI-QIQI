@@ -20,6 +20,16 @@ func TestNewUpstreamRequestContextDeadlineAndUnlimited(t *testing.T) {
 		assert.WithinDuration(t, started.Add(10*time.Second), deadline, time.Second)
 	})
 
+	t.Run("huge timeout does not overflow into an expired deadline", func(t *testing.T) {
+		ctx, cancel := NewUpstreamRequestContext(context.Background(), int(^uint(0)>>1))
+		defer cancel()
+
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok)
+		assert.True(t, deadline.After(time.Now()))
+		assert.NoError(t, ctx.Err())
+	})
+
 	t.Run("zero has no deadline", func(t *testing.T) {
 		ctx, cancel := NewUpstreamRequestContext(context.Background(), 0)
 		_, hasDeadline := ctx.Deadline()

@@ -279,6 +279,9 @@ func getChatDetail(a *Adaptor, c *gin.Context, info *relaycommon.RelayInfo) (*ht
 }
 
 func doRequest(req *http.Request, info *relaycommon.RelayInfo) (*http.Response, error) {
+	if info.UpstreamContext != nil {
+		req = req.WithContext(info.UpstreamContext)
+	}
 	var client *http.Client
 	var err error // 声明 err 变量
 	if info.ChannelSetting.Proxy != "" {

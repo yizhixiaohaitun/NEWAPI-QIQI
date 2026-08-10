@@ -40,9 +40,12 @@ func getAwsErrorStatusCode(err error) int {
 	return http.StatusInternalServerError
 }
 
-func newAwsInvokeContext() (context.Context, context.CancelFunc) {
+func newAwsInvokeContext(info *relaycommon.RelayInfo) (context.Context, context.CancelFunc) {
+	if info != nil && info.UpstreamContext != nil {
+		return context.WithCancel(info.UpstreamContext)
+	}
 	if common.RelayTimeout <= 0 {
-		return context.Background(), func() {}
+		return context.WithCancel(context.Background())
 	}
 	return context.WithTimeout(context.Background(), time.Duration(common.RelayTimeout)*time.Second)
 }
@@ -223,7 +226,7 @@ func getAwsModelID(requestModel string) string {
 
 func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NewAPIError, *dto.Usage) {
 
-	ctx, cancel := newAwsInvokeContext()
+	ctx, cancel := newAwsInvokeContext(info)
 	defer cancel()
 
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
@@ -253,7 +256,7 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types
 }
 
 func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NewAPIError, *dto.Usage) {
-	ctx, cancel := newAwsInvokeContext()
+	ctx, cancel := newAwsInvokeContext(info)
 	defer cancel()
 
 	awsResp, err := a.AwsClient.InvokeModelWithResponseStream(ctx, a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput))
@@ -296,7 +299,7 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 // Nova模型处理函数
 func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NewAPIError, *dto.Usage) {
 
-	ctx, cancel := newAwsInvokeContext()
+	ctx, cancel := newAwsInvokeContext(info)
 	defer cancel()
 
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))

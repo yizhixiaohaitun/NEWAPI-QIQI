@@ -375,6 +375,7 @@ func TestAddTokenUpstreamTimeoutDefaultUnlimitedAndValidation(t *testing.T) {
 
 	base["name"] = "unlimited-timeout"
 	base["upstream_timeout"] = 0
+	token = model.Token{}
 	ctx, recorder = newAuthenticatedContext(t, http.MethodPost, "/api/token/", base, 1)
 	AddToken(ctx)
 	if response := decodeAPIResponse(t, recorder); !response.Success {

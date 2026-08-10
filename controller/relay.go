@@ -448,6 +448,10 @@ func RelayMidjourney(c *gin.Context) {
 		return
 	}
 
+	upstreamCtx, cancelUpstream := service.NewUpstreamRequestContext(c.Request.Context(), relayInfo.UpstreamTimeout)
+	defer cancelUpstream()
+	c.Request = c.Request.WithContext(upstreamCtx)
+
 	var mjErr *dto.MidjourneyResponse
 	switch relayInfo.RelayMode {
 	case relayconstant.RelayModeMidjourneyNotify:
@@ -462,6 +466,16 @@ func RelayMidjourney(c *gin.Context) {
 		mjErr = relay.RelayMidjourneySubmit(c, relayInfo)
 	}
 	//err = relayMidjourneySubmit(c, relayMode)
+	if errors.Is(upstreamCtx.Err(), context.DeadlineExceeded) {
+		if !c.Writer.Written() {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"description": "上游请求超时",
+				"type":        "upstream_error",
+				"code":        string(types.ErrorCodeUpstreamTimeout),
+			})
+		}
+		return
+	}
 	log.Println(mjErr)
 	if mjErr != nil {
 		statusCode := http.StatusBadRequest
@@ -584,7 +598,13 @@ func RelayTask(c *gin.Context) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		upstreamCtx, cancelUpstream := service.NewUpstreamRequestContext(c.Request.Context(), relayInfo.UpstreamTimeout)
+		relayInfo.UpstreamContext = upstreamCtx
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
+		cancelUpstream()
+		if errors.Is(upstreamCtx.Err(), context.DeadlineExceeded) {
+			taskErr = service.TaskErrorFromAPIError(service.NewUpstreamTimeoutError())
+		}
 		if taskErr == nil {
 			break
 		}
@@ -654,6 +674,9 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {
 	if taskErr == nil {
+		return false
+	}
+	if taskErr.Code == string(types.ErrorCodeUpstreamTimeout) {
 		return false
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {

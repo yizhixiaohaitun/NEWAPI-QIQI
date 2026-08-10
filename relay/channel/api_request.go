@@ -411,10 +411,24 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		targetHeader.Set(key, value)
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
-	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
+	requestContext := c.Request.Context()
+	if info != nil && info.UpstreamContext != nil {
+		requestContext = info.UpstreamContext
+	}
+	targetConn, _, err := websocket.DefaultDialer.DialContext(requestContext, fullRequestURL, targetHeader)
 	if err != nil {
 		return nil, fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err)
 	}
+	if deadline, ok := requestContext.Deadline(); ok {
+		_ = targetConn.SetReadDeadline(deadline)
+		_ = targetConn.SetWriteDeadline(deadline)
+	}
+	// gorilla/websocket only applies DialContext to the handshake. Closing the
+	// connection is required to unblock reads and writes after the deadline.
+	go func() {
+		<-requestContext.Done()
+		_ = targetConn.Close()
+	}()
 	// send request body
 	//all, err := io.ReadAll(requestBody)
 	//err = service.WssString(c, targetConn, string(all))
