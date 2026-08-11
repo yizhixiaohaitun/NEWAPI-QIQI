@@ -742,6 +742,7 @@ type TaskSubmitReq struct {
 	Duration       int                    `json:"duration,omitempty"`
 	Seconds        string                 `json:"seconds,omitempty"`
 	InputReference string                 `json:"input_reference,omitempty"`
+	Input          map[string]interface{} `json:"input,omitempty"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -777,6 +778,27 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 				if v, err := strconv.Atoi(durationStr); err == nil {
 					t.Duration = v
 				}
+			}
+		}
+	}
+
+	// Some OpenAI-compatible video providers document generation parameters
+	// under input. Normalize the shared fields here so validation and billing use
+	// one canonical request regardless of which accepted shape the client sent.
+	if t.Input != nil {
+		if strings.TrimSpace(t.Prompt) == "" {
+			if prompt, ok := t.Input["prompt"].(string); ok {
+				t.Prompt = prompt
+			}
+		}
+		if t.Duration == 0 {
+			switch duration := t.Input["duration"].(type) {
+			case float64:
+				t.Duration = int(duration)
+			case string:
+				t.Duration, _ = strconv.Atoi(duration)
+			case json.Number:
+				t.Duration, _ = strconv.Atoi(duration.String())
 			}
 		}
 	}
