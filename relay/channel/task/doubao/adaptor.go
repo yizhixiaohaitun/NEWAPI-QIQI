@@ -134,19 +134,27 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	return nil
 }
 
-// EstimateBilling 根据请求 metadata 中的输出分辨率与是否包含视频输入，返回相对基准价的计费 OtherRatio。
+// EstimateBilling 根据规范化后的时长、输出分辨率与是否包含视频输入返回计费 OtherRatio。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
 	}
+
+	ratios := make(map[string]float64)
+	if duration := resolveDuration(&req); duration > 0 {
+		ratios["seconds"] = float64(duration)
+	}
+
 	hasVideo := hasVideoInMetadata(req.Metadata)
 	resolution, _ := req.Metadata["resolution"].(string)
-	ratio, ok := GetVideoInputRatio(info.OriginModelName, resolution, hasVideo)
-	if !ok || ratio == 1.0 {
+	if ratio, ok := GetVideoInputRatio(info.OriginModelName, resolution, hasVideo); ok && ratio != 1.0 {
+		ratios["video_input"] = ratio
+	}
+	if len(ratios) == 0 {
 		return nil
 	}
-	return map[string]float64{"video_input": ratio}
+	return ratios
 }
 
 // hasVideoInMetadata 直接检查 metadata 的 content 数组是否包含 video_url 条目，
@@ -270,6 +278,20 @@ func (a *TaskAdaptor) GetChannelName() string {
 	return ChannelName
 }
 
+// resolveDuration accepts the standard duration field and keeps legacy seconds
+// compatibility. The standard field wins when both are present so billing and
+// the upstream payload always use the same value.
+func resolveDuration(req *relaycommon.TaskSubmitReq) int {
+	if req == nil {
+		return 0
+	}
+	if req.Duration > 0 {
+		return req.Duration
+	}
+	seconds, _ := strconv.Atoi(req.Seconds)
+	return seconds
+}
+
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
 	r := requestPayload{
 		Model:   req.Model,
@@ -293,8 +315,8 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
 
-	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
-		r.Duration = lo.ToPtr(dto.IntValue(sec))
+	if duration := resolveDuration(req); duration > 0 {
+		r.Duration = lo.ToPtr(dto.IntValue(duration))
 	}
 
 	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
