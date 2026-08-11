@@ -132,11 +132,19 @@ func GetAdaptor(apiType int) channel.Adaptor {
 }
 
 func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
+	// A route-specific platform describes the wire protocol and must take
+	// precedence over the selected channel type. For example /async/tasks may
+	// use a DoubaoVideo channel while still requiring the Seedance async
+	// protocol adaptor. Routes without an explicit platform retain the legacy
+	// channel-type dispatch used by /v1/video/generations.
+	if platform := constant.TaskPlatform(c.GetString("platform")); platform != "" {
+		return platform
+	}
 	channelType := c.GetInt("channel_type")
 	if channelType > 0 {
 		return constant.TaskPlatform(strconv.Itoa(channelType))
 	}
-	return constant.TaskPlatform(c.GetString("platform"))
+	return ""
 }
 
 func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {

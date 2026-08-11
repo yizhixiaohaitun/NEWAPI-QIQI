@@ -75,6 +75,30 @@ func TestNestedRequestBillingAndForwarding(t *testing.T) {
 	assert.NotContains(t, payload, "duration")
 }
 
+func TestOptionalDefaultsAreForwarded(t *testing.T) {
+	body := strings.Replace(validRequest, `,
+    "audio":false`, "", 1)
+	body = strings.Replace(body, `,
+    "n":1`, "", 1)
+	context, info := newTaskContext(t, body)
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+	reader, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	payloadBody, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(payloadBody, &payload))
+	input := payload["input"].(map[string]any)
+	assert.Equal(t, float64(1), input["n"])
+	assert.Equal(t, true, input["audio"])
+}
+
+func TestExplicitNOneIsAccepted(t *testing.T) {
+	context, info := newTaskContext(t, validRequest)
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(context, info))
+}
+
 func Test1080pBillingAndDurationBoundary(t *testing.T) {
 	body := strings.ReplaceAll(validRequest, `"duration":"5"`, `"duration":12`)
 	body = strings.ReplaceAll(body, `"resolution":"720P"`, `"resolution":"1080p"`)
@@ -111,6 +135,9 @@ func TestSeedanceValidationBoundaries(t *testing.T) {
 		{"local path", func(s string) string {
 			return strings.Replace(s, `"video_references":["YQ=="]`, `"video_references":["C:\\\\secret.mp4"]`, 1)
 		}, "local file paths"},
+		{"empty reference object", func(s string) string {
+			return strings.Replace(s, `"video_references":["YQ=="]`, `"video_references":[{"strength":0.8}]`, 1)
+		}, "must contain"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -125,7 +152,7 @@ func TestSeedanceValidationBoundaries(t *testing.T) {
 func TestCreateResponsePreservesEnvelopeAndHidesUpstreamID(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
-	responseBody := `{"success":true,"message":"created","data":{"task_id":"upstream-private","status":"PENDING","action":"generate","progress":0,"platform":"seedance","model":"seedance-2.0"}}`
+	responseBody := `{"success":true,"message":"created","data":{"task_id":"upstream-private","id":"upstream-create-id","data":{"id":"upstream-create-nested"},"status":"PENDING","action":"generate","progress":0,"platform":"seedance","model":"seedance-2.0"}}`
 	response := &http.Response{Body: io.NopCloser(strings.NewReader(responseBody))}
 	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"}}
 
@@ -134,12 +161,12 @@ func TestCreateResponsePreservesEnvelopeAndHidesUpstreamID(t *testing.T) {
 	assert.Equal(t, "upstream-private", upstreamID)
 	assert.Contains(t, string(stored), "upstream-private")
 	assert.NotContains(t, recorder.Body.String(), "upstream-private")
-	assert.JSONEq(t, `{"success":true,"message":"created","data":{"task_id":"task_public","status":"PENDING","action":"generate","progress":0,"platform":"seedance","model":"seedance-2.0"}}`, recorder.Body.String())
+	assert.JSONEq(t, `{"success":true,"message":"created","data":{"task_id":"task_public","id":"task_public","data":{"id":"task_public"},"status":"PENDING","action":"generate","progress":0,"platform":"seedance","model":"seedance-2.0"}}`, recorder.Body.String())
 }
 
 func TestQuerySuccessFailureAndPublicIDReplacement(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	successBody := []byte(`{"success":true,"message":"ok","data":{"task_id":"upstream-private","status":"SUCCESS","progress":100,"fail_reason":"","data":{"outputs":[{"url":"https://cdn.example/video.mp4","type":"video"}]}}}`)
+	successBody := []byte(`{"success":true,"message":"ok","data":{"task_id":"upstream-private","status":"SUCCESS","progress":100,"fail_reason":"","data":{"id":"upstream-result-id","outputs":[{"url":"https://cdn.example/video.mp4","type":"video"}]}}}`)
 	result, err := adaptor.ParseTaskResult(successBody)
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusSuccess, result.Status)
@@ -149,6 +176,7 @@ func TestQuerySuccessFailureAndPublicIDReplacement(t *testing.T) {
 	converted, err := adaptor.ConvertTaskResponse(&model.Task{TaskID: "task_public", Data: successBody})
 	require.NoError(t, err)
 	assert.NotContains(t, string(converted), "upstream-private")
+	assert.NotContains(t, string(converted), "upstream-result-id")
 	assert.Contains(t, string(converted), "task_public")
 	assert.Contains(t, string(converted), "outputs")
 

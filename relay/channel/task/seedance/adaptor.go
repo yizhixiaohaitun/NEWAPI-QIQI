@@ -124,14 +124,19 @@ func validateReferenceValue(value any) error {
 		}
 		return fmt.Errorf("media reference must be a URL, data URI, or base64 value")
 	case map[string]any:
-		// Providers may add descriptive fields to reference objects. Validate only
-		// recognized payload fields and preserve the complete object for forwarding.
+		// Providers may add descriptive fields to reference objects. Require at
+		// least one usable payload field while preserving every extension field.
+		hasPayload := false
 		for _, key := range []string{"url", "image_url", "video_url", "audio_url", "data", "base64"} {
 			if nested, ok := item[key]; ok {
 				if err := validateReferenceValue(nested); err != nil {
 					return fmt.Errorf("%s: %w", key, err)
 				}
+				hasPayload = true
 			}
+		}
+		if !hasPayload {
+			return fmt.Errorf("media reference object must contain url, image_url, video_url, audio_url, data, or base64")
 		}
 		return nil
 	default:
@@ -190,8 +195,10 @@ func validateSeedanceRequest(req relaycommon.TaskSubmitReq) error {
 	if ratio := inputString(input, "aspect_ratio"); ratio != "16:9" && ratio != "9:16" && ratio != "1:1" {
 		return fmt.Errorf("input.aspect_ratio must be 16:9, 9:16, or 1:1")
 	}
-	if n, ok := parsePositiveInt(input["n"]); !ok || n != 1 {
-		return fmt.Errorf("input.n must be 1")
+	if rawN, exists := input["n"]; exists {
+		if n, ok := parsePositiveInt(rawN); !ok || n != 1 {
+			return fmt.Errorf("input.n must be 1")
+		}
 	}
 	if audio, exists := input["audio"]; exists {
 		if _, ok := audio.(bool); !ok {
@@ -222,6 +229,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 	if err := validateSeedanceRequest(req); err != nil {
 		return invalidRequest(err)
+	}
+	if _, exists := req.Input["n"]; !exists {
+		req.Input["n"] = 1
+	}
+	if _, exists := req.Input["audio"]; !exists {
+		req.Input["audio"] = true
 	}
 	info.Action = constant.TaskActionGenerate
 	c.Set("task_request", req)
@@ -265,6 +278,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	input["resolution"] = strings.ToLower(inputString(input, "resolution"))
 	input["aspect_ratio"] = inputString(input, "aspect_ratio")
 	input["n"] = 1
+	if _, exists := input["audio"]; !exists {
+		input["audio"] = true
+	}
 	payload, err := common.Marshal(map[string]any{"model": info.UpstreamModelName, "input": input})
 	if err != nil {
 		return nil, err
@@ -304,7 +320,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	if strings.TrimSpace(task.TaskID) == "" {
 		return "", nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
 	}
-	publicBody, err := sjson.SetBytes(body, "data.task_id", info.PublicTaskID)
+	publicBody, err := rewritePublicTaskIDs(body, info.PublicTaskID)
 	if err != nil {
 		return "", nil, service.TaskErrorWrapper(err, "rewrite_response_failed", http.StatusInternalServerError)
 	}
@@ -403,11 +419,38 @@ func (a *TaskAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error
 	return result, nil
 }
 
+func rewritePublicTaskIDs(body []byte, publicTaskID string) ([]byte, error) {
+	result, err := sjson.SetBytes(body, "data.task_id", publicTaskID)
+	if err != nil {
+		return nil, err
+	}
+	var envelope map[string]any
+	if err := common.Unmarshal(body, &envelope); err != nil {
+		return nil, err
+	}
+	data, _ := envelope["data"].(map[string]any)
+	if _, exists := data["id"]; exists {
+		result, err = sjson.SetBytes(result, "data.id", publicTaskID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if nested, ok := data["data"].(map[string]any); ok {
+		if _, exists := nested["id"]; exists {
+			result, err = sjson.SetBytes(result, "data.data.id", publicTaskID)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return result, nil
+}
+
 func (a *TaskAdaptor) ConvertTaskResponse(task *model.Task) ([]byte, error) {
 	if len(task.Data) == 0 {
 		return nil, fmt.Errorf("task response is empty")
 	}
-	return sjson.SetBytes(task.Data, "data.task_id", task.TaskID)
+	return rewritePublicTaskIDs(task.Data, task.TaskID)
 }
 
 func (a *TaskAdaptor) GetModelList() []string { return []string{"seedance-2.0", "seedance-2.0-fast"} }
