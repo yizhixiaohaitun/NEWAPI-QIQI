@@ -16,6 +16,14 @@ func SetVideoRouter(router *gin.Engine) {
 		videoProxyRouter.GET("/videos/:task_id/content", controller.VideoProxy)
 	}
 
+	seedanceRouter := router.Group("/async")
+	seedanceRouter.Use(middleware.RouteTag("relay"))
+	seedanceRouter.Use(middleware.TokenAuth(), middleware.ContextRequestAudit(), middleware.Distribute())
+	{
+		seedanceRouter.POST("/tasks", controller.RelayTask)
+		seedanceRouter.GET("/tasks/:task_id", controller.RelayTaskFetch)
+	}
+
 	videoV1Router := router.Group("/v1")
 	videoV1Router.Use(middleware.RouteTag("relay"))
 	videoV1Router.Use(middleware.TokenAuth(), middleware.ContextRequestAudit(), middleware.Distribute())

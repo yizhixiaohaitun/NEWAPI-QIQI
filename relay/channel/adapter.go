@@ -81,3 +81,9 @@ type TaskAdaptor interface {
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }
+
+// TaskResponseConverter preserves a provider's documented asynchronous task
+// envelope while allowing the relay to replace private upstream identifiers.
+type TaskResponseConverter interface {
+	ConvertTaskResponse(originTask *model.Task) ([]byte, error)
+}

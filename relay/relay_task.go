@@ -386,6 +386,25 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
+	isDocumentTaskAPI := strings.HasPrefix(c.Request.URL.Path, "/async/tasks/")
+
+	if isDocumentTaskAPI {
+		adaptor := GetTaskAdaptor(originTask.Platform)
+		if adaptor == nil {
+			taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("invalid task platform: %s", originTask.Platform), "invalid_task_platform", http.StatusBadRequest)
+			return
+		}
+		converter, ok := adaptor.(channel.TaskResponseConverter)
+		if !ok {
+			taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("task response conversion not implemented: %s", originTask.Platform), "not_implemented", http.StatusNotImplemented)
+			return
+		}
+		respBody, err = converter.ConvertTaskResponse(originTask)
+		if err != nil {
+			taskResp = service.TaskErrorWrapper(err, "convert_task_response_failed", http.StatusInternalServerError)
+		}
+		return
+	}
 
 	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
 	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
