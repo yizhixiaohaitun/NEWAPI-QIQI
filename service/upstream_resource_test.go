@@ -18,6 +18,8 @@ func TestIsUpstreamResourceInsufficient(t *testing.T) {
 		want   bool
 	}{
 		{"sample", 403, "status_code=429, 用户额度不足, 剩余额度: ＄-58.829585 (request id: secret)", true},
+		{"chinese pre-consume failure", 403, "status_code=403, 预扣费额度失败, 用户剩余额度: $0.226296, 需要预扣费额度: $0.576756 (request id: upstream-example)", true},
+		{"incomplete chinese pre-consume failure", 403, "预扣费额度失败, 用户剩余额度: $0.226296", false},
 		{"quota", 429, "insufficient quota", true},
 		{"balance", 403, "Insufficient balance", true},
 		{"credit", 403, "credit exhausted", true},
@@ -31,7 +33,7 @@ func TestIsUpstreamResourceInsufficient(t *testing.T) {
 }
 
 func TestSanitizeFinalRelayError(t *testing.T) {
-	raw := "status_code=429, 用户额度不足, 剩余额度: ＄-58.829585 (request id: upstream-secret)"
+	raw := "status_code=403, 预扣费额度失败, 用户剩余额度: $0.226296, 需要预扣费额度: $0.576756 (request id: upstream-example)"
 	upstream := types.NewOpenAIError(errors.New(raw), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
 	sanitized := SanitizeFinalRelayError(upstream)
 	require.NotSame(t, upstream, sanitized)
@@ -39,16 +41,24 @@ func TestSanitizeFinalRelayError(t *testing.T) {
 	assert.Equal(t, types.ErrorCodeUpstreamResourceInsufficient, sanitized.GetErrorCode())
 	assert.Equal(t, upstreamResourceInsufficientMessage, sanitized.ToOpenAIError().Message)
 	assert.Equal(t, upstreamResourceInsufficientMessage, sanitized.ToClaudeError().Message)
-	assert.NotContains(t, sanitized.Error(), "-58.829585")
-	assert.NotContains(t, sanitized.Error(), "upstream-secret")
+	assert.Equal(t, "status_code=500, "+upstreamResourceInsufficientMessage, PublicRelayErrorLogContent(upstream))
+	assert.NotContains(t, sanitized.Error(), "0.226296")
+	assert.NotContains(t, sanitized.Error(), "0.576756")
+	assert.NotContains(t, sanitized.Error(), "upstream-example")
 
 	markedRaw := newRawUpstreamResourceInsufficientError(http.StatusForbidden, raw)
 	assert.Equal(t, http.StatusForbidden, markedRaw.StatusCode)
-	assert.Contains(t, markedRaw.Error(), "-58.829585")
-	assert.Contains(t, markedRaw.Error(), "upstream-secret")
+	assert.Contains(t, markedRaw.Error(), "0.226296")
+	assert.Contains(t, markedRaw.Error(), "0.576756")
+	assert.Contains(t, markedRaw.Error(), "upstream-example")
 	markedSanitized := SanitizeFinalRelayError(markedRaw)
 	assert.Equal(t, http.StatusInternalServerError, markedSanitized.StatusCode)
 	assert.Equal(t, upstreamResourceInsufficientMessage, markedSanitized.Error())
+
+	// Retry and channel-health code continues to receive the untouched error.
+	assert.Equal(t, http.StatusForbidden, markedRaw.StatusCode)
+	assert.Equal(t, types.ErrorCodeUpstreamResourceInsufficient, markedRaw.GetErrorCode())
+	assert.Contains(t, markedRaw.Error(), "upstream-example")
 
 	nonQuota := types.NewOpenAIError(errors.New("invalid API key"), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
 	assert.Same(t, nonQuota, SanitizeFinalRelayError(nonQuota))

@@ -17,7 +17,9 @@ var embedded429Pattern = regexp.MustCompile(`(?i)(status[_ ]?code|http status|st
 // upstream provider. Callers must not use it for locally generated errors.
 func IsUpstreamResourceInsufficient(status int, text string) bool {
 	lower := strings.ToLower(text)
-	resource := strings.Contains(text, "额度不足") || strings.Contains(text, "余额不足") ||
+	chinesePreConsumeFailure := strings.Contains(text, "预扣费额度失败") &&
+		strings.Contains(text, "用户剩余额度") && strings.Contains(text, "需要预扣费额度")
+	resource := chinesePreConsumeFailure || strings.Contains(text, "额度不足") || strings.Contains(text, "余额不足") ||
 		strings.Contains(lower, "insufficient quota") || strings.Contains(lower, "quota exceeded") ||
 		strings.Contains(lower, "quota exhausted") || strings.Contains(lower, "insufficient balance") ||
 		strings.Contains(lower, "credit exhausted") || strings.Contains(lower, "insufficient credit") ||
@@ -65,4 +67,10 @@ func SanitizeFinalRelayError(err *types.NewAPIError) *types.NewAPIError {
 		return err
 	}
 	return NewUpstreamResourceInsufficientError()
+}
+
+// PublicRelayErrorLogContent returns the error text safe to persist in the
+// request log that is exposed through the API.
+func PublicRelayErrorLogContent(err *types.NewAPIError) string {
+	return SanitizeFinalRelayError(err).MaskSensitiveErrorWithStatusCode()
 }

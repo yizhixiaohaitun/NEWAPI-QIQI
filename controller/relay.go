@@ -436,7 +436,9 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			startTime = time.Now()
 		}
 		useTimeSeconds := int(time.Since(startTime).Seconds())
-		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
+		// Keep the original error above for retry and channel-health decisions, but
+		// never persist provider balances or request IDs in user-visible error logs.
+		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, service.PublicRelayErrorLogContent(err), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
 
 }
