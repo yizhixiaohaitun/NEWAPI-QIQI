@@ -32,7 +32,7 @@ func newJSONTaskContext(t *testing.T, body string) (*gin.Context, *relaycommon.R
 }
 
 func TestMiniMaxH3NestedRequestIsNormalizedForBillingAndForwarding(t *testing.T) {
-	body := `{"model":"MiniMax-H3","input":{"prompt":"a comet","aspect_ratio":"16:9","resolution":"2K","duration":8,"audio":true,"n":1}}`
+	body := `{"model":"MiniMax-H3","callback_url":"https://client.example/video-callback","input":{"prompt":"a comet","aspect_ratio":"16:9","resolution":"2K","duration":8,"audio":true,"n":1}}`
 	context, info := newJSONTaskContext(t, body)
 	adaptor := &TaskAdaptor{}
 
@@ -45,8 +45,9 @@ func TestMiniMaxH3NestedRequestIsNormalizedForBillingAndForwarding(t *testing.T)
 	require.NoError(t, err)
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(forwarded, &payload))
-	assert.Len(t, payload, 2)
+	assert.Len(t, payload, 3)
 	assert.Equal(t, "MiniMax-H3", payload["model"])
+	assert.Equal(t, "https://client.example/video-callback", payload["callback_url"])
 	assert.NotContains(t, payload, "prompt")
 	assert.NotContains(t, payload, "duration")
 	input, ok := payload["input"].(map[string]any)
@@ -73,6 +74,28 @@ func TestMiniMaxH3TopLevelRequestIsForwardedAsDocumentedInput(t *testing.T) {
 	assert.Equal(t, "a lighthouse", input["prompt"])
 	assert.Equal(t, float64(6), input["duration"])
 	assert.Equal(t, "9:16", input["aspect_ratio"])
+}
+
+func TestBuildRequestHeaderForwardsIdempotencyKeyOnlyForMiniMaxH3(t *testing.T) {
+	context, info := newJSONTaskContext(t, `{}`)
+	context.Request.Header.Set("Idempotency-Key", " create-video-123 ")
+	adaptor := &TaskAdaptor{apiKey: "upstream-key"}
+
+	t.Run("MiniMax-H3", func(t *testing.T) {
+		upstream := httptest.NewRequest(http.MethodPost, "https://upstream.example/v1/videos", nil)
+		require.NoError(t, adaptor.BuildRequestHeader(context, upstream, info))
+		assert.Equal(t, "create-video-123", upstream.Header.Get("Idempotency-Key"))
+	})
+
+	t.Run("other Sora protocol", func(t *testing.T) {
+		otherInfo := &relaycommon.RelayInfo{
+			TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+			ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "sora-2"},
+		}
+		upstream := httptest.NewRequest(http.MethodPost, "https://upstream.example/v1/videos", nil)
+		require.NoError(t, adaptor.BuildRequestHeader(context, upstream, otherInfo))
+		assert.Empty(t, upstream.Header.Get("Idempotency-Key"))
+	})
 }
 
 func TestDoResponseAcceptsNestedTaskID(t *testing.T) {

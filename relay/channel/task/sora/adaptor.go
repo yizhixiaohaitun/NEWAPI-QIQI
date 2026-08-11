@@ -227,6 +227,14 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
+	// MiniMax-H3 documents Idempotency-Key for safely retrying task creation.
+	// Keep this scoped to that protocol so existing generic/Sora providers do
+	// not unexpectedly receive a client-controlled header.
+	if isMiniMaxH3Model(info.UpstreamModelName) {
+		if idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key")); idempotencyKey != "" {
+			req.Header.Set("Idempotency-Key", idempotencyKey)
+		}
+	}
 	return nil
 }
 
@@ -264,10 +272,15 @@ func buildMiniMaxH3Body(bodyMap map[string]interface{}, req relaycommon.TaskSubm
 		}
 	}
 
-	return common.Marshal(map[string]interface{}{
+	payload := map[string]interface{}{
 		"model": upstreamModel,
 		"input": input,
-	})
+	}
+	// callback_url is part of the documented root request rather than input.
+	if callbackURL, exists := bodyMap["callback_url"]; exists {
+		payload["callback_url"] = callbackURL
+	}
+	return common.Marshal(payload)
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
