@@ -1,8 +1,11 @@
 package service
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/types"
@@ -30,6 +33,22 @@ func TestIsUpstreamResourceInsufficient(t *testing.T) {
 			assert.Equal(t, tt.want, IsUpstreamResourceInsufficient(tt.status, tt.text))
 		})
 	}
+}
+
+func TestRelayErrorHandlerMarksChinesePreConsumeFailureForRetry(t *testing.T) {
+	raw := `{"error":{"message":"预扣费额度失败, 用户剩余额度: $0.001, 需要预扣费额度: $0.25 (request id: upstream-secret)"}}`
+	resp := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Body:       io.NopCloser(strings.NewReader(raw)),
+		Header:     make(http.Header),
+	}
+
+	err := RelayErrorHandler(context.Background(), resp, true)
+	require.NotNil(t, err)
+	assert.Equal(t, types.ErrorCodeUpstreamResourceInsufficient, err.GetErrorCode())
+	assert.Equal(t, http.StatusForbidden, err.StatusCode)
+	assert.Contains(t, err.Error(), "用户剩余额度")
+	assert.Contains(t, err.Error(), "upstream-secret")
 }
 
 func TestSanitizeFinalRelayError(t *testing.T) {
@@ -69,4 +88,11 @@ func TestSanitizeFinalRelayError(t *testing.T) {
 		http.StatusForbidden,
 	)
 	assert.Same(t, localQuota, SanitizeFinalRelayError(localQuota))
+
+	localPreConsume := types.NewErrorWithStatusCode(
+		errors.New("预扣费额度失败, 用户剩余额度: $0.001, 需要预扣费额度: $0.25"),
+		types.ErrorCodePreConsumeTokenQuotaFailed,
+		http.StatusForbidden,
+	)
+	assert.Same(t, localPreConsume, SanitizeFinalRelayError(localPreConsume))
 }

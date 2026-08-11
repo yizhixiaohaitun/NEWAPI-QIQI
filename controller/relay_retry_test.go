@@ -57,6 +57,19 @@ func TestQiqiEC003ResponsesResourceMismatchDoesNotRetry(t *testing.T) {
 	assert.False(t, shouldRetry(ctx, mismatch, 2))
 }
 
+func TestUpstreamPreConsumeFailureRetriesWhenForbidden(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
+
+	upstream := types.NewOpenAIError(
+		fmt.Errorf("预扣费额度失败, 用户剩余额度: $0.001, 需要预扣费额度: $0.25"),
+		types.ErrorCodeUpstreamResourceInsufficient,
+		http.StatusForbidden,
+	)
+	assert.True(t, shouldRetry(ctx, upstream, 1))
+	assert.False(t, shouldRetry(ctx, upstream, 0))
+}
+
 func TestRetryLimitForEarlyResponsesStreamError(t *testing.T) {
 	setting := operation_setting.GetQiqiSetting()
 	original := *setting

@@ -57,7 +57,13 @@ func newRawUpstreamResourceInsufficientError(status int, raw string) *types.NewA
 // provider status/body while the terminal client response cannot leak balance
 // or request-id details.
 func SanitizeFinalRelayError(err *types.NewAPIError) *types.NewAPIError {
-	if err == nil || err.GetErrorCode() == types.ErrorCodeInsufficientUserQuota {
+	if err == nil {
+		return err
+	}
+	// These errors originate from this instance's own billing path, not from a
+	// provider. Keep their existing client contract unchanged.
+	if err.GetErrorCode() == types.ErrorCodeInsufficientUserQuota ||
+		err.GetErrorCode() == types.ErrorCodePreConsumeTokenQuotaFailed {
 		return err
 	}
 	if err.GetErrorCode() == types.ErrorCodeUpstreamResourceInsufficient {

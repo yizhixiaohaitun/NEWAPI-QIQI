@@ -368,6 +368,12 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if types.IsSkipRetryError(openaiErr) {
 		return false
 	}
+	// Upstream NEWAPI-compatible services can report their own pre-consume
+	// exhaustion as HTTP 403. Retry the marked provider resource failure while
+	// leaving ordinary 403 errors under the configured status-code policy.
+	if openaiErr.GetErrorCode() == types.ErrorCodeUpstreamResourceInsufficient {
+		return retryTimes > 0
+	}
 	if retryTimes <= 0 {
 		return false
 	}
