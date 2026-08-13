@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,6 +100,35 @@ func TestExplicitNOneIsAccepted(t *testing.T) {
 	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(context, info))
 }
 
+func TestResolutionBillingRatios(t *testing.T) {
+	tests := []struct {
+		resolution string
+		wantRatio  float64
+		wantQuota  float64
+	}{
+		{resolution: "480p", wantRatio: 8.0 / 15.0, wantQuota: 80.0 / 3.0},
+		{resolution: "720p", wantRatio: 1, wantQuota: 50},
+		{resolution: "1080p", wantRatio: 2.5, wantQuota: 125},
+	}
+
+	for _, test := range tests {
+		t.Run(test.resolution, func(t *testing.T) {
+			body := strings.Replace(validRequest, "720P", test.resolution, 1)
+			context, info := newTaskContext(t, body)
+			adaptor := &TaskAdaptor{}
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+
+			ratios := adaptor.EstimateBilling(context, info)
+			assert.InDelta(t, test.wantRatio, ratios["resolution"], 1e-12)
+			priceData := types.PriceData{}
+			for name, ratio := range ratios {
+				priceData.AddOtherRatio(name, ratio)
+			}
+			assert.InDelta(t, test.wantQuota, priceData.ApplyOtherRatiosToFloat(10), 1e-12)
+		})
+	}
+}
+
 func Test1080pBillingAndDurationBoundary(t *testing.T) {
 	body := strings.ReplaceAll(validRequest, `"duration":"5"`, `"duration":12`)
 	body = strings.ReplaceAll(body, `"resolution":"720P"`, `"resolution":"1080p"`)
@@ -106,7 +136,7 @@ func Test1080pBillingAndDurationBoundary(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
 	assert.Equal(t, float64(12), adaptor.EstimateBilling(context, info)["seconds"])
-	assert.Equal(t, float64(2), adaptor.EstimateBilling(context, info)["resolution"])
+	assert.Equal(t, float64(2.5), adaptor.EstimateBilling(context, info)["resolution"])
 
 	invalidContext, invalidInfo := newTaskContext(t, strings.ReplaceAll(body, `"duration":12`, `"duration":13`))
 	assert.Contains(t, adaptor.ValidateRequestAndSetAction(invalidContext, invalidInfo).Message, "between 4 and 12")

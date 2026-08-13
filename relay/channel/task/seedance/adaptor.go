@@ -247,8 +247,11 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 		return nil
 	}
 	resolutionRatio := 1.0
-	if strings.EqualFold(inputString(req.Input, "resolution"), "1080p") {
-		resolutionRatio = 2.0
+	switch strings.ToLower(inputString(req.Input, "resolution")) {
+	case "480p":
+		resolutionRatio = 8.0 / 15.0
+	case "1080p":
+		resolutionRatio = 2.5
 	}
 	return map[string]float64{"seconds": float64(req.Duration), "resolution": resolutionRatio}
 }
