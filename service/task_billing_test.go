@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -307,7 +309,7 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 
-	RefundTaskQuota(ctx, task, "task failed: upstream error")
+	RefundTaskQuota(ctx, task, "task failed: upstream error", TaskFailureUpstreamConfirmed)
 
 	// User quota should increase by preConsumed
 	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
@@ -324,7 +326,7 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	assert.Equal(t, "test-model", log.ModelName)
 }
 
-func TestRefundTaskQuota_VideoPlatformsKeepCharge(t *testing.T) {
+func TestRefundTaskQuota_UnconfirmedVideoFailuresKeepCharge(t *testing.T) {
 	tests := []struct {
 		name     string
 		platform constant.TaskPlatform
@@ -346,12 +348,47 @@ func TestRefundTaskQuota_VideoPlatformsKeepCharge(t *testing.T) {
 
 			task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 			task.Platform = tt.platform
-			RefundTaskQuota(ctx, task, "video task failed")
+			RefundTaskQuota(ctx, task, "video task failed", TaskFailureUnconfirmed)
 
 			assert.Equal(t, initQuota, getUserQuota(t, userID))
 			assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 			assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
 			assert.Equal(t, int64(0), countLogs(t))
+		})
+	}
+}
+
+func TestRefundTaskQuota_ConfirmedVideoFailuresRefund(t *testing.T) {
+	tests := []struct {
+		name     string
+		platform constant.TaskPlatform
+	}{
+		{name: "seedance", platform: constant.TaskPlatformSeedance},
+		{name: "numeric video channel", platform: constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling))},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			truncate(t)
+			ctx := context.Background()
+			userID, tokenID, channelID := 130+i, 130+i, 130+i
+			const initQuota, preConsumed, tokenRemain = 10000, 3000, 5000
+
+			seedUser(t, userID, initQuota)
+			seedToken(t, tokenID, userID, "sk-video-refund", tokenRemain)
+			seedChannel(t, channelID)
+
+			task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+			task.Platform = tt.platform
+			RefundTaskQuota(ctx, task, "生成参数校验失败，请检查模型", TaskFailureUpstreamConfirmed)
+
+			assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+			assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+			assert.Equal(t, -preConsumed, getTokenUsedQuota(t, tokenID))
+			log := getLastLog(t)
+			require.NotNil(t, log)
+			assert.Equal(t, model.LogTypeRefund, log.Type)
+			assert.Equal(t, preConsumed, log.Quota)
 		})
 	}
 }
@@ -401,7 +438,7 @@ func TestRefundTaskQuota_SunoStillRefunds(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	task.Platform = constant.TaskPlatformSuno
-	RefundTaskQuota(ctx, task, "suno task failed")
+	RefundTaskQuota(ctx, task, "suno task failed", TaskFailureUpstreamConfirmed)
 
 	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
 	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
@@ -426,7 +463,7 @@ func TestRefundTaskQuota_Subscription(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceSubscription, subID)
 
-	RefundTaskQuota(ctx, task, "subscription task failed")
+	RefundTaskQuota(ctx, task, "subscription task failed", TaskFailureUpstreamConfirmed)
 
 	// Subscription used should decrease by preConsumed
 	assert.Equal(t, subUsed-int64(preConsumed), getSubscriptionUsed(t, subID))
@@ -448,7 +485,7 @@ func TestRefundTaskQuota_ZeroQuota(t *testing.T) {
 
 	task := makeTask(userID, 0, 0, 0, BillingSourceWallet, 0)
 
-	RefundTaskQuota(ctx, task, "zero quota task")
+	RefundTaskQuota(ctx, task, "zero quota task", TaskFailureUpstreamConfirmed)
 
 	// No change to user quota
 	assert.Equal(t, 5000, getUserQuota(t, userID))
@@ -469,7 +506,7 @@ func TestRefundTaskQuota_NoToken(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, 0, BillingSourceWallet, 0) // TokenId=0
 
-	RefundTaskQuota(ctx, task, "no token task failed")
+	RefundTaskQuota(ctx, task, "no token task failed", TaskFailureUpstreamConfirmed)
 
 	// User quota refunded
 	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
@@ -670,7 +707,7 @@ func simulatePollBilling(ctx context.Context, task *model.Task, newStatus model.
 		RecalculateTaskQuota(ctx, task, actualQuota, "test settle")
 	}
 	if shouldRefund {
-		RefundTaskQuota(ctx, task, task.FailReason)
+		RefundTaskQuota(ctx, task, task.FailReason, TaskFailureUpstreamConfirmed)
 	}
 }
 
@@ -798,6 +835,125 @@ func TestNonTerminalUpdate_NoBilling(t *testing.T) {
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
 	assert.Equal(t, "50%", reloaded.Progress)
+}
+
+type videoPollingAdaptor struct {
+	body   string
+	result *relaycommon.TaskInfo
+}
+
+func (a *videoPollingAdaptor) Init(_ *relaycommon.RelayInfo) {}
+func (a *videoPollingAdaptor) FetchTask(string, string, map[string]any, string) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(a.body)),
+	}, nil
+}
+func (a *videoPollingAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+	return a.result, nil
+}
+func (a *videoPollingAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
+	return 0
+}
+
+func TestVideoPollingConfirmedFailureRefundsOnce(t *testing.T) {
+	tests := []struct {
+		name          string
+		billingSource string
+		subscription  bool
+	}{
+		{name: "wallet", billingSource: BillingSourceWallet},
+		{name: "subscription", billingSource: BillingSourceSubscription, subscription: true},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			truncate(t)
+			ctx := context.Background()
+			userID, tokenID, channelID, subscriptionID := 140+i, 140+i, 140+i, 140+i
+			const initQuota, preConsumed, tokenRemain = 10000, 3000, 5000
+			const subscriptionUsed int64 = 50000
+
+			seedUser(t, userID, initQuota)
+			seedToken(t, tokenID, userID, "sk-seedance-failure", tokenRemain)
+			seedChannel(t, channelID)
+			if tt.subscription {
+				seedSubscription(t, subscriptionID, userID, 100000, subscriptionUsed)
+			} else {
+				subscriptionID = 0
+			}
+
+			task := makeTask(userID, channelID, preConsumed, tokenID, tt.billingSource, subscriptionID)
+			task.Platform = constant.TaskPlatformSeedance
+			task.Progress = "80%"
+			require.NoError(t, model.DB.Create(task).Error)
+
+			const failureReason = "生成参数校验失败，请检查模型是否支持当前参数"
+			adaptor := &videoPollingAdaptor{
+				body: `{"success":true,"data":{"task_id":"upstream-task","status":"FAILURE","progress":"100%","fail_reason":"` + failureReason + `"}}`,
+				result: &relaycommon.TaskInfo{
+					TaskID:   "upstream-task",
+					Status:   model.TaskStatusFailure,
+					Progress: "100%",
+					Reason:   failureReason,
+				},
+			}
+			tasks := map[string]*model.Task{task.TaskID: task}
+			channel := &model.Channel{Id: channelID, Key: "sk-test"}
+
+			require.NoError(t, updateVideoSingleTask(ctx, adaptor, channel, task.TaskID, tasks))
+			// Re-observing the same terminal failure must not refund again.
+			require.NoError(t, updateVideoSingleTask(ctx, adaptor, channel, task.TaskID, tasks))
+
+			var reloaded model.Task
+			require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+			assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
+			assert.Equal(t, "100%", reloaded.Progress)
+			assert.Equal(t, failureReason, reloaded.FailReason)
+			if tt.subscription {
+				assert.Equal(t, initQuota, getUserQuota(t, userID))
+				assert.Equal(t, subscriptionUsed-int64(preConsumed), getSubscriptionUsed(t, subscriptionID))
+			} else {
+				assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+			}
+			assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+			assert.Equal(t, -preConsumed, getTokenUsedQuota(t, tokenID))
+			assert.Equal(t, int64(1), countLogs(t))
+			log := getLastLog(t)
+			require.NotNil(t, log)
+			assert.Equal(t, model.LogTypeRefund, log.Type)
+			assert.Equal(t, preConsumed, log.Quota)
+		})
+	}
+}
+
+func TestVideoPollingLocallySynthesizedFailureKeepsCharge(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	const userID, tokenID, channelID = 160, 160, 160
+	const initQuota, preConsumed, tokenRemain = 10000, 3000, 5000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-video-unknown", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformSeedance
+	task.Progress = "50%"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	adaptor := &videoPollingAdaptor{body: `{}`, result: &relaycommon.TaskInfo{}}
+	require.NoError(t, updateVideoSingleTask(ctx, adaptor, &model.Channel{Id: channelID, Key: "sk-test"}, task.TaskID, map[string]*model.Task{task.TaskID: task}))
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
+	assert.Equal(t, "100%", reloaded.Progress)
+	assert.Contains(t, reloaded.FailReason, "unrecognized")
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
+	assert.Equal(t, int64(0), countLogs(t))
 }
 
 // ===========================================================================

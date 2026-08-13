@@ -210,10 +210,11 @@ func TestQuerySuccessFailureAndPublicIDReplacement(t *testing.T) {
 	assert.Contains(t, string(converted), "task_public")
 	assert.Contains(t, string(converted), "outputs")
 
-	failure, err := adaptor.ParseTaskResult([]byte(`{"success":true,"data":{"task_id":"upstream-failed","status":"FAILURE","progress":"100%","fail_reason":"provider rejected prompt","data":{"outputs":[]}}}`))
+	failure, err := adaptor.ParseTaskResult([]byte(`{"success":true,"data":{"task_id":"upstream-failed","status":"FAILURE","progress":"100%","fail_reason":"生成参数校验失败，请检查模型是否支持当前参数","data":{"outputs":[]}}}`))
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusFailure, failure.Status)
-	assert.Equal(t, "provider rejected prompt", failure.Reason)
+	assert.Equal(t, "100%", failure.Progress)
+	assert.Equal(t, "生成参数校验失败，请检查模型是否支持当前参数", failure.Reason)
 }
 
 func TestFetchTaskUsesDocumentedPathAndUpstreamID(t *testing.T) {

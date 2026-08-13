@@ -80,7 +80,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 		}
 		timedOutCount++
 		if !isLegacy && task.Quota != 0 {
-			RefundTaskQuota(ctx, task, reason)
+			RefundTaskQuota(ctx, task, reason, TaskFailureUnconfirmed)
 		}
 	}
 
@@ -285,7 +285,7 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		if responseItem.FailReason != "" || task.Status == model.TaskStatusFailure {
 			logger.LogInfo(ctx, task.TaskID+" 构建失败，"+task.FailReason)
 			task.Progress = "100%"
-			RefundTaskQuota(ctx, task, task.FailReason)
+			RefundTaskQuota(ctx, task, task.FailReason, TaskFailureUpstreamConfirmed)
 		}
 		if responseItem.Status == model.TaskStatusSuccess {
 			task.Progress = "100%"
@@ -467,6 +467,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	snap := task.Snapshot()
 
 	taskResult := &relaycommon.TaskInfo{}
+	failureOrigin := TaskFailureUnconfirmed
 	// try parse as New API response format
 	var responseItems dto.TaskResponse[model.Task]
 	if err = common.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
@@ -480,6 +481,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		task.Data = t.Data
 	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
+	}
+	if taskResult.Status == model.TaskStatusFailure {
+		failureOrigin = TaskFailureUpstreamConfirmed
 	}
 
 	task.Data = redactVideoResponseBody(responseBody)
@@ -572,6 +576,16 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			shouldRefund = false
 			shouldSettle = false
 		}
+	} else if isDone {
+		// Billing belongs to the process that wins the transition into a terminal
+		// status. Re-observing an already terminal task must never settle again.
+		shouldRefund = false
+		shouldSettle = false
+		if !snap.Equal(task.Snapshot()) {
+			if _, err := task.UpdateWithStatus(snap.Status); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("Failed to refresh terminal task %s: %s", task.TaskID, err.Error()))
+			}
+		}
 	} else if !snap.Equal(task.Snapshot()) {
 		if _, err := task.UpdateWithStatus(snap.Status); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("Failed to update task %s: %s", task.TaskID, err.Error()))
@@ -585,7 +599,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 	}
 	if shouldRefund {
-		RefundTaskQuota(ctx, task, task.FailReason)
+		RefundTaskQuota(ctx, task, task.FailReason, failureOrigin)
 	}
 
 	return nil
