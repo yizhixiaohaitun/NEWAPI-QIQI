@@ -106,7 +106,7 @@ func TestResolutionBillingRatios(t *testing.T) {
 		wantRatio  float64
 		wantQuota  float64
 	}{
-		{resolution: "480p", wantRatio: 0.5, wantQuota: 25},
+		{resolution: "480p", wantRatio: 8.0 / 15.0, wantQuota: 80.0 / 3.0},
 		{resolution: "720p", wantRatio: 1, wantQuota: 50},
 		{resolution: "1080p", wantRatio: 2.5, wantQuota: 125},
 	}
