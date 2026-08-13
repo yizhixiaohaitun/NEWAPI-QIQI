@@ -1,5 +1,7 @@
 package constant
 
+import "strconv"
+
 type TaskPlatform string
 
 const (
@@ -7,6 +9,36 @@ const (
 	TaskPlatformMidjourney              = "mj"
 	TaskPlatformSeedance                = "seedance_async"
 )
+
+// IsVideoTaskPlatform reports whether platform is a known persisted video-task
+// platform. Unknown and non-video platforms must remain refundable.
+func IsVideoTaskPlatform(platform TaskPlatform) bool {
+	if platform == TaskPlatformSeedance {
+		return true
+	}
+
+	channelType, err := strconv.Atoi(string(platform))
+	if err != nil {
+		return false
+	}
+
+	switch channelType {
+	case ChannelTypeAli,
+		ChannelTypeKling,
+		ChannelTypeJimeng,
+		ChannelTypeVertexAi,
+		ChannelTypeVidu,
+		ChannelTypeDoubaoVideo,
+		ChannelTypeVolcEngine,
+		ChannelTypeSora,
+		ChannelTypeOpenAI,
+		ChannelTypeGemini,
+		ChannelTypeMiniMax:
+		return true
+	default:
+		return false
+	}
+}
 
 const (
 	SunoActionMusic  = "MUSIC"

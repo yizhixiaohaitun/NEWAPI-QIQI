@@ -6,10 +6,12 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
@@ -320,6 +322,92 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 	assert.Equal(t, preConsumed, log.Quota)
 	assert.Equal(t, "test-model", log.ModelName)
+}
+
+func TestRefundTaskQuota_VideoPlatformsKeepCharge(t *testing.T) {
+	tests := []struct {
+		name     string
+		platform constant.TaskPlatform
+	}{
+		{name: "seedance", platform: constant.TaskPlatformSeedance},
+		{name: "numeric video channel", platform: constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling))},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			truncate(t)
+			ctx := context.Background()
+			userID, tokenID, channelID := 100+i, 100+i, 100+i
+			const initQuota, preConsumed, tokenRemain = 10000, 3000, 5000
+
+			seedUser(t, userID, initQuota)
+			seedToken(t, tokenID, userID, "sk-video-no-refund", tokenRemain)
+			seedChannel(t, channelID)
+
+			task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+			task.Platform = tt.platform
+			RefundTaskQuota(ctx, task, "video task failed")
+
+			assert.Equal(t, initQuota, getUserQuota(t, userID))
+			assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+			assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
+			assert.Equal(t, int64(0), countLogs(t))
+		})
+	}
+}
+
+func TestSweepTimedOutVideoTaskKeepsChargeAndPersistsFailure(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	const userID, tokenID, channelID = 120, 120, 120
+	const initQuota, preConsumed, tokenRemain = 10000, 3000, 5000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-video-timeout", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformSeedance
+	task.Status = model.TaskStatusSubmitted
+	task.Progress = "0%"
+	task.SubmitTime = time.Now().Add(-2 * time.Minute).Unix()
+	require.NoError(t, model.DB.Create(task).Error)
+
+	previousTimeout := constant.TaskTimeoutMinutes
+	constant.TaskTimeoutMinutes = 1
+	t.Cleanup(func() { constant.TaskTimeoutMinutes = previousTimeout })
+
+	sweepTimedOutTasks(ctx)
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
+	assert.Equal(t, "100%", reloaded.Progress)
+	assert.Contains(t, reloaded.FailReason, "任务超时")
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, int64(0), countLogs(t))
+}
+
+func TestRefundTaskQuota_SunoStillRefunds(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	const userID, tokenID, channelID = 110, 110, 110
+	const initQuota, preConsumed, tokenRemain = 10000, 3000, 5000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-suno-refund", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformSuno
+	RefundTaskQuota(ctx, task, "suno task failed")
+
+	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeRefund, log.Type)
 }
 
 func TestRefundTaskQuota_Subscription(t *testing.T) {

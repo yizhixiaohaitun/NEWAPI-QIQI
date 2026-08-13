@@ -161,8 +161,14 @@ func taskModelName(task *model.Task) string {
 }
 
 // RefundTaskQuota 统一的任务失败退款逻辑。
-// 当异步任务失败时，将预扣的 quota 退还给用户（支持钱包和订阅），并退还令牌额度。
+// 当非视频异步任务失败时，将预扣的 quota 退还给用户（支持钱包和订阅），并退还令牌额度。
+// 视频任务提交上游后即可能产生成本，因此持久化任务失败或超时不退款。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
+	if constant.IsVideoTaskPlatform(task.Platform) {
+		logger.LogInfo(ctx, fmt.Sprintf("视频任务 %s 失败或超时，保留预扣费", task.TaskID))
+		return
+	}
+
 	quota := task.Quota
 	if quota == 0 {
 		return
