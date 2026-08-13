@@ -106,7 +106,7 @@ func TestResolutionBillingRatios(t *testing.T) {
 		wantRatio  float64
 		wantQuota  float64
 	}{
-		{resolution: "480p", wantRatio: 8.0 / 15.0, wantQuota: 80.0 / 3.0},
+		{resolution: "480p", wantRatio: 0.5, wantQuota: 25},
 		{resolution: "720p", wantRatio: 1, wantQuota: 50},
 		{resolution: "1080p", wantRatio: 2.5, wantQuota: 125},
 	}
@@ -119,12 +119,12 @@ func TestResolutionBillingRatios(t *testing.T) {
 			require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
 
 			ratios := adaptor.EstimateBilling(context, info)
-			assert.InDelta(t, test.wantRatio, ratios["resolution"], 1e-12)
+			assert.Equal(t, test.wantRatio, ratios["resolution"])
 			priceData := types.PriceData{}
 			for name, ratio := range ratios {
 				priceData.AddOtherRatio(name, ratio)
 			}
-			assert.InDelta(t, test.wantQuota, priceData.ApplyOtherRatiosToFloat(10), 1e-12)
+			assert.Equal(t, test.wantQuota, priceData.ApplyOtherRatiosToFloat(10))
 		})
 	}
 }
