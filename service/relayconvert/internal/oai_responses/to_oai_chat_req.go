@@ -98,7 +98,7 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 }
 
 func validateResponsesRequestChatUnsupportedFields(req *dto.OpenAIResponsesRequest) error {
-	unsupported := make([]string, 0, 4)
+	unsupported := make([]string, 0, 3)
 	if rawJSONPresent(req.Conversation) {
 		unsupported = append(unsupported, "conversation")
 	}
@@ -107,9 +107,6 @@ func validateResponsesRequestChatUnsupportedFields(req *dto.OpenAIResponsesReque
 	}
 	if rawJSONPresent(req.Prompt) {
 		unsupported = append(unsupported, "prompt")
-	}
-	if rawJSONPresent(req.ContextManagement) {
-		unsupported = append(unsupported, "context_management")
 	}
 	if len(unsupported) > 0 {
 		return fmt.Errorf("responses to chat conversion does not support stateful fields: %s", strings.Join(unsupported, ", "))
@@ -166,6 +163,11 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
 func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message) ([]dto.Message, error) {
 	itemType := strings.TrimSpace(common.Interface2String(item["type"]))
 	switch itemType {
+	case "compaction", "reasoning":
+		// These are opaque Responses state items. They are meaningful to a native
+		// Responses upstream, but have no Chat Completions equivalent. The actual
+		// conversation messages and tool calls already follow them in input.
+		return messages, nil
 	case responsesInputTypeFunctionCall:
 		toolCall, err := responsesFunctionCallItemToChatToolCall(item)
 		if err != nil {

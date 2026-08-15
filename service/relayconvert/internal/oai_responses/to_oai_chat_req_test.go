@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -224,6 +225,56 @@ func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape
 	assert.Equal(t, "patch body", gjson.GetBytes(toolCalls[0].Custom, "input").String())
 }
 
+func TestResponsesRequestToChatCompletionsRequestAcceptsNewResponsesCompactionState(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+		Model:             "gpt-5.6-sol",
+		ContextManagement: mustRawMessage(t, []map[string]any{{"type": "compaction", "compact_threshold": 100000}}),
+		Include:           mustRawMessage(t, []string{"reasoning.encrypted_content"}),
+		Reasoning:         &dto.Reasoning{Effort: "medium", Summary: "auto"},
+		Input: mustRawMessage(t, []map[string]any{
+			{"type": "compaction", "encrypted_content": "opaque-compaction"},
+			{"type": "reasoning", "encrypted_content": "opaque-reasoning", "summary": []any{}},
+			{"role": "assistant", "content": []map[string]any{{"type": "output_text", "text": "working"}}},
+			{"type": "function_call", "call_id": "call_1", "name": "fs", "arguments": `{"op":"read"}`},
+			{"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+		}),
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "medium", got.ReasoningEffort)
+	require.Len(t, got.Messages, 2)
+	assert.Equal(t, "assistant", got.Messages[0].Role)
+	assert.Equal(t, "working", got.Messages[0].StringContent())
+	require.Len(t, got.Messages[0].ParseToolCalls(), 1)
+	assert.Equal(t, "tool", got.Messages[1].Role)
+	assert.Equal(t, "call_1", got.Messages[1].ToolCallId)
+	assert.Equal(t, "ok", got.Messages[1].StringContent())
+}
+
+func TestNewResponsesCompactionStateDoesNotCreateEmptyClaudeOrGeminiMessages(t *testing.T) {
+	req := &dto.OpenAIResponsesRequest{
+		Model:             "gpt-5.6-sol",
+		ContextManagement: mustRawMessage(t, []map[string]any{{"type": "compaction", "compact_threshold": 100000}}),
+		Input: mustRawMessage(t, []map[string]any{
+			{"type": "compaction", "encrypted_content": "opaque-compaction"},
+			{"type": "reasoning", "encrypted_content": "opaque-reasoning", "summary": []any{}},
+			{"role": "user", "content": []map[string]any{{"type": "input_text", "text": "continue"}}},
+		}),
+	}
+
+	claudeReq, err := OpenAIResponsesRequestToClaudeMessages(nil, req)
+	require.NoError(t, err)
+	require.Len(t, claudeReq.Messages, 1)
+	assert.Equal(t, "user", claudeReq.Messages[0].Role)
+
+	geminiReq, err := OpenAIResponsesRequestToGeminiChat(nil, req, &relaycommon.RelayInfo{})
+	require.NoError(t, err)
+	require.Len(t, geminiReq.Contents, 1)
+	assert.Equal(t, "user", geminiReq.Contents[0].Role)
+	require.Len(t, geminiReq.Contents[0].Parts, 1)
+	assert.Equal(t, "continue", geminiReq.Contents[0].Parts[0].Text)
+}
+
 func TestResponsesRequestToChatCompletionsRequestRejectsStatefulFields(t *testing.T) {
 	tests := []struct {
 		name string
@@ -244,11 +295,6 @@ func TestResponsesRequestToChatCompletionsRequestRejectsStatefulFields(t *testin
 			name: "prompt",
 			req:  &dto.OpenAIResponsesRequest{Model: "gpt-test", Prompt: mustRawMessage(t, map[string]any{"id": "pmpt_1"})},
 			want: "prompt",
-		},
-		{
-			name: "context management",
-			req:  &dto.OpenAIResponsesRequest{Model: "gpt-test", ContextManagement: mustRawMessage(t, map[string]any{"type": "auto"})},
-			want: "context_management",
 		},
 	}
 

@@ -121,6 +121,10 @@ func OpenAIResponsesRequestToGeminiChat(c *gin.Context, req *dto.OpenAIResponses
 	for _, item := range inputItems {
 		itemType := strings.TrimSpace(common.Interface2String(item["type"]))
 		switch itemType {
+		case "compaction", "reasoning":
+			// Opaque Responses state has no Gemini equivalent. The following
+			// visible messages and tool records carry the usable history.
+			continue
 		case ResponsesInputTypeFunctionCall:
 			part, callID, err := responsesFunctionCallItemToGeminiPart(item)
 			if err != nil {

@@ -84,6 +84,10 @@ func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIRespo
 	for _, item := range inputItems {
 		itemType := strings.TrimSpace(common.Interface2String(item["type"]))
 		switch itemType {
+		case "compaction", "reasoning":
+			// Opaque Responses state has no Claude Messages equivalent. The
+			// following visible messages and tool records carry the usable history.
+			continue
 		case ResponsesInputTypeFunctionCall:
 			claudeRequest.Messages = appendClaudeToolUse(claudeRequest.Messages, responsesFunctionCallItemToClaudeToolUse(item, "arguments"))
 		case ResponsesInputTypeCustomToolCall:
