@@ -10,12 +10,17 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func newJSONTaskContext(t *testing.T, body string) (*gin.Context, *relaycommon.RelayInfo) {
+	return newJSONTaskContextForModel(t, body, "MiniMax-H3")
+}
+
+func newJSONTaskContextForModel(t *testing.T, body, upstreamModel string) (*gin.Context, *relaycommon.RelayInfo) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	request := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
@@ -25,7 +30,7 @@ func newJSONTaskContext(t *testing.T, body string) (*gin.Context, *relaycommon.R
 	info := &relaycommon.RelayInfo{
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
 		ChannelMeta: &relaycommon.ChannelMeta{
-			UpstreamModelName: "MiniMax-H3",
+			UpstreamModelName: upstreamModel,
 		},
 	}
 	return context, info
@@ -76,6 +81,62 @@ func TestMiniMaxH3TopLevelRequestIsForwardedAsDocumentedInput(t *testing.T) {
 	assert.Equal(t, "9:16", input["aspect_ratio"])
 }
 
+func TestMiniMaxH3ResolutionFamilyKeepsTopLevelProtocol(t *testing.T) {
+	models := []string{
+		"MiniMaxH3-480p",
+		"MiniMaxH3-720p",
+		"MiniMaxH3-2k",
+		"MiniMaxH3-720p-sec",
+		"MiniMaxH3-720p-pro",
+		"MiniMaxH3-720p-nf",
+	}
+	for _, modelName := range models {
+		t.Run(modelName, func(t *testing.T) {
+			body := `{"model":"client-alias","prompt":"a lighthouse","resolution":"720p","duration":6}`
+			context, info := newJSONTaskContextForModel(t, body, modelName)
+			adaptor := &TaskAdaptor{}
+
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+			assert.Equal(t, float64(6), adaptor.EstimateBilling(context, info)["seconds"])
+			reader, err := adaptor.BuildRequestBody(context, info)
+			require.NoError(t, err)
+			forwarded, err := io.ReadAll(reader)
+			require.NoError(t, err)
+
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(forwarded, &payload))
+			assert.Equal(t, modelName, payload["model"])
+			assert.Equal(t, "a lighthouse", payload["prompt"])
+			assert.Equal(t, "720p", payload["resolution"])
+			assert.Equal(t, float64(6), payload["duration"])
+			assert.NotContains(t, payload, "input")
+		})
+	}
+}
+
+func TestMiniMaxH3ResolutionFamilyFlattensCompatibleInput(t *testing.T) {
+	body := `{"model":"client-alias","input":{"prompt":"a comet","resolution":"2k","duration":8}}`
+	context, info := newJSONTaskContextForModel(t, body, "MiniMaxH3-2k-pro")
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+	reader, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{"model":"MiniMaxH3-2k-pro","prompt":"a comet","resolution":"2k","duration":8}`, string(forwarded))
+}
+
+func TestMiniMaxH3ProtocolFamiliesStayDistinct(t *testing.T) {
+	assert.True(t, isMiniMaxH3Model("MiniMax-H3"))
+	assert.False(t, isMiniMaxH3ResolutionModel("MiniMax-H3"))
+	assert.True(t, isMiniMaxH3ResolutionModel("MiniMaxH3-720p"))
+	assert.True(t, isMiniMaxH3ResolutionModel(" minimaxh3-2K-NF "))
+	assert.False(t, isMiniMaxH3ResolutionModel("MiniMaxH3"))
+	assert.False(t, isMiniMaxH3ResolutionModel("MiniMaxH30-720p"))
+}
+
 func TestBuildRequestHeaderForwardsIdempotencyKeyOnlyForMiniMaxH3(t *testing.T) {
 	context, info := newJSONTaskContext(t, `{}`)
 	context.Request.Header.Set("Idempotency-Key", " create-video-123 ")
@@ -114,6 +175,51 @@ func TestDoResponseAcceptsNestedTaskID(t *testing.T) {
 	assert.Equal(t, "upstream-123", taskID)
 	assert.JSONEq(t, `{"success":true,"data":{"task_id":"upstream-123","status":"pending"}}`, string(taskData))
 	assert.JSONEq(t, `{"success":true,"data":{"task_id":"task_public","status":"pending"}}`, recorder.Body.String())
+}
+
+func TestMiniMaxH3ResolutionCreateAndQueryResponses(t *testing.T) {
+	t.Run("create response", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		recorder := httptest.NewRecorder()
+		context, _ := gin.CreateTestContext(recorder)
+		adaptor := &TaskAdaptor{}
+		response := &http.Response{
+			Body: io.NopCloser(strings.NewReader(`{"id":"upstream-720p","model":"MiniMaxH3-720p","status":"queued"}`)),
+		}
+		info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"}}
+
+		taskID, taskData, taskErr := adaptor.DoResponse(context, response, info)
+
+		require.Nil(t, taskErr)
+		assert.Equal(t, "upstream-720p", taskID)
+		assert.JSONEq(t, `{"id":"upstream-720p","model":"MiniMaxH3-720p","status":"queued"}`, string(taskData))
+		assert.JSONEq(t, `{"id":"task_public","task_id":"task_public","object":"","model":"MiniMaxH3-720p","status":"queued","progress":0,"created_at":0}`, recorder.Body.String())
+	})
+
+	t.Run("upstream query", func(t *testing.T) {
+		service.InitHttpClient()
+		var gotPath, gotAuthorization string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			gotAuthorization = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"upstream-720p","status":"completed","progress":100}`)
+		}))
+		defer server.Close()
+
+		adaptor := &TaskAdaptor{}
+		response, err := adaptor.FetchTask(server.URL, "provider-token", map[string]any{"task_id": "upstream-720p"}, "")
+		require.NoError(t, err)
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+		result, err := adaptor.ParseTaskResult(body)
+		require.NoError(t, err)
+
+		assert.Equal(t, "/v1/videos/upstream-720p", gotPath)
+		assert.Equal(t, "Bearer provider-token", gotAuthorization)
+		assert.Equal(t, model.TaskStatusSuccess, result.Status)
+	})
 }
 
 func TestConvertToOpenAIVideoPreservesNestedQueryResponse(t *testing.T) {

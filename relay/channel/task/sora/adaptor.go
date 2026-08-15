@@ -242,6 +242,13 @@ func isMiniMaxH3Model(modelName string) bool {
 	return strings.EqualFold(strings.TrimSpace(modelName), "MiniMax-H3")
 }
 
+// isMiniMaxH3ResolutionModel identifies the newer provider-specific family.
+// It intentionally excludes the legacy MiniMax-H3 spelling because that model
+// uses a different {model,input} protocol.
+func isMiniMaxH3ResolutionModel(modelName string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelName)), "minimaxh3-")
+}
+
 func buildMiniMaxH3Body(bodyMap map[string]interface{}, req relaycommon.TaskSubmitReq, upstreamModel string) ([]byte, error) {
 	input := make(map[string]interface{})
 	if original, ok := bodyMap["input"].(map[string]interface{}); ok {
@@ -283,6 +290,47 @@ func buildMiniMaxH3Body(bodyMap map[string]interface{}, req relaycommon.TaskSubm
 	return common.Marshal(payload)
 }
 
+func buildMiniMaxH3ResolutionBody(bodyMap map[string]interface{}, req relaycommon.TaskSubmitReq, upstreamModel string) ([]byte, error) {
+	// This provider family accepts the OpenAI videos endpoint but not the
+	// legacy MiniMax-H3 input envelope. Preserve top-level vendor parameters,
+	// normalize shared fields from accepted compatibility shapes, and remove
+	// input so model/prompt/resolution/duration stay at the document root.
+	payload := make(map[string]interface{}, len(bodyMap)+1)
+	for key, value := range bodyMap {
+		if key != "input" {
+			payload[key] = value
+		}
+	}
+	payload["model"] = upstreamModel
+
+	for _, key := range []string{"prompt", "resolution", "duration"} {
+		if _, exists := payload[key]; exists {
+			continue
+		}
+		if value, exists := req.Input[key]; exists {
+			payload[key] = value
+		}
+	}
+	if _, exists := payload["prompt"]; !exists && req.Prompt != "" {
+		payload["prompt"] = req.Prompt
+	}
+	if _, exists := payload["duration"]; !exists {
+		switch {
+		case req.Duration != 0:
+			payload["duration"] = req.Duration
+		case req.Seconds != "":
+			payload["duration"] = req.Seconds
+		}
+	}
+	if _, exists := payload["resolution"]; !exists && req.Metadata != nil {
+		if resolution, ok := req.Metadata["resolution"]; ok {
+			payload["resolution"] = resolution
+		}
+	}
+
+	return common.Marshal(payload)
+}
+
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
@@ -297,12 +345,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if strings.HasPrefix(contentType, "application/json") {
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
-			if isMiniMaxH3Model(info.UpstreamModelName) {
+			if isMiniMaxH3Model(info.UpstreamModelName) || isMiniMaxH3ResolutionModel(info.UpstreamModelName) {
 				req, reqErr := relaycommon.GetTaskRequest(c)
 				if reqErr != nil {
 					return nil, reqErr
 				}
-				newBody, buildErr := buildMiniMaxH3Body(bodyMap, req, info.UpstreamModelName)
+				var newBody []byte
+				var buildErr error
+				if isMiniMaxH3Model(info.UpstreamModelName) {
+					newBody, buildErr = buildMiniMaxH3Body(bodyMap, req, info.UpstreamModelName)
+				} else {
+					newBody, buildErr = buildMiniMaxH3ResolutionBody(bodyMap, req, info.UpstreamModelName)
+				}
 				if buildErr != nil {
 					return nil, buildErr
 				}
