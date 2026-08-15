@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
+import { SectionPageLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -102,16 +103,16 @@ export function ContextLogs() {
   const items = (logs.data?.data?.items ?? []) as ContextLogItem[]
   const selected = detail.data?.data as ContextLogDetail | undefined
   return (
-    <div className='container mx-auto space-y-4 p-4'>
-      <div>
-        <h1 className='text-2xl font-semibold'>上下文日志</h1>
-        <p className='text-muted-foreground text-sm'>
-          仅 Root 可访问。正文按每侧 2 MiB 上限捕获，截断项会明确标记。
-        </p>
-      </div>
+    <SectionPageLayout>
+      <SectionPageLayout.Title>上下文日志</SectionPageLayout.Title>
+      <SectionPageLayout.Content>
+        <div className='min-w-0 space-y-4'>
+          <p className='text-muted-foreground text-sm'>
+            仅 Root 可访问。正文按每侧 2 MiB 上限捕获，截断项会明确标记。
+          </p>
       <div className='rounded-lg border p-4'>
-        <div className='flex flex-col gap-3 md:flex-row md:items-end md:justify-between'>
-          <div className='space-y-1'>
+        <div className='flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between'>
+          <div className='min-w-0 flex-1 space-y-1'>
             <Label htmlFor='context-log-retention'>自动清理保留天数</Label>
             <p className='text-muted-foreground text-sm'>
               0 表示永久保留；N 表示自动删除 N
@@ -119,10 +120,10 @@ export function ContextLogs() {
               日志库每日分批清理；ClickHouse 使用该设置动态维护本表 TTL。
             </p>
           </div>
-          <div className='flex items-center gap-2'>
+          <div className='flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap'>
             <Input
               id='context-log-retention'
-              className='w-32'
+              className='min-w-28 flex-1 sm:w-32 sm:flex-none'
               type='number'
               min={0}
               max={3650}
@@ -130,6 +131,7 @@ export function ContextLogs() {
               onChange={(e) => setRetentionDays(Number(e.target.value))}
             />
             <Button
+              className='shrink-0'
               disabled={
                 updateOption.isPending ||
                 !Number.isInteger(displayedRetentionDays) ||
@@ -155,7 +157,7 @@ export function ContextLogs() {
           <TabsTrigger value='rules'>保存规则</TabsTrigger>
         </TabsList>
         <TabsContent value='logs' className='space-y-3'>
-          <div className='grid gap-2 md:grid-cols-4'>
+          <div className='grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4'>
             <Input
               placeholder='用户 ID'
               onChange={(e) => setFilter('user_id', e.target.value)}
@@ -207,45 +209,47 @@ export function ContextLogs() {
               }
             />
           </div>
-          <div className='overflow-auto rounded border'>
-            <table className='w-full text-sm'>
+          <div className='max-w-full overflow-x-auto rounded border'>
+            <table className='w-full min-w-[62rem] text-sm'>
               <thead>
                 <tr className='border-b text-left'>
-                  <th className='p-2'>时间</th>
-                  <th>用户</th>
-                  <th>模型/渠道</th>
-                  <th>状态</th>
-                  <th>大小</th>
-                  <th>命中原因</th>
-                  <th />
+                  <th className='whitespace-nowrap p-2'>时间</th>
+                  <th className='px-2'>用户</th>
+                  <th className='px-2'>模型/渠道</th>
+                  <th className='whitespace-nowrap px-2'>状态</th>
+                  <th className='whitespace-nowrap px-2'>大小</th>
+                  <th className='px-2'>命中原因</th>
+                  <th className='bg-background sticky right-0 px-2'>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((item) => (
                   <tr className='border-b' key={item.id}>
-                    <td className='p-2'>
+                    <td className='p-2 whitespace-nowrap'>
                       {new Date(item.created_at * 1000).toLocaleString()}
                     </td>
-                    <td>{item.username || item.user_id}</td>
-                    <td>
+                    <td className='px-2'>{item.username || item.user_id}</td>
+                    <td className='px-2'>
                       {item.model_name}
                       <br />
                       <span className='text-muted-foreground'>
                         {item.channel_name || item.channel_id}
                       </span>
                     </td>
-                    <td>
+                    <td className='px-2 whitespace-nowrap'>
                       {item.status_code} · {item.latency_ms}ms
                     </td>
-                    <td>
+                    <td className='px-2 whitespace-nowrap'>
                       {item.request_body_size}/{item.response_body_size}
                       {item.request_body_truncated ||
                       item.response_body_truncated
                         ? '（截断）'
                         : ''}
                     </td>
-                    <td>{item.rule_name || item.decision_source}</td>
-                    <td className='space-x-1'>
+                    <td className='px-2'>
+                      {item.rule_name || item.decision_source}
+                    </td>
+                    <td className='bg-background sticky right-0 space-x-1 px-2 whitespace-nowrap shadow-[-8px_0_8px_-8px_rgb(0_0_0_/_0.2)]'>
                       <Button
                         size='sm'
                         variant='outline'
@@ -271,9 +275,9 @@ export function ContextLogs() {
               </tbody>
             </table>
           </div>
-          <div className='flex items-center justify-between'>
+          <div className='flex flex-wrap items-center justify-between gap-2'>
             <span>共 {logs.data?.data?.total ?? 0} 条</span>
-            <div className='space-x-2'>
+            <div className='flex gap-2'>
               <Button
                 variant='outline'
                 disabled={Number(filters.p) <= 1}
@@ -296,8 +300,8 @@ export function ContextLogs() {
           </div>
         </TabsContent>
         <TabsContent value='rules' className='space-y-3'>
-          <div className='flex justify-between'>
-            <p className='text-muted-foreground text-sm'>
+          <div className='flex flex-wrap items-start justify-between gap-3'>
+            <p className='text-muted-foreground min-w-0 flex-1 text-sm'>
               优先级：用户+模型 &gt; 用户 &gt; 模型 &gt; 全局；同层 priority
               大者优先，再按 ID 小者优先。模型匹配忽略大小写，* 为通配符。
             </p>
@@ -309,9 +313,9 @@ export function ContextLogs() {
             {((rules.data?.data ?? []) as ContextLogRule[]).map((rule) => (
               <div
                 key={rule.id}
-                className='flex items-center justify-between border-b p-3'
+                className='flex flex-wrap items-center justify-between gap-3 border-b p-3'
               >
-                <div>
+                <div className='min-w-0 flex-1'>
                   <b>{rule.name}</b> · {rule.decision} · priority{' '}
                   {rule.priority}
                   <br />
@@ -513,6 +517,8 @@ export function ContextLogs() {
           )}
         </DialogContent>
       </Dialog>
-    </div>
+        </div>
+      </SectionPageLayout.Content>
+    </SectionPageLayout>
   )
 }
