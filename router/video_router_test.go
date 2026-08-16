@@ -18,6 +18,8 @@ func TestSetVideoRouterRegistersAsyncTaskRoutes(t *testing.T) {
 	}
 	assert.True(t, routes["POST /async/tasks"])
 	assert.True(t, routes["GET /async/tasks/:task_id"])
+	assert.True(t, routes["POST /v1/video/assets"])
+	assert.True(t, routes["GET /v1/video/assets/:asset_id"])
 	assert.True(t, routes["POST /v1/videos"], "MiniMax-H3 route must remain registered")
 	assert.True(t, routes["POST /v1/video/generations"], "existing Doubao route must remain registered")
 }

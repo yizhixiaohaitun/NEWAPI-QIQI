@@ -305,6 +305,19 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		}
 		c.Set("platform", string(constant.TaskPlatformSuno))
 		c.Set("relay_mode", relayMode)
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/video/assets") {
+		modelRequest.Model = "seedance-2.0"
+		if c.Request.Method == http.MethodPost {
+			req, err := getModelFromRequest(c)
+			if err != nil {
+				return nil, false, err
+			}
+			if req.Model != "" {
+				modelRequest.Model = req.Model
+			}
+		}
+		c.Set("platform", string(constant.TaskPlatformSeedance))
+		c.Set("relay_mode", relayconstant.RelayModeVideoSubmit)
 	} else if strings.HasPrefix(c.Request.URL.Path, "/async/tasks") {
 		relayMode := relayconstant.RelayModeVideoSubmit
 		c.Set("platform", string(constant.TaskPlatformSeedance))
