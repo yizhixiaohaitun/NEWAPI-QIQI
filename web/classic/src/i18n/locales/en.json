@@ -1,5 +1,7 @@
 {
   "translation": {
+    "隐藏模型映射的上游目标名称": "Hide mapped upstream target names",
+    "开启后，用户模型列表将隐藏模型映射右侧的上游目标名称，并保留左侧客户端别名。默认关闭。": "When enabled, user-facing model lists hide upstream target names on the right side of model mappings and keep client aliases on the left visible. Disabled by default.",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_one": " + Web search {{count}} time / 1K times * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_other": " + Web search {{count}} times / 1K times * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + 图片生成调用 {{symbol}}{{price}} / 1次 * {{ratioType}} {{ratio}}": " + Image generation call {{symbol}}{{price}} / 1 time * {{ratioType}} {{ratio}}",

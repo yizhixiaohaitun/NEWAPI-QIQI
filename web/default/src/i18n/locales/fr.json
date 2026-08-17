@@ -1,5 +1,7 @@
 {
   "translation": {
+    "Hide mapped upstream target names": "Masquer les noms des cibles amont mappées",
+    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "Masquer dans les listes visibles par les utilisateurs les noms des cibles amont situés à droite du mappage, tout en conservant les alias clients de gauche. Désactivé par défaut.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

@@ -33,6 +33,25 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 	return filtered
 }
 
+func filterPricingByModelsExcludingHiddenMappedTargets(pricing []model.Pricing, usableGroup map[string]string) []model.Pricing {
+	groups := make([]string, 0, len(usableGroup))
+	for group := range usableGroup {
+		groups = append(groups, group)
+	}
+	hiddenTargets := make(map[string]struct{})
+	for _, modelName := range model.GetHiddenMappedModelTargetsForGroups(groups) {
+		hiddenTargets[modelName] = struct{}{}
+	}
+
+	filtered := make([]model.Pricing, 0, len(pricing))
+	for _, item := range pricing {
+		if _, hidden := hiddenTargets[item.ModelName]; !hidden {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
 func GetPricing(c *gin.Context) {
 	pricing := model.GetPricing()
 	userId, exists := c.Get("id")
@@ -57,6 +76,7 @@ func GetPricing(c *gin.Context) {
 
 	usableGroup = service.GetUserUsableGroups(group)
 	pricing = filterPricingByUsableGroups(pricing, usableGroup)
+	pricing = filterPricingByModelsExcludingHiddenMappedTargets(pricing, usableGroup)
 	// check groupRatio contains usableGroup
 	for group := range ratio_setting.GetGroupRatioCopy() {
 		if _, ok := usableGroup[group]; !ok {

@@ -1,5 +1,7 @@
 {
   "translation": {
+    "隐藏模型映射的上游目标名称": "Скрывать имена сопоставленных вышестоящих моделей",
+    "开启后，用户模型列表将隐藏模型映射右侧的上游目标名称，并保留左侧客户端别名。默认关闭。": "Если включено, пользовательские списки скрывают имена вышестоящих целей справа в сопоставлении и сохраняют видимыми клиентские псевдонимы слева. По умолчанию выключено.",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_few": " + Web-поиск {{count}} раза / 1K раз * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_many": " + Web-поиск {{count}} раз / 1K раз * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_one": " + Web-поиск {{count}} раз / 1K раз * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",

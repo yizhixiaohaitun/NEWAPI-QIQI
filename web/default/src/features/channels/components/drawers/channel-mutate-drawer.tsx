@@ -3545,6 +3545,31 @@ export function ChannelMutateDrawer({
                                 </FormItem>
                               )}
                             />
+                            <FormField
+                              control={form.control}
+                              name='hide_mapped_model_targets'
+                              render={({ field }) => (
+                                <FormItem className='border-border/60 mt-4 flex items-center justify-between gap-4 border-t pt-4'>
+                                  <div className='space-y-1'>
+                                    <FormLabel>
+                                      {t('Hide mapped upstream target names')}
+                                    </FormLabel>
+                                    <FormDescription>
+                                      {t(
+                                        'Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.'
+                                      )}
+                                    </FormDescription>
+                                  </div>
+                                  <FormControl>
+                                    <Switch
+                                      checked={field.value === true}
+                                      onCheckedChange={field.onChange}
+                                      disabled={isSubmitting}
+                                    />
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
                           </div>
 
                           <div className='border-border/60 rounded-lg border p-4'>

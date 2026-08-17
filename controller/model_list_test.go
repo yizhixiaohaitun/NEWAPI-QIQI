@@ -34,6 +34,11 @@ type userModelsResponse struct {
 	Data    []string `json:"data"`
 }
 
+type pricingResponse struct {
+	Success bool            `json:"success"`
+	Data    []model.Pricing `json:"data"`
+}
+
 func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -213,6 +218,192 @@ func TestGetUserModelsFiltersByRequestedGroup(t *testing.T) {
 	GetUserModels(vipContext)
 
 	require.Empty(t, decodeUserModelsResponse(t, vipRecorder))
+}
+
+func TestMappedUpstreamModelsAreHiddenFromClientModelLists(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1004,
+		Username: "mapped-model-list-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	mapping := `{"client-model":"upstream-model","shared-alias":"shared-upstream","same-model":"same-model"}`
+	hiddenChannel := &model.Channel{
+		Id:           801,
+		Name:         "hidden-mapped-models",
+		Status:       common.ChannelStatusEnabled,
+		Group:        "default",
+		Models:       "client-model,upstream-model,shared-alias,shared-upstream,same-model",
+		ModelMapping: &mapping,
+	}
+	hiddenChannel.SetOtherSettings(dto.ChannelOtherSettings{HideMappedModelTargets: true})
+	visibleChannel := &model.Channel{
+		Id:     802,
+		Name:   "visible-shared-upstream",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "shared-upstream,unmapped-model",
+	}
+	require.NoError(t, db.Create(&[]model.Channel{*hiddenChannel, *visibleChannel}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "client-model", ChannelId: 801, Enabled: true},
+		{Group: "default", Model: "upstream-model", ChannelId: 801, Enabled: true},
+		{Group: "default", Model: "shared-alias", ChannelId: 801, Enabled: true},
+		{Group: "default", Model: "shared-upstream", ChannelId: 801, Enabled: true},
+		{Group: "default", Model: "same-model", ChannelId: 801, Enabled: true},
+		{Group: "default", Model: "shared-upstream", ChannelId: 802, Enabled: true},
+		{Group: "default", Model: "unmapped-model", ChannelId: 802, Enabled: true},
+	}).Error)
+
+	// Visibility filtering must not remove the client-facing ability used for request routing.
+	assert.Contains(t, model.GetGroupEnabledModels("default"), "client-model")
+	routedChannel, err := model.GetChannel("default", "client-model", 0, "")
+	require.NoError(t, err)
+	require.Equal(t, 801, routedChannel.Id)
+
+	userRecorder := httptest.NewRecorder()
+	userContext, _ := gin.CreateTestContext(userRecorder)
+	userContext.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?group=default", nil)
+	userContext.Set("id", 1004)
+	GetUserModels(userContext)
+	userModels := decodeUserModelsResponse(t, userRecorder)
+	assert.ElementsMatch(t, []string{"client-model", "shared-alias", "shared-upstream", "same-model", "unmapped-model"}, userModels)
+
+	apiRecorder := httptest.NewRecorder()
+	apiContext, _ := gin.CreateTestContext(apiRecorder)
+	apiContext.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	apiContext.Set("id", 1004)
+	ListModels(apiContext, constant.ChannelTypeOpenAI)
+	apiModels := decodeListModelsResponse(t, apiRecorder)
+	assert.Contains(t, apiModels, "client-model")
+	assert.NotContains(t, apiModels, "upstream-model")
+	assert.Contains(t, apiModels, "shared-alias")
+	assert.Contains(t, apiModels, "shared-upstream")
+	assert.Contains(t, apiModels, "same-model")
+	assert.Contains(t, apiModels, "unmapped-model")
+
+	model.InvalidatePricingCache()
+	pricingRecorder := httptest.NewRecorder()
+	pricingContext, _ := gin.CreateTestContext(pricingRecorder)
+	pricingContext.Request = httptest.NewRequest(http.MethodGet, "/api/pricing", nil)
+	GetPricing(pricingContext)
+
+	require.Equal(t, http.StatusOK, pricingRecorder.Code)
+	var pricingPayload pricingResponse
+	require.NoError(t, common.Unmarshal(pricingRecorder.Body.Bytes(), &pricingPayload))
+	require.True(t, pricingPayload.Success)
+	visiblePricing := pricingByModelName(pricingPayload.Data)
+	assert.Contains(t, visiblePricing, "client-model")
+	assert.NotContains(t, visiblePricing, "upstream-model")
+	assert.Contains(t, visiblePricing, "shared-alias")
+	assert.Contains(t, visiblePricing, "shared-upstream")
+	assert.Contains(t, visiblePricing, "same-model")
+	assert.Contains(t, visiblePricing, "unmapped-model")
+}
+
+func TestMappedUpstreamModelsRemainVisibleWhenChannelSettingIsDisabled(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	mapping := `{"client-model":"upstream-model"}`
+	channel := &model.Channel{
+		Id:           803,
+		Name:         "mapping-visibility-default",
+		Status:       common.ChannelStatusEnabled,
+		Group:        "default",
+		Models:       "client-model,upstream-model",
+		ModelMapping: &mapping,
+	}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "client-model", ChannelId: 803, Enabled: true},
+		{Group: "default", Model: "upstream-model", ChannelId: 803, Enabled: true},
+	}).Error)
+
+	assert.ElementsMatch(t, []string{"client-model", "upstream-model"}, model.GetGroupEnabledModelsExcludingHiddenMappedTargets("default"))
+}
+
+func TestListModelsTokenLimitExcludesHiddenMappedUpstreamModel(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	db := setupModelListControllerTestDB(t)
+	mapping := `{"client-model":"upstream-model"}`
+	channel := &model.Channel{
+		Id:           804,
+		Name:         "token-hidden-mapped-models",
+		Status:       common.ChannelStatusEnabled,
+		Group:        "default",
+		Models:       "client-model",
+		ModelMapping: &mapping,
+	}
+	channel.SetOtherSettings(dto.ChannelOtherSettings{HideMappedModelTargets: true})
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group: "default", Model: "client-model", ChannelId: 804, Enabled: true,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimitEnabled, true)
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimit, map[string]bool{
+		"client-model":    true,
+		"upstream-model":  true,
+		"shared-alias":    true,
+		"shared-upstream": true,
+	})
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+	ids := decodeListModelsResponse(t, recorder)
+	assert.Contains(t, ids, "client-model")
+	assert.NotContains(t, ids, "upstream-model")
+	assert.Contains(t, ids, "shared-alias")
+	assert.Contains(t, ids, "shared-upstream")
+}
+
+func TestListModelsTokenLimitKeepsMappedTargetProvidedByVisibleChannel(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	db := setupModelListControllerTestDB(t)
+	mapping := `{"client-model":"shared-upstream"}`
+	hiddenChannel := &model.Channel{
+		Id:           805,
+		Name:         "token-hidden-shared-upstream",
+		Status:       common.ChannelStatusEnabled,
+		Group:        "default",
+		Models:       "client-model,shared-upstream",
+		ModelMapping: &mapping,
+	}
+	hiddenChannel.SetOtherSettings(dto.ChannelOtherSettings{HideMappedModelTargets: true})
+	visibleChannel := &model.Channel{
+		Id:     806,
+		Name:   "token-visible-shared-upstream",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "shared-upstream",
+	}
+	require.NoError(t, db.Create(&[]model.Channel{*hiddenChannel, *visibleChannel}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "client-model", ChannelId: 805, Enabled: true},
+		{Group: "default", Model: "shared-upstream", ChannelId: 805, Enabled: true},
+		{Group: "default", Model: "shared-upstream", ChannelId: 806, Enabled: true},
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimitEnabled, true)
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimit, map[string]bool{
+		"client-model":    true,
+		"shared-upstream": true,
+	})
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+	ids := decodeListModelsResponse(t, recorder)
+	assert.Contains(t, ids, "client-model")
+	assert.Contains(t, ids, "shared-upstream")
 }
 
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {

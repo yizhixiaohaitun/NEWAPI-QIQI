@@ -1,5 +1,7 @@
 {
   "translation": {
+    "隐藏模型映射的上游目标名称": "Masquer les noms des cibles amont mappées",
+    "开启后，用户模型列表将隐藏模型映射右侧的上游目标名称，并保留左侧客户端别名。默认关闭。": "Une fois activé, les listes de modèles visibles par les utilisateurs masquent les cibles amont à droite du mappage et conservent les alias clients à gauche. Désactivé par défaut.",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_many": " + Recherche Web {{count}} fois / 1K fois * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_one": " + Recherche Web {{count}} fois / 1K fois * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_other": " + Recherche Web {{count}} fois / 1K fois * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",

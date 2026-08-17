@@ -177,6 +177,7 @@ const EditChannelModal = (props) => {
     base_url: '',
     other: '',
     model_mapping: '',
+    hide_mapped_model_targets: false,
     param_override: '',
     status_code_mapping: '',
     models: [],
@@ -909,6 +910,8 @@ const EditChannelModal = (props) => {
             parsedSettings.allow_inference_geo || false;
           data.allow_speed = parsedSettings.allow_speed || false;
           data.claude_beta_query = parsedSettings.claude_beta_query || false;
+          data.hide_mapped_model_targets =
+            parsedSettings.hide_mapped_model_targets === true;
           data.upstream_model_update_check_enabled =
             parsedSettings.upstream_model_update_check_enabled === true;
           data.upstream_model_update_auto_sync_enabled =
@@ -939,6 +942,7 @@ const EditChannelModal = (props) => {
           data.allow_inference_geo = false;
           data.allow_speed = false;
           data.claude_beta_query = false;
+          data.hide_mapped_model_targets = false;
           data.upstream_model_update_check_enabled = false;
           data.upstream_model_update_auto_sync_enabled = false;
           data.upstream_model_update_last_check_time = 0;
@@ -957,6 +961,7 @@ const EditChannelModal = (props) => {
         data.allow_inference_geo = false;
         data.allow_speed = false;
         data.claude_beta_query = false;
+        data.hide_mapped_model_targets = false;
         data.upstream_model_update_check_enabled = false;
         data.upstream_model_update_auto_sync_enabled = false;
         data.upstream_model_update_last_check_time = 0;
@@ -1800,6 +1805,8 @@ const EditChannelModal = (props) => {
       }
     }
 
+    settings.hide_mapped_model_targets =
+      localInputs.hide_mapped_model_targets === true;
     settings.upstream_model_update_check_enabled =
       localInputs.upstream_model_update_check_enabled === true;
     settings.upstream_model_update_auto_sync_enabled =
@@ -1845,6 +1852,7 @@ const EditChannelModal = (props) => {
     delete localInputs.allow_inference_geo;
     delete localInputs.allow_speed;
     delete localInputs.claude_beta_query;
+    delete localInputs.hide_mapped_model_targets;
     delete localInputs.upstream_model_update_check_enabled;
     delete localInputs.upstream_model_update_auto_sync_enabled;
     delete localInputs.upstream_model_update_last_check_time;
@@ -3617,6 +3625,19 @@ const EditChannelModal = (props) => {
                     extraText={t(
                       '键为请求中的模型名称，值为要替换的模型名称',
                     )}
+                  />
+
+                  <Form.Switch
+                    field='hide_mapped_model_targets'
+                    label={t('隐藏模型映射的上游目标名称')}
+                    extraText={t(
+                      '开启后，用户模型列表将隐藏模型映射右侧的上游目标名称，并保留左侧客户端别名。默认关闭。',
+                    )}
+                    checkedText={t('开')}
+                    uncheckedText={t('关')}
+                    onChange={(value) =>
+                      handleInputChange('hide_mapped_model_targets', value)
+                    }
                   />
 
                   {/* Auto Ban - Core Config */}

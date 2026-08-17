@@ -1,5 +1,7 @@
 {
   "translation": {
+    "隐藏模型映射的上游目标名称": "Ẩn tên đích thượng nguồn đã ánh xạ",
+    "开启后，用户模型列表将隐藏模型映射右侧的上游目标名称，并保留左侧客户端别名。默认关闭。": "Khi bật, danh sách mô hình hiển thị cho người dùng sẽ ẩn tên đích thượng nguồn ở bên phải ánh xạ và vẫn hiển thị bí danh máy khách ở bên trái. Mặc định tắt.",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_one": " + Tìm kiếm Web {{count}} lần / 1K lần * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_other": " + Tìm kiếm Web {{count}} lần / 1K lần * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + 图片生成调用 {{symbol}}{{price}} / 1次 * {{ratioType}} {{ratio}}": " + Gọi tạo hình ảnh {{symbol}}{{price}} / 1 lần * {{ratioType}} {{ratio}}",

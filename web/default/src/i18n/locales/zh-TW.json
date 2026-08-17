@@ -1,5 +1,7 @@
 {
   "translation": {
+    "Hide mapped upstream target names": "隱藏映射後的上游目標名稱",
+    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "在面向使用者的模型清單中隱藏模型映射右側的上游目標名稱，並保留左側的用戶端別名。預設關閉。",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

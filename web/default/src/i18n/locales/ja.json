@@ -1,5 +1,7 @@
 {
   "translation": {
+    "Hide mapped upstream target names": "マッピング先のアップストリーム名を非表示",
+    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "ユーザー向けモデル一覧ではモデルマッピング右側のアップストリーム名を非表示にし、左側のクライアント別名は表示したままにします。デフォルトは無効です。",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

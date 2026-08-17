@@ -229,6 +229,11 @@ func ListModels(c *gin.Context, modelType int) {
 	ownerGroups := groups.ownerGroups
 	modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
 	if modelLimitEnable {
+		hiddenModels := make(map[string]struct{})
+		for _, modelName := range model.GetHiddenMappedModelTargetsForGroups(ownerGroups) {
+			hiddenModels[modelName] = struct{}{}
+		}
+
 		s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 		var tokenModelLimit map[string]bool
 		if ok {
@@ -236,7 +241,10 @@ func ListModels(c *gin.Context, modelType int) {
 		} else {
 			tokenModelLimit = map[string]bool{}
 		}
-		for allowModel, _ := range tokenModelLimit {
+		for allowModel := range tokenModelLimit {
+			if _, hidden := hiddenModels[allowModel]; hidden {
+				continue
+			}
 			if !acceptUnsetRatioModel {
 				if !helper.HasModelBillingConfig(allowModel) {
 					continue
@@ -248,7 +256,7 @@ func ListModels(c *gin.Context, modelType int) {
 		var models []string
 		if groups.tokenGroup == "auto" {
 			for _, autoGroup := range ownerGroups {
-				groupModels := model.GetGroupEnabledModels(autoGroup)
+				groupModels := model.GetGroupEnabledModelsExcludingHiddenMappedTargets(autoGroup)
 				for _, g := range groupModels {
 					if !common.StringsContains(models, g) {
 						models = append(models, g)
@@ -256,7 +264,7 @@ func ListModels(c *gin.Context, modelType int) {
 				}
 			}
 		} else {
-			models = model.GetGroupEnabledModels(ownerGroups[0])
+			models = model.GetGroupEnabledModelsExcludingHiddenMappedTargets(ownerGroups[0])
 		}
 		for _, modelName := range models {
 			if !acceptUnsetRatioModel {
@@ -288,11 +296,17 @@ func ListModels(c *gin.Context, modelType int) {
 				Type:        "model",
 			}
 		}
+		firstID := ""
+		lastID := ""
+		if len(useranthropicModels) > 0 {
+			firstID = useranthropicModels[0].ID
+			lastID = useranthropicModels[len(useranthropicModels)-1].ID
+		}
 		c.JSON(200, gin.H{
 			"data":     useranthropicModels,
-			"first_id": useranthropicModels[0].ID,
+			"first_id": firstID,
 			"has_more": false,
-			"last_id":  useranthropicModels[len(useranthropicModels)-1].ID,
+			"last_id":  lastID,
 		})
 	case constant.ChannelTypeGemini:
 		userGeminiModels := make([]dto.GeminiModel, len(userOpenAiModels))

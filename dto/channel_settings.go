@@ -52,6 +52,7 @@ type ChannelOtherSettings struct {
 	UpstreamModelUpdateLastDetectedModels []string              `json:"upstream_model_update_last_detected_models,omitempty"` // 上次检测到的可加入模型
 	UpstreamModelUpdateLastRemovedModels  []string              `json:"upstream_model_update_last_removed_models,omitempty"`  // 上次检测到的可删除模型
 	UpstreamModelUpdateIgnoredModels      []string              `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
+	HideMappedModelTargets                bool                  `json:"hide_mapped_model_targets,omitempty"`                  // 是否从用户模型列表隐藏模型映射右侧的上游目标名
 	AdvancedCustom                        *AdvancedCustomConfig `json:"advanced_custom,omitempty"`
 }
 

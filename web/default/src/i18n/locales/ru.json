@@ -1,5 +1,7 @@
 {
   "translation": {
+    "Hide mapped upstream target names": "Скрывать имена сопоставленных вышестоящих моделей",
+    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "Скрывать в пользовательских списках имена вышестоящих целей справа в сопоставлении, сохраняя видимыми клиентские псевдонимы слева. По умолчанию выключено.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

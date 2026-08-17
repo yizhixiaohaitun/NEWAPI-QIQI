@@ -655,14 +655,14 @@ func GetUserModels(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "",
-			"data":    model.GetGroupEnabledModels(group),
+			"data":    model.GetGroupEnabledModelsExcludingHiddenMappedTargets(group),
 		})
 		return
 	}
 
 	var models []string
 	for group := range groups {
-		for _, g := range model.GetGroupEnabledModels(group) {
+		for _, g := range model.GetGroupEnabledModelsExcludingHiddenMappedTargets(group) {
 			if !common.StringsContains(models, g) {
 				models = append(models, g)
 			}

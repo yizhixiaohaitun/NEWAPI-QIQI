@@ -54,6 +54,92 @@ func GetEnabledModels() []string {
 	return models
 }
 
+func GetGroupEnabledModelsExcludingHiddenMappedTargets(group string) []string {
+	var abilities []Ability
+	DB.Where(commonGroupCol+" = ? and enabled = ?", group, true).Find(&abilities)
+	visibleModels, _ := enabledAbilityModelVisibility(abilities)
+	return visibleModels
+}
+
+func GetHiddenMappedModelTargetsForGroups(groups []string) []string {
+	if len(groups) == 0 {
+		return []string{}
+	}
+	var abilities []Ability
+	DB.Where(commonGroupCol+" IN ? and enabled = ?", groups, true).Find(&abilities)
+	_, hiddenModels := enabledAbilityModelVisibility(abilities)
+	return hiddenModels
+}
+
+func enabledAbilityModelVisibility(abilities []Ability) ([]string, []string) {
+	if len(abilities) == 0 {
+		return []string{}, []string{}
+	}
+
+	channelIDs := make([]int, 0, len(abilities))
+	seenChannelIDs := make(map[int]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if _, ok := seenChannelIDs[ability.ChannelId]; ok {
+			continue
+		}
+		seenChannelIDs[ability.ChannelId] = struct{}{}
+		channelIDs = append(channelIDs, ability.ChannelId)
+	}
+
+	var channels []Channel
+	if err := DB.Select("id", "model_mapping", "settings").Where("id IN ?", channelIDs).Find(&channels).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to load channel model visibility settings: %v", err))
+	}
+
+	hiddenTargetsByChannel := make(map[int]map[string]struct{}, len(channels))
+	hiddenTargetCandidates := make([]string, 0)
+	seenHiddenTargetCandidates := make(map[string]struct{})
+	for _, channel := range channels {
+		if !channel.GetOtherSettings().HideMappedModelTargets || channel.ModelMapping == nil || *channel.ModelMapping == "" {
+			continue
+		}
+		modelMapping := make(map[string]string)
+		if err := common.UnmarshalJsonStr(*channel.ModelMapping, &modelMapping); err != nil {
+			common.SysLog(fmt.Sprintf("failed to parse model mapping for list visibility: channel_id=%d, error=%v", channel.Id, err))
+			continue
+		}
+		hiddenTargets := make(map[string]struct{}, len(modelMapping))
+		for source, target := range modelMapping {
+			if target != "" && source != target {
+				hiddenTargets[target] = struct{}{}
+				if _, seen := seenHiddenTargetCandidates[target]; !seen {
+					seenHiddenTargetCandidates[target] = struct{}{}
+					hiddenTargetCandidates = append(hiddenTargetCandidates, target)
+				}
+			}
+		}
+		hiddenTargetsByChannel[channel.Id] = hiddenTargets
+	}
+
+	visibleModels := make([]string, 0, len(abilities))
+	seenVisibleModels := make(map[string]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if hiddenTargets, ok := hiddenTargetsByChannel[ability.ChannelId]; ok {
+			if _, hidden := hiddenTargets[ability.Model]; hidden {
+				continue
+			}
+		}
+		if _, seen := seenVisibleModels[ability.Model]; seen {
+			continue
+		}
+		seenVisibleModels[ability.Model] = struct{}{}
+		visibleModels = append(visibleModels, ability.Model)
+	}
+
+	hiddenModels := make([]string, 0, len(hiddenTargetCandidates))
+	for _, modelName := range hiddenTargetCandidates {
+		if _, visible := seenVisibleModels[modelName]; !visible {
+			hiddenModels = append(hiddenModels, modelName)
+		}
+	}
+	return visibleModels, hiddenModels
+}
+
 func GetAllEnableAbilities() []Ability {
 	var abilities []Ability
 	DB.Find(&abilities, "enabled = ?", true)

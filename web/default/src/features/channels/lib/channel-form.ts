@@ -144,6 +144,7 @@ export const channelFormSchema = z
         isOptionalModelMapping,
         'Model mapping must be a JSON object with string values'
       ),
+    hide_mapped_model_targets: z.boolean().optional(),
     priority: z.number().optional(),
     weight: z.number().optional(),
     test_model: z.string().optional(),
@@ -307,6 +308,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   models: '',
   group: ['default'],
   model_mapping: '',
+  hide_mapped_model_targets: false,
   priority: 0,
   weight: 0,
   test_model: '',
@@ -404,6 +406,7 @@ export function transformChannelToFormDefaults(
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
+  let hideMappedModelTargets = false
   let advancedCustom = ''
 
   if (channel.settings) {
@@ -425,6 +428,7 @@ export function transformChannelToFormDefaults(
         parsed.upstream_model_update_check_enabled === true
       upstreamModelUpdateAutoSyncEnabled =
         parsed.upstream_model_update_auto_sync_enabled === true
+      hideMappedModelTargets = parsed.hide_mapped_model_targets === true
       upstreamModelUpdateIgnoredModels = Array.isArray(
         parsed.upstream_model_update_ignored_models
       )
@@ -448,6 +452,7 @@ export function transformChannelToFormDefaults(
     models: channel.models || '',
     group: parseGroups(channel.group || 'default'),
     model_mapping: channel.model_mapping || '',
+    hide_mapped_model_targets: hideMappedModelTargets,
     priority: channel.priority || 0,
     weight: channel.weight || 0,
     test_model: channel.test_model || '',
@@ -584,6 +589,8 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
 
   settingsObj.disable_task_polling_sleep =
     formData.disable_task_polling_sleep === true
+  settingsObj.hide_mapped_model_targets =
+    formData.hide_mapped_model_targets === true
 
   // Upstream model update settings (for model-fetchable channel types)
   if (MODEL_FETCHABLE_TYPES.has(formData.type)) {
