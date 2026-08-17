@@ -14,6 +14,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGetModelRequestForSeedanceVideos(t *testing.T) {
+	tests := []struct {
+		model            string
+		expectedPlatform string
+	}{
+		{model: "seedance-2.0", expectedPlatform: string(constant.TaskPlatformSeedance)},
+		{model: "seedance-2.0-fast", expectedPlatform: string(constant.TaskPlatformSeedance)},
+		{model: "sd_2.0_discount", expectedPlatform: string(constant.TaskPlatformSeedance)},
+		{model: "sd_2.0_fast_discount", expectedPlatform: string(constant.TaskPlatformSeedance)},
+		{model: "sd_2.0_mini_discount", expectedPlatform: string(constant.TaskPlatformSeedance)},
+		{model: "sd_2.0_special", expectedPlatform: string(constant.TaskPlatformSeedance)},
+		{model: "sd_2.0_fast_special", expectedPlatform: string(constant.TaskPlatformSeedance)},
+		{model: "sd_2.0_mini_special", expectedPlatform: string(constant.TaskPlatformSeedance)},
+		{model: "sora-2"},
+		{model: "MiniMax-H3"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.model, func(t *testing.T) {
+			body := `{"model":"` + test.model + `","prompt":"test"}`
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			defer common.CleanupBodyStorage(c)
+
+			request, shouldSelectChannel, err := getModelRequest(c)
+			require.NoError(t, err)
+			require.NotNil(t, request)
+			assert.True(t, shouldSelectChannel)
+			assert.Equal(t, test.model, request.Model)
+			assert.Equal(t, test.expectedPlatform, common.GetContextKeyString(c, "platform"))
+			assert.Equal(t, relayconstant.RelayModeVideoSubmit, common.GetContextKeyInt(c, "relay_mode"))
+		})
+	}
+}
+
 func TestGetModelRequestForSeedanceAssets(t *testing.T) {
 	tests := []struct {
 		name          string
