@@ -10,8 +10,9 @@ const semiUiDir = path.resolve(
   path.dirname(require.resolve('@douyinfe/semi-ui')),
   '../..',
 )
-const semiFoundationDir = path.dirname(
-  require.resolve('@douyinfe/semi-foundation/package.json'),
+const semiFoundationDir = path.resolve(
+  path.dirname(require.resolve('@douyinfe/semi-foundation')),
+  '../..',
 )
 const semiDateFnsDir = path.dirname(
   require.resolve('date-fns/package.json', {
