@@ -494,3 +494,28 @@ func TestFetchTaskUsesModelCenterEndpointAndUpstreamID(t *testing.T) {
 	assert.Equal(t, "/kyyReactApiServer/v2/model-center/tasks/video_seedance_1", requestedPath)
 	assert.Equal(t, "Bearer channel-key", authorization)
 }
+
+func TestValidateRequestStoresSafeTaskDetailsSummary(t *testing.T) {
+	context, info := newTaskContext(t, `{
+		"model":"seedance-2.0",
+		"prompt":"two characters running in neon rain",
+		"duration":5,
+		"resolution":"720p",
+		"images":[
+			"https://cdn.example/ref-1.png?api_key=secret&sign=public-sign",
+			"https://cdn.example/ref-2.png"
+		]
+	}`)
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(context, info)
+	require.Nil(t, taskErr)
+	assert.Equal(t, "two characters running in neon rain", info.TaskInput)
+	require.Len(t, info.ReferenceResources, 2)
+	assert.NotContains(t, info.ReferenceResources[0], "secret")
+	assert.Contains(t, info.ReferenceResources[0], "api_key=%5BREDACTED%5D")
+	assert.Contains(t, info.ReferenceResources[0], "sign=public-sign")
+
+	task := model.InitTask("seedance", info)
+	assert.Equal(t, info.TaskInput, task.Properties.Input)
+	assert.Equal(t, info.ReferenceResources, task.Properties.ReferenceResources)
+}

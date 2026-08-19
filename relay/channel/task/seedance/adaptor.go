@@ -72,6 +72,51 @@ type modelCenterRequest struct {
 	Watermark       *bool    `json:"watermark,omitempty"`
 }
 
+func redactReferenceResource(value string) string {
+	value = strings.TrimSpace(value)
+	parsed, err := url.Parse(value)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return value
+	}
+	query := parsed.Query()
+	changed := false
+	for key := range query {
+		normalized := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(key))
+		switch normalized {
+		case "authorization", "apikey", "accesstoken", "refreshtoken", "credential", "password":
+			query.Set(key, "[REDACTED]")
+			changed = true
+		}
+	}
+	if changed {
+		parsed.RawQuery = query.Encode()
+	}
+	return parsed.String()
+}
+
+func taskReferenceResources(req *modelCenterRequest) []string {
+	candidates := make([]string, 0, len(req.ReferenceImages)+len(req.ReferenceVideos)+len(req.ReferenceAudios)+2)
+	candidates = append(candidates, req.ReferenceImages...)
+	candidates = append(candidates, req.ReferenceVideos...)
+	candidates = append(candidates, req.ReferenceAudios...)
+	candidates = append(candidates, req.FirstImage, req.LastImage)
+
+	seen := make(map[string]struct{}, len(candidates))
+	resources := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = redactReferenceResource(candidate)
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		resources = append(resources, candidate)
+	}
+	return resources
+}
+
 type responseError struct {
 	Message string `json:"message,omitempty"`
 	Code    string `json:"code,omitempty"`
@@ -698,9 +743,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if !IsSupportedModel(req.Model) {
 		return invalidRequest(fmt.Errorf("unsupported Seedance model: %s", req.Model))
 	}
-	if _, err := buildModelCenterRequest(req, req.Model); err != nil {
+	payload, err := buildModelCenterRequest(req, req.Model)
+	if err != nil {
 		return invalidRequest(err)
 	}
+	info.TaskInput = payload.Prompt
+	info.ReferenceResources = taskReferenceResources(payload)
 	info.Action = constant.TaskActionGenerate
 	return nil
 }
