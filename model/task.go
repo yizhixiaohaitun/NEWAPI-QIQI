@@ -75,9 +75,10 @@ func (t *Task) GetData(v any) error {
 }
 
 type Properties struct {
-	Input             string `json:"input"`
-	UpstreamModelName string `json:"upstream_model_name,omitempty"`
-	OriginModelName   string `json:"origin_model_name,omitempty"`
+	Input              string   `json:"input,omitempty"`
+	ReferenceResources []string `json:"reference_resources,omitempty"`
+	UpstreamModelName  string   `json:"upstream_model_name,omitempty"`
+	OriginModelName    string   `json:"origin_model_name,omitempty"`
 }
 
 func (m *Properties) Scan(val interface{}) error {
@@ -90,7 +91,7 @@ func (m *Properties) Scan(val interface{}) error {
 }
 
 func (m Properties) Value() (driver.Value, error) {
-	if m == (Properties{}) {
+	if m.Input == "" && len(m.ReferenceResources) == 0 && m.UpstreamModelName == "" && m.OriginModelName == "" {
 		return nil, nil
 	}
 	return common.Marshal(m)
@@ -173,6 +174,10 @@ type SyncTaskQueryParams struct {
 func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) *Task {
 	properties := Properties{}
 	privateData := TaskPrivateData{}
+	if relayInfo != nil && relayInfo.TaskRelayInfo != nil {
+		properties.Input = relayInfo.TaskInput
+		properties.ReferenceResources = append([]string(nil), relayInfo.ReferenceResources...)
+	}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
 		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
 			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi {
