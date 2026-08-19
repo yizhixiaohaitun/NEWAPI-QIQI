@@ -563,6 +563,18 @@ func buildModelCenterRequest(req relaycommon.TaskSubmitReq, upstreamModel string
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(req.InputReference) == "" && strings.TrimSpace(req.Image) == "" {
+		for _, rawImage := range req.Images {
+			image, imageErr := mediaReference(rawImage)
+			if imageErr != nil {
+				return nil, fmt.Errorf("images: %w", imageErr)
+			}
+			images = append(images, image)
+		}
+	}
+	if len(images) > 9 {
+		return nil, fmt.Errorf("reference_images supports at most 9 item(s)")
+	}
 	videos, err := mediaReferences(input, 3, "reference_videos", "video_references")
 	if err != nil {
 		return nil, err
@@ -580,7 +592,7 @@ func buildModelCenterRequest(req relaycommon.TaskSubmitReq, upstreamModel string
 		return nil, err
 	}
 	if firstImage == "" {
-		for _, candidate := range append([]string{req.InputReference, req.Image}, req.Images...) {
+		for _, candidate := range []string{req.InputReference, req.Image} {
 			if strings.TrimSpace(candidate) == "" {
 				continue
 			}
