@@ -127,6 +127,38 @@ func TestBuildRequestBodyTranslatesStandardSoraFields(t *testing.T) {
 	}`, string(forwarded))
 }
 
+func TestBuildRequestBodyTreatsTopLevelImagesAsOrderedReferences(t *testing.T) {
+	body := `{
+		"model":"seedance-2.0",
+		"prompt":"@图1 和 @图2 在雨夜霓虹巷奔跑，电影感",
+		"duration":5,
+		"aspect_ratio":"16:9",
+		"resolution":"720p",
+		"audio":true,
+		"images":[
+			"https://h.m66x.cn/s/anita/mgw/asset/1787063516138_5c421eee.png",
+			"https://h.m66x.cn/s/anita/mgw/asset/1787051387831_1ce33457.png"
+		]
+	}`
+	context, info := newTaskContext(t, body)
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+
+	reader, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	assert.Equal(t, []any{
+		"https://h.m66x.cn/s/anita/mgw/asset/1787063516138_5c421eee.png",
+		"https://h.m66x.cn/s/anita/mgw/asset/1787051387831_1ce33457.png",
+	}, payload["reference_images"])
+	assert.NotContains(t, payload, "first_image")
+	assert.Equal(t, "@图1 和 @图2 在雨夜霓虹巷奔跑，电影感", payload["prompt"])
+}
+
 func TestBuildRequestBodyAcceptsLegacyNestedPrompt(t *testing.T) {
 	body := `{"model":"seedance-2.0","input":{"prompt":"legacy river scene","duration":5,"aspect_ratio":"16:9","resolution":"720p"}}`
 	context, info := newTaskContext(t, body)
