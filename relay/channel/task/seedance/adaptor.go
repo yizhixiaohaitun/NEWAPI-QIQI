@@ -2,6 +2,7 @@ package seedance
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,10 +25,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-const (
-	modelCenterServicePrefix = "/kyyReactApiServer"
-	modelCenterTasksPath     = "/v2/model-center/tasks"
-)
+const seedanceTasksPath = "/async/tasks"
 
 var windowsPathPattern = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 
@@ -55,21 +53,15 @@ type TaskAdaptor struct {
 	baseURL string
 }
 
-type modelCenterRequest struct {
-	Model           string   `json:"model"`
-	Prompt          string   `json:"prompt"`
-	ReferenceImages []string `json:"reference_images,omitempty"`
-	ReferenceVideos []string `json:"reference_videos,omitempty"`
-	ReferenceAudios []string `json:"reference_audios,omitempty"`
-	Duration        int      `json:"duration"`
-	AspectRatio     string   `json:"aspect_ratio,omitempty"`
-	Resolution      string   `json:"resolution,omitempty"`
-	Seed            *int     `json:"seed,omitempty"`
-	FirstImage      string   `json:"first_image,omitempty"`
-	LastImage       string   `json:"last_image,omitempty"`
-	GenerateAudio   *bool    `json:"generate_audio,omitempty"`
-	Tools           []any    `json:"tools,omitempty"`
-	Watermark       *bool    `json:"watermark,omitempty"`
+type seedanceRequest struct {
+	Model string         `json:"model"`
+	Input map[string]any `json:"input"`
+}
+
+type responseWire struct {
+	Success bool            `json:"success"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
 }
 
 func redactReferenceResource(value string) string {
@@ -94,12 +86,33 @@ func redactReferenceResource(value string) string {
 	return parsed.String()
 }
 
-func taskReferenceResources(req *modelCenterRequest) []string {
-	candidates := make([]string, 0, len(req.ReferenceImages)+len(req.ReferenceVideos)+len(req.ReferenceAudios)+2)
-	candidates = append(candidates, req.ReferenceImages...)
-	candidates = append(candidates, req.ReferenceVideos...)
-	candidates = append(candidates, req.ReferenceAudios...)
-	candidates = append(candidates, req.FirstImage, req.LastImage)
+func taskReferenceResources(req *seedanceRequest) []string {
+	if req == nil {
+		return nil
+	}
+	keys := []string{"image_references", "video_references", "audio_references", "start_frames", "end_frames"}
+	candidates := make([]string, 0)
+	var collect func(any)
+	collect = func(value any) {
+		switch item := value.(type) {
+		case string:
+			candidates = append(candidates, item)
+		case []any:
+			for _, child := range item {
+				collect(child)
+			}
+		case map[string]any:
+			for _, key := range []string{"url", "image_url", "video_url", "audio_url", "data", "base64"} {
+				if child, ok := item[key]; ok {
+					collect(child)
+					break
+				}
+			}
+		}
+	}
+	for _, key := range keys {
+		collect(req.Input[key])
+	}
 
 	seen := make(map[string]struct{}, len(candidates))
 	resources := make([]string, 0, len(candidates))
@@ -131,6 +144,9 @@ type taskWire struct {
 	Model          string          `json:"model"`
 	Status         string          `json:"status"`
 	Progress       json.RawMessage `json:"progress,omitempty"`
+	FailReason     string          `json:"fail_reason,omitempty"`
+	Data           json.RawMessage `json:"data,omitempty"`
+	Outputs        []any           `json:"outputs,omitempty"`
 	ResultURL      string          `json:"result_url,omitempty"`
 	VideoURL       string          `json:"video_url,omitempty"`
 	LastFrameURL   string          `json:"last_frame_url,omitempty"`
@@ -267,6 +283,35 @@ func mergeTopLevelCompatibilityFields(body []byte, req *relaycommon.TaskSubmitRe
 		}
 		if value, exists := root[key]; exists {
 			req.Input[key] = value
+		}
+	}
+	if rawReferences, exists := root["input_reference"].([]any); exists {
+		for _, rawReference := range rawReferences {
+			reference, ok := rawReference.(map[string]any)
+			if !ok {
+				return fmt.Errorf("input_reference items must be objects")
+			}
+			mediaType, _ := reference["type"].(string)
+			mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+			var targetKey, valueKey string
+			switch mediaType {
+			case "image":
+				targetKey, valueKey = "image_references", "image_url"
+			case "video":
+				targetKey, valueKey = "video_references", "video_url"
+			case "audio":
+				targetKey, valueKey = "audio_references", "audio_url"
+			default:
+				return fmt.Errorf("unsupported input_reference type: %s", mediaType)
+			}
+			value, exists := reference[valueKey]
+			if !exists {
+				return fmt.Errorf("input_reference %s item is missing %s", mediaType, valueKey)
+			}
+			if strength, exists := reference["strength"]; exists {
+				value = map[string]any{"url": value, "strength": strength}
+			}
+			req.Input[targetKey] = append(inputArray(req.Input, targetKey), value)
 		}
 	}
 	return mergeContentResources(root["content"], req)
@@ -576,24 +621,149 @@ func intOption(req relaycommon.TaskSubmitReq, key string) (*int, error) {
 	return &result, nil
 }
 
-func buildModelCenterRequest(req relaycommon.TaskSubmitReq, upstreamModel string) (*modelCenterRequest, error) {
-	modelName := upstreamModel
-	if !IsSupportedModel(modelName) {
-		modelName = req.Model
+func officialSeedanceModel(value string) (string, error) {
+	value = normalizedModel(value)
+	switch {
+	case value == "seedance-2.0", value == "seedance-2.0-fast":
+		return value, nil
+	case strings.HasPrefix(value, "sd_2.0_") && strings.Contains(value, "fast"):
+		return "seedance-2.0-fast", nil
+	case strings.HasPrefix(value, "sd_2.0_"):
+		return "seedance-2.0", nil
+	default:
+		return "", fmt.Errorf("unsupported Seedance model: %s", value)
 	}
-	modelName, ok := canonicalModel(modelName)
-	if !ok {
-		return nil, fmt.Errorf("unsupported Seedance model: %s", req.Model)
+}
+
+func validOfficialMediaValue(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	lower := strings.ToLower(value)
+	if strings.HasPrefix(lower, "file:") || strings.HasPrefix(value, "/") || strings.HasPrefix(value, `\\`) || windowsPathPattern.MatchString(value) {
+		return false
+	}
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		parsed, err := url.ParseRequestURI(value)
+		return err == nil && parsed.Host != ""
+	}
+	if strings.HasPrefix(lower, "data:") {
+		return strings.Contains(value, ",")
+	}
+	if strings.HasPrefix(lower, "assetid://") {
+		return len(strings.TrimSpace(value[len("assetId://"):])) > 0
+	}
+	if _, err := base64.StdEncoding.DecodeString(value); err == nil {
+		return true
+	}
+	_, err := base64.RawStdEncoding.DecodeString(value)
+	return err == nil
+}
+
+func officialMediaReference(value any, mediaType string) (any, error) {
+	switch item := value.(type) {
+	case string:
+		item = strings.TrimSpace(item)
+		if !validOfficialMediaValue(item) {
+			return nil, fmt.Errorf("media reference must be an HTTP(S) URL, data URI, base64 value, or assetId:// reference")
+		}
+		return item, nil
+	case map[string]any:
+		var raw any
+		for _, key := range []string{mediaType + "_url", "url", "data", "base64"} {
+			if candidate, exists := item[key]; exists {
+				raw = candidate
+				break
+			}
+		}
+		if raw == nil {
+			return nil, fmt.Errorf("media reference object must contain a URL, data, or base64 value")
+		}
+		if _, exists := item["strength"]; exists && mediaType != "image" {
+			return nil, fmt.Errorf("%s references do not support strength", mediaType)
+		}
+		normalized, err := officialMediaReference(raw, mediaType)
+		if err != nil {
+			return nil, err
+		}
+		if strength, exists := item["strength"]; exists {
+			return map[string]any{"url": normalized, "strength": strength}, nil
+		}
+		return normalized, nil
+	default:
+		return nil, fmt.Errorf("invalid media reference")
+	}
+}
+
+func officialMediaReferences(input map[string]any, mediaType string, max int, keys ...string) ([]any, error) {
+	items := inputArray(input, keys...)
+	if raw, exists := inputValue(input, nil, keys...); exists && raw != nil && items == nil {
+		return nil, fmt.Errorf("%s must be an array", keys[0])
+	}
+	if len(items) > max {
+		return nil, fmt.Errorf("%s supports at most %d item(s)", keys[0], max)
+	}
+	result := make([]any, 0, len(items))
+	for _, item := range items {
+		normalized, err := officialMediaReference(item, mediaType)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", keys[0], err)
+		}
+		result = append(result, normalized)
+	}
+	return result, nil
+}
+
+func officialFrameReferences(input map[string]any, keys ...string) ([]any, error) {
+	for _, key := range keys {
+		raw, exists := input[key]
+		if !exists || raw == nil {
+			continue
+		}
+		items, ok := raw.([]any)
+		if !ok {
+			items = []any{raw}
+		}
+		if len(items) > 1 {
+			return nil, fmt.Errorf("%s supports at most 1 item", key)
+		}
+		if len(items) == 0 {
+			return nil, nil
+		}
+		value, err := officialMediaReference(items[0], "image")
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		return []any{value}, nil
+	}
+	return nil, nil
+}
+
+func buildSeedanceRequest(req relaycommon.TaskSubmitReq, upstreamModel string) (*seedanceRequest, error) {
+	modelName, err := officialSeedanceModel(upstreamModel)
+	if err != nil {
+		modelName, err = officialSeedanceModel(req.Model)
+	}
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(req.Prompt) == "" {
 		return nil, fmt.Errorf("prompt is required")
+	}
+	canonical, ok := canonicalModel(req.Model)
+	if !ok {
+		canonical, ok = canonicalModel(upstreamModel)
+	}
+	if !ok {
+		return nil, fmt.Errorf("unsupported Seedance model: %s", req.Model)
 	}
 	resolution, err := requestResolution(req)
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := modelSpecs[modelName][resolution]; !ok {
-		return nil, fmt.Errorf("model %s does not support resolution %s", modelName, resolution)
+	if _, ok := modelSpecs[canonical][resolution]; !ok {
+		return nil, fmt.Errorf("model %s does not support resolution %s", canonical, resolution)
 	}
 	duration, err := requestDuration(req)
 	if err != nil {
@@ -604,105 +774,119 @@ func buildModelCenterRequest(req relaycommon.TaskSubmitReq, upstreamModel string
 		return nil, err
 	}
 	input := normalizedInput(req)
-	images, err := mediaReferences(input, 9, "reference_images", "image_references")
+	images, err := officialMediaReferences(input, "image", 4, "image_references", "reference_images")
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(req.InputReference) == "" && strings.TrimSpace(req.Image) == "" {
 		for _, rawImage := range req.Images {
-			image, imageErr := mediaReference(rawImage)
+			image, imageErr := officialMediaReference(rawImage, "image")
 			if imageErr != nil {
 				return nil, fmt.Errorf("images: %w", imageErr)
 			}
 			images = append(images, image)
 		}
 	}
-	if len(images) > 9 {
-		return nil, fmt.Errorf("reference_images supports at most 9 item(s)")
+	if len(images) > 4 {
+		return nil, fmt.Errorf("image_references supports at most 4 item(s)")
 	}
-	videos, err := mediaReferences(input, 3, "reference_videos", "video_references")
+	videos, err := officialMediaReferences(input, "video", 3, "video_references", "reference_videos")
 	if err != nil {
 		return nil, err
 	}
-	audios, err := mediaReferences(input, 3, "reference_audios", "audio_references")
+	audios, err := officialMediaReferences(input, "audio", 1, "audio_references", "reference_audios")
 	if err != nil {
 		return nil, err
 	}
-	firstImage, err := firstMediaReference(input, "first_image", "start_frames")
+	startFrames, err := officialFrameReferences(input, "start_frames", "first_image")
 	if err != nil {
 		return nil, err
 	}
-	lastImage, err := firstMediaReference(input, "last_image", "end_frames")
+	endFrames, err := officialFrameReferences(input, "end_frames", "last_image")
 	if err != nil {
 		return nil, err
 	}
-	if firstImage == "" {
+	if len(startFrames) == 0 {
 		for _, candidate := range []string{req.InputReference, req.Image} {
 			if strings.TrimSpace(candidate) == "" {
 				continue
 			}
-			firstImage, err = mediaReference(candidate)
-			if err != nil {
-				return nil, fmt.Errorf("input_reference: %w", err)
+			value, valueErr := officialMediaReference(candidate, "image")
+			if valueErr != nil {
+				return nil, fmt.Errorf("input_reference: %w", valueErr)
 			}
+			startFrames = []any{value}
 			break
 		}
 	}
-	if lastImage != "" && firstImage == "" {
-		return nil, fmt.Errorf("last_image requires first_image")
+	if len(endFrames) > 0 && len(startFrames) == 0 {
+		return nil, fmt.Errorf("end_frames requires start_frames")
 	}
-	if (firstImage != "" || lastImage != "") && (len(images) > 0 || len(videos) > 0 || len(audios) > 0) {
-		return nil, fmt.Errorf("first/last frame inputs cannot be mixed with reference media")
-	}
-	if len(audios) > 0 && len(images) == 0 && len(videos) == 0 {
-		return nil, fmt.Errorf("reference audio requires at least one reference image or video")
-	}
-	generateAudio, err := boolOption(req, "generate_audio", "audio")
+	audio, err := boolOption(req, "generate_audio", "audio")
 	if err != nil {
 		return nil, err
 	}
-	watermark, err := boolOption(req, "watermark")
-	if err != nil {
-		return nil, err
+	inputPayload := map[string]any{
+		"prompt": strings.TrimSpace(req.Prompt), "duration": duration, "aspect_ratio": aspectRatio,
+		"resolution": resolution, "n": 1,
 	}
-	seed, err := intOption(req, "seed")
-	if err != nil {
-		return nil, err
+	if audio != nil {
+		inputPayload["audio"] = *audio
 	}
-	payload := &modelCenterRequest{
-		Model: modelName, Prompt: strings.TrimSpace(req.Prompt), ReferenceImages: images,
-		ReferenceVideos: videos, ReferenceAudios: audios, Duration: duration,
-		AspectRatio: aspectRatio, Resolution: resolution, Seed: seed,
-		FirstImage: firstImage, LastImage: lastImage, GenerateAudio: generateAudio, Watermark: watermark,
+	if len(images) > 0 {
+		inputPayload["image_references"] = images
+	}
+	if len(videos) > 0 {
+		inputPayload["video_references"] = videos
+	}
+	if len(audios) > 0 {
+		inputPayload["audio_references"] = audios
+	}
+	if len(startFrames) > 0 {
+		inputPayload["start_frames"] = startFrames
+	}
+	if len(endFrames) > 0 {
+		inputPayload["end_frames"] = endFrames
+	}
+	if watermark, optionErr := boolOption(req, "watermark"); optionErr != nil {
+		return nil, optionErr
+	} else if watermark != nil {
+		inputPayload["watermark"] = *watermark
+	}
+	if seed, optionErr := intOption(req, "seed"); optionErr != nil {
+		return nil, optionErr
+	} else if seed != nil {
+		inputPayload["seed"] = *seed
 	}
 	if tools := inputArray(input, "tools"); len(tools) > 0 {
-		payload.Tools = tools
+		inputPayload["tools"] = tools
 	}
-	return payload, nil
+	return &seedanceRequest{Model: modelName, Input: inputPayload}, nil
 }
 
 func endpointURL(baseURL string, taskID string) string {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	parsed, err := url.Parse(baseURL)
 	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
-		lowerPath := strings.ToLower(parsed.Path)
-		if index := strings.Index(lowerPath, strings.ToLower(modelCenterServicePrefix)); index >= 0 {
-			parsed.Path = parsed.Path[:index+len(modelCenterServicePrefix)]
-		} else {
-			parsed.Path = strings.TrimRight(parsed.Path, "/") + modelCenterServicePrefix
+		path := strings.TrimRight(parsed.Path, "/")
+		lowerPath := strings.ToLower(path)
+		if index := strings.Index(lowerPath, "/kyyreactapiserver"); index >= 0 {
+			path = path[:index]
+		} else if index := strings.Index(lowerPath, seedanceTasksPath); index >= 0 {
+			path = path[:index]
+		} else if strings.HasSuffix(lowerPath, "/v1") {
+			path = path[:len(path)-len("/v1")]
 		}
-		parsed.RawPath = ""
-		parsed.RawQuery = ""
-		parsed.Fragment = ""
-		baseURL = strings.TrimRight(parsed.String(), "/")
-	} else if !strings.HasSuffix(strings.ToLower(baseURL), strings.ToLower(modelCenterServicePrefix)) {
-		baseURL += modelCenterServicePrefix
+		parsed.Path = strings.TrimRight(path, "/") + seedanceTasksPath
+		parsed.RawPath, parsed.RawQuery, parsed.Fragment = "", "", ""
+		baseURL = parsed.String()
+	} else {
+		baseURL = strings.TrimSuffix(baseURL, "/v1") + seedanceTasksPath
 	}
-	result := baseURL + modelCenterTasksPath
 	if taskID != "" {
-		result += "/" + url.PathEscape(taskID)
+		baseURL += "/" + url.PathEscape(taskID)
 	}
-	return result
+	return baseURL
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -718,16 +902,28 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return invalidRequest(fmt.Errorf("file input_reference is not supported by this upstream; upload it through /v1/video/assets and pass assetId://{asset_id}"))
 		}
 	} else {
-		var req relaycommon.TaskSubmitReq
-		if err := common.UnmarshalBodyReusable(c, &req); err != nil {
-			return invalidRequest(err)
-		}
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return invalidRequest(err)
 		}
 		body, err := storage.Bytes()
 		if err != nil {
+			return invalidRequest(err)
+		}
+		requestBody := body
+		var root map[string]any
+		if err := common.Unmarshal(body, &root); err != nil {
+			return invalidRequest(err)
+		}
+		if _, isArray := root["input_reference"].([]any); isArray {
+			delete(root, "input_reference")
+			requestBody, err = common.Marshal(root)
+			if err != nil {
+				return invalidRequest(err)
+			}
+		}
+		var req relaycommon.TaskSubmitReq
+		if err := common.Unmarshal(requestBody, &req); err != nil {
 			return invalidRequest(err)
 		}
 		if err := mergeTopLevelCompatibilityFields(body, &req); err != nil {
@@ -743,11 +939,11 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if !IsSupportedModel(req.Model) {
 		return invalidRequest(fmt.Errorf("unsupported Seedance model: %s", req.Model))
 	}
-	payload, err := buildModelCenterRequest(req, req.Model)
+	payload, err := buildSeedanceRequest(req, req.Model)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	info.TaskInput = payload.Prompt
+	info.TaskInput = strings.TrimSpace(req.Prompt)
 	info.ReferenceResources = taskReferenceResources(payload)
 	info.Action = constant.TaskActionGenerate
 	return nil
@@ -792,7 +988,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	payload, err := buildModelCenterRequest(req, info.UpstreamModelName)
+	payload, err := buildSeedanceRequest(req, info.UpstreamModelName)
 	if err != nil {
 		return nil, err
 	}
@@ -808,12 +1004,33 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 }
 
 func parseTask(body []byte) (taskWire, error) {
+	var root map[string]json.RawMessage
+	if err := common.Unmarshal(body, &root); err != nil {
+		return taskWire{}, err
+	}
+	payload := body
+	if raw, exists := root["success"]; exists && len(raw) > 0 {
+		var envelope responseWire
+		if err := common.Unmarshal(body, &envelope); err != nil {
+			return taskWire{}, err
+		}
+		if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
+			return taskWire{}, fmt.Errorf("upstream response data is empty: %s", envelope.Message)
+		}
+		payload = envelope.Data
+	}
 	var task taskWire
-	if err := common.Unmarshal(body, &task); err != nil {
+	if err := common.Unmarshal(payload, &task); err != nil {
 		return task, err
 	}
 	if task.ID == "" {
 		task.ID = task.TaskID
+	}
+	if task.TaskID == "" {
+		task.TaskID = task.ID
+	}
+	if task.Status == "" {
+		task.Status = "queued"
 	}
 	return task, nil
 }
@@ -829,6 +1046,9 @@ func taskErrorMessage(task taskWire) string {
 			return strings.TrimSpace(object.Message)
 		}
 	}
+	if strings.TrimSpace(task.FailReason) != "" {
+		return strings.TrimSpace(task.FailReason)
+	}
 	if strings.TrimSpace(task.Message) != "" {
 		return strings.TrimSpace(task.Message)
 	}
@@ -839,6 +1059,29 @@ func outputURL(task taskWire) string {
 	for _, candidate := range append([]string{task.ResultURL, task.VideoURL, task.UpstreamURL}, task.UpstreamURLs...) {
 		if strings.TrimSpace(candidate) != "" {
 			return strings.TrimSpace(candidate)
+		}
+	}
+	outputs := task.Outputs
+	if len(outputs) == 0 && len(task.Data) > 0 && string(task.Data) != "null" {
+		var nested struct {
+			Outputs []any `json:"outputs"`
+		}
+		if common.Unmarshal(task.Data, &nested) == nil {
+			outputs = nested.Outputs
+		}
+	}
+	for _, output := range outputs {
+		switch value := output.(type) {
+		case string:
+			if strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		case map[string]any:
+			for _, key := range []string{"url", "video_url", "file_url", "output_url"} {
+				if candidate, ok := value[key].(string); ok && strings.TrimSpace(candidate) != "" {
+					return strings.TrimSpace(candidate)
+				}
+			}
 		}
 	}
 	return ""
@@ -963,7 +1206,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	if isAsyncTaskRequest(c) {
 		c.JSON(http.StatusOK, asyncTaskResponse(task, info.PublicTaskID, info.OriginModelName))
 	} else {
-		c.JSON(http.StatusOK, toOpenAIVideo(task, info.PublicTaskID, info.OriginModelName))
+		c.JSON(http.StatusCreated, toOpenAIVideo(task, info.PublicTaskID, info.OriginModelName))
 	}
 	return task.ID, body, nil
 }

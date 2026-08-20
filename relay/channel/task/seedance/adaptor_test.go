@@ -59,7 +59,7 @@ func TestValidationAndBillingRatios(t *testing.T) {
 	assert.Equal(t, float64(1), ratios["resolution"])
 }
 
-func TestBuildRequestBodyTranslatesNestedCompatibilityShapeToModelCenter(t *testing.T) {
+func TestBuildRequestBodyTranslatesNestedCompatibilityShapeToSeedance(t *testing.T) {
 	context, info := newTaskContext(t, validRequest)
 	adaptor := &TaskAdaptor{}
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
@@ -71,17 +71,17 @@ func TestBuildRequestBodyTranslatesNestedCompatibilityShapeToModelCenter(t *test
 
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(body, &payload))
-	assert.Equal(t, "sd_2.0_discount", payload["model"])
-	assert.Equal(t, "a paper boat on a river", payload["prompt"])
-	assert.Equal(t, "16:9", payload["aspect_ratio"])
-	assert.Equal(t, "720p", payload["resolution"])
-	assert.Equal(t, float64(5), payload["duration"])
-	assert.Equal(t, false, payload["generate_audio"])
-	assert.Equal(t, []any{"https://cdn.example/image.png", "https://cdn.example/ref.png"}, payload["reference_images"])
-	assert.Equal(t, []any{"https://cdn.example/video.mp4"}, payload["reference_videos"])
-	assert.NotContains(t, payload, "input")
-	assert.NotContains(t, payload, "content")
-	assert.NotContains(t, payload, "ratio")
+	assert.Equal(t, "seedance-2.0", payload["model"])
+	input := payload["input"].(map[string]any)
+	assert.Equal(t, "a paper boat on a river", input["prompt"])
+	assert.Equal(t, "16:9", input["aspect_ratio"])
+	assert.Equal(t, "720p", input["resolution"])
+	assert.Equal(t, float64(5), input["duration"])
+	assert.Equal(t, false, input["audio"])
+	assert.Equal(t, []any{"https://cdn.example/image.png", "https://cdn.example/ref.png"}, input["image_references"])
+	assert.Equal(t, []any{"https://cdn.example/video.mp4"}, input["video_references"])
+	assert.NotContains(t, payload, "prompt")
+	assert.NotContains(t, payload, "reference_images")
 }
 
 func TestBuildRequestBodyAcceptsTopLevelModelCenterFields(t *testing.T) {
@@ -96,13 +96,8 @@ func TestBuildRequestBodyAcceptsTopLevelModelCenterFields(t *testing.T) {
 	forwarded, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
-		"model":"sd_2.0_discount",
-		"prompt":"city lights",
-		"reference_images":["assetId://image-1"],
-		"duration":6,
-		"aspect_ratio":"9:16",
-		"resolution":"480p",
-		"generate_audio":true
+		"model":"seedance-2.0",
+		"input":{"prompt":"city lights","image_references":["assetId://image-1"],"duration":6,"aspect_ratio":"9:16","resolution":"480p","audio":true,"n":1}
 	}`, string(forwarded))
 }
 
@@ -118,12 +113,8 @@ func TestBuildRequestBodyTranslatesStandardSoraFields(t *testing.T) {
 	forwarded, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
-		"model":"sd_2.0_fast_discount",
-		"prompt":"a lighthouse at dusk",
-		"duration":8,
-		"aspect_ratio":"16:9",
-		"resolution":"720p",
-		"first_image":"assetId://asset-123"
+		"model":"seedance-2.0-fast",
+		"input":{"prompt":"a lighthouse at dusk","duration":8,"aspect_ratio":"16:9","resolution":"720p","start_frames":["assetId://asset-123"],"n":1}
 	}`, string(forwarded))
 }
 
@@ -151,12 +142,13 @@ func TestBuildRequestBodyTreatsTopLevelImagesAsOrderedReferences(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	input := payload["input"].(map[string]any)
 	assert.Equal(t, []any{
 		"https://h.m66x.cn/s/anita/mgw/asset/1787063516138_5c421eee.png",
 		"https://h.m66x.cn/s/anita/mgw/asset/1787051387831_1ce33457.png",
-	}, payload["reference_images"])
-	assert.NotContains(t, payload, "first_image")
-	assert.Equal(t, "@图1 和 @图2 在雨夜霓虹巷奔跑，电影感", payload["prompt"])
+	}, input["image_references"])
+	assert.NotContains(t, input, "start_frames")
+	assert.Equal(t, "@图1 和 @图2 在雨夜霓虹巷奔跑，电影感", input["prompt"])
 }
 
 func TestBuildRequestBodyAcceptsLegacyNestedPrompt(t *testing.T) {
@@ -170,11 +162,8 @@ func TestBuildRequestBodyAcceptsLegacyNestedPrompt(t *testing.T) {
 	forwarded, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
-		"model":"sd_2.0_discount",
-		"prompt":"legacy river scene",
-		"duration":5,
-		"aspect_ratio":"16:9",
-		"resolution":"720p"
+		"model":"seedance-2.0",
+		"input":{"prompt":"legacy river scene","duration":5,"aspect_ratio":"16:9","resolution":"720p","n":1}
 	}`, string(forwarded))
 }
 
@@ -200,14 +189,8 @@ func TestBuildRequestBodyTranslatesContentResources(t *testing.T) {
 	forwarded, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
-		"model":"sd_2.0_discount",
-		"prompt":"a car crossing a bridge",
-		"reference_images":["assetId://image-1"],
-		"reference_videos":["https://cdn.example/ref.mp4"],
-		"reference_audios":["assetId://audio-1"],
-		"duration":6,
-		"aspect_ratio":"16:9",
-		"resolution":"720p"
+		"model":"seedance-2.0",
+		"input":{"prompt":"a car crossing a bridge","image_references":["assetId://image-1"],"video_references":["https://cdn.example/ref.mp4"],"audio_references":["assetId://audio-1"],"duration":6,"aspect_ratio":"16:9","resolution":"720p","n":1}
 	}`, string(forwarded))
 }
 
@@ -231,13 +214,8 @@ func TestBuildRequestBodyTranslatesContentFrameRoles(t *testing.T) {
 	forwarded, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
-		"model":"sd_2.0_discount",
-		"prompt":"smooth transition",
-		"duration":5,
-		"aspect_ratio":"16:9",
-		"resolution":"720p",
-		"first_image":"assetId://first",
-		"last_image":"assetId://last"
+		"model":"seedance-2.0",
+		"input":{"prompt":"smooth transition","duration":5,"aspect_ratio":"16:9","resolution":"720p","start_frames":["assetId://first"],"end_frames":["assetId://last"],"n":1}
 	}`, string(forwarded))
 }
 
@@ -270,12 +248,8 @@ func TestBuildRequestBodyAcceptsMultipartRemoteInputReference(t *testing.T) {
 	forwarded, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
-		"model":"sd_2.0_fast_discount",
-		"prompt":"coastline",
-		"duration":6,
-		"aspect_ratio":"16:9",
-		"resolution":"720p",
-		"first_image":"assetId://asset-456"
+		"model":"seedance-2.0-fast",
+		"input":{"prompt":"coastline","duration":6,"aspect_ratio":"16:9","resolution":"720p","start_frames":["assetId://asset-456"],"n":1}
 	}`, string(forwarded))
 }
 
@@ -347,12 +321,16 @@ func TestSeedanceValidationBoundaries(t *testing.T) {
 		{name: "malformed duration", body: `{"model":"seedance-2.0","prompt":"x","input":{"duration":"five"}}`, message: "integer between 4 and 15"},
 		{name: "bad ratio", body: `{"model":"seedance-2.0","prompt":"x","input":{"aspect_ratio":"bogus"}}`, message: "aspect_ratio"},
 		{name: "generate audio type", body: `{"model":"seedance-2.0","prompt":"x","input":{"generate_audio":"false"}}`, message: "must be a boolean"},
-		{name: "too many images", body: `{"model":"seedance-2.0","prompt":"x","input":{"reference_images":["https://e.example/1","https://e.example/2","https://e.example/3","https://e.example/4","https://e.example/5","https://e.example/6","https://e.example/7","https://e.example/8","https://e.example/9","https://e.example/10"]}}`, message: "at most 9"},
-		{name: "last frame without first", body: `{"model":"seedance-2.0","prompt":"x","input":{"last_image":"https://e.example/end.png"}}`, message: "requires first_image"},
+		{name: "too many images", body: `{"model":"seedance-2.0","prompt":"x","input":{"reference_images":["https://e.example/1","https://e.example/2","https://e.example/3","https://e.example/4","https://e.example/5"]}}`, message: "at most 4"},
+		{name: "too many videos", body: `{"model":"seedance-2.0","prompt":"x","input":{"video_references":["https://e.example/1.mp4","https://e.example/2.mp4","https://e.example/3.mp4","https://e.example/4.mp4"]}}`, message: "at most 3"},
+		{name: "too many audios", body: `{"model":"seedance-2.0","prompt":"x","input":{"audio_references":["https://e.example/1.mp3","https://e.example/2.mp3"]}}`, message: "at most 1"},
+		{name: "too many start frames", body: `{"model":"seedance-2.0","prompt":"x","input":{"start_frames":["https://e.example/1.png","https://e.example/2.png"]}}`, message: "at most 1"},
+		{name: "too many end frames", body: `{"model":"seedance-2.0","prompt":"x","input":{"start_frames":["https://e.example/start.png"],"end_frames":["https://e.example/1.png","https://e.example/2.png"]}}`, message: "at most 1"},
+		{name: "last frame without first", body: `{"model":"seedance-2.0","prompt":"x","input":{"last_image":"https://e.example/end.png"}}`, message: "requires start_frames"},
+		{name: "video strength", body: `{"model":"seedance-2.0","prompt":"x","input":{"video_references":[{"video_url":"https://e.example/ref.mp4","strength":0.8}]}}`, message: "do not support strength"},
+		{name: "audio strength", body: `{"model":"seedance-2.0","prompt":"x","input":{"audio_references":[{"audio_url":"https://e.example/ref.mp3","strength":0.8}]}}`, message: "do not support strength"},
 		{name: "local path", body: `{"model":"seedance-2.0","prompt":"x","input":{"reference_videos":["C:\\\\secret.mp4"]}}`, message: "media reference"},
 		{name: "empty reference object", body: `{"model":"seedance-2.0","prompt":"x","input":{"reference_videos":[{"strength":0.8}]}}`, message: "must contain"},
-		{name: "frames mixed with references", body: `{"model":"seedance-2.0","prompt":"x","input":{"first_image":"https://e.example/start.png","reference_images":["https://e.example/ref.png"]}}`, message: "cannot be mixed"},
-		{name: "audio without image or video", body: `{"model":"seedance-2.0","prompt":"x","input":{"reference_audios":["https://e.example/audio.mp3"]}}`, message: "requires at least one"},
 	}
 
 	for _, test := range tests {
@@ -373,13 +351,15 @@ func TestAssetReferenceAndFirstLastFramesAreAccepted(t *testing.T) {
 
 func TestEndpointURLNormalizesCommonChannelBaseURLs(t *testing.T) {
 	tests := map[string]string{
-		"https://provider.example":                                                         "https://provider.example/kyyReactApiServer/v2/model-center/tasks/task%2Fupstream",
-		"https://provider.example/kyyReactApiServer":                                       "https://provider.example/kyyReactApiServer/v2/model-center/tasks/task%2Fupstream",
-		"https://provider.example/kyyReactApiServer/v1/seedance-discount/videos":           "https://provider.example/kyyReactApiServer/v2/model-center/tasks/task%2Fupstream",
-		"https://provider.example/prefix/kyyReactApiServer/v2/model-center/tasks/old-task": "https://provider.example/prefix/kyyReactApiServer/v2/model-center/tasks/task%2Fupstream",
+		"https://provider.example":                                                "https://provider.example/async/tasks/task%2Fupstream",
+		"https://provider.example/v1":                                             "https://provider.example/async/tasks/task%2Fupstream",
+		"https://provider.example/async/tasks":                                    "https://provider.example/async/tasks/task%2Fupstream",
+		"https://provider.example/prefix/kyyReactApiServer/v2/model-center/tasks": "https://provider.example/prefix/async/tasks/task%2Fupstream",
 	}
 	for baseURL, want := range tests {
 		assert.Equal(t, want, endpointURL(baseURL, "task/upstream"))
+		assert.NotContains(t, endpointURL(baseURL, "task/upstream"), "kyyReactApiServer")
+		assert.NotContains(t, endpointURL(baseURL, "task/upstream"), "model-center")
 	}
 }
 
@@ -476,7 +456,7 @@ func TestConvertToOpenAIVideoUsesStoredQueryEnvelope(t *testing.T) {
 	assert.NotContains(t, string(converted), "video_seedance_1")
 }
 
-func TestFetchTaskUsesModelCenterEndpointAndUpstreamID(t *testing.T) {
+func TestFetchTaskUsesSeedanceAsyncEndpointAndUpstreamID(t *testing.T) {
 	service.InitHttpClient()
 	var requestedPath string
 	var authorization string
@@ -484,14 +464,14 @@ func TestFetchTaskUsesModelCenterEndpointAndUpstreamID(t *testing.T) {
 		requestedPath = r.URL.EscapedPath()
 		authorization = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"video_seedance_1","status":"processing"}`)
+		_, _ = io.WriteString(w, `{"success":true,"message":"ok","data":{"task_id":"video_seedance_1","status":"processing"}}`)
 	}))
 	defer server.Close()
 
 	response, err := (&TaskAdaptor{}).FetchTask(server.URL, "channel-key", map[string]any{"task_id": "video_seedance_1"}, "")
 	require.NoError(t, err)
 	defer response.Body.Close()
-	assert.Equal(t, "/kyyReactApiServer/v2/model-center/tasks/video_seedance_1", requestedPath)
+	assert.Equal(t, "/async/tasks/video_seedance_1", requestedPath)
 	assert.Equal(t, "Bearer channel-key", authorization)
 }
 
@@ -518,4 +498,93 @@ func TestValidateRequestStoresSafeTaskDetailsSummary(t *testing.T) {
 	task := model.InitTask("seedance", info)
 	assert.Equal(t, info.TaskInput, task.Properties.Input)
 	assert.Equal(t, info.ReferenceResources, task.Properties.ReferenceResources)
+}
+
+func TestOpenAIVideosEndToEndUsesSeedanceAsyncContract(t *testing.T) {
+	service.InitHttpClient()
+	var upstreamMethod, upstreamPath, upstreamAuthorization string
+	var upstreamBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamMethod = r.Method
+		upstreamPath = r.URL.EscapedPath()
+		upstreamAuthorization = r.Header.Get("Authorization")
+		upstreamBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"message":"created","data":{"task_id":"upstream-private","status":"queued","progress":0}}`)
+	}))
+	defer upstream.Close()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/v1/videos", func(c *gin.Context) {
+		info := &relaycommon.RelayInfo{
+			TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+			ChannelMeta:   &relaycommon.ChannelMeta{ChannelBaseUrl: upstream.URL + "/v1", ApiKey: "channel-key", UpstreamModelName: "seedance-2.0"},
+		}
+		info.OriginModelName = "seedance-2.0"
+		adaptor := &TaskAdaptor{}
+		adaptor.Init(info)
+		if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+			c.JSON(taskErr.StatusCode, taskErr)
+			return
+		}
+		body, err := adaptor.BuildRequestBody(c, info)
+		if err != nil {
+			c.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+		requestURL, _ := adaptor.BuildRequestURL(info)
+		request, err := http.NewRequest(http.MethodPost, requestURL, body)
+		if err != nil {
+			c.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+		_ = adaptor.BuildRequestHeader(c, request, info)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			c.String(http.StatusBadGateway, err.Error())
+			return
+		}
+		_, _, taskErr := adaptor.DoResponse(c, response, info)
+		if taskErr != nil {
+			c.JSON(taskErr.StatusCode, taskErr)
+		}
+	})
+
+	requestBody := `{"model":"seedance-2.0","prompt":"camera orbit","duration":8,"size":"1280x720","resolution":"720p","generate_audio":true,"input_reference":[{"type":"image","image_url":"https://cdn.example/ref.png","strength":0.7},{"type":"video","video_url":"data:video/mp4;base64,YQ=="}]}`
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(requestBody))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusCreated, recorder.Code)
+	assert.Equal(t, http.MethodPost, upstreamMethod)
+	assert.Equal(t, "/async/tasks", upstreamPath)
+	assert.Equal(t, "Bearer channel-key", upstreamAuthorization)
+	assert.NotContains(t, upstreamPath, "kyyReactApiServer")
+	assert.NotContains(t, upstreamPath, "model-center")
+	assert.JSONEq(t, `{"model":"seedance-2.0","input":{"prompt":"camera orbit","duration":8,"aspect_ratio":"16:9","resolution":"720p","audio":true,"image_references":[{"url":"https://cdn.example/ref.png","strength":0.7}],"video_references":["data:video/mp4;base64,YQ=="],"n":1}}`, string(upstreamBody))
+	var downstream map[string]any
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &downstream))
+	assert.Equal(t, "task_public", downstream["id"])
+	assert.Equal(t, "task_public", downstream["task_id"])
+	assert.Equal(t, "video", downstream["object"])
+	assert.Equal(t, "seedance-2.0", downstream["model"])
+	assert.Equal(t, "queued", downstream["status"])
+}
+
+func TestParseSeedanceEnvelopeUsesNestedOutputs(t *testing.T) {
+	body := []byte(`{"success":true,"message":"ok","data":{"task_id":"upstream-123","status":"SUCCESS","progress":100,"data":{"outputs":[{"url":"https://cdn.example/video.mp4"}]}}}`)
+	result, err := (&TaskAdaptor{}).ParseTaskResult(body)
+	require.NoError(t, err)
+	assert.Equal(t, "upstream-123", result.TaskID)
+	assert.Equal(t, model.TaskStatusSuccess, result.Status)
+	assert.Equal(t, "https://cdn.example/video.mp4", result.Url)
+
+	task := &model.Task{TaskID: "task_public", Status: model.TaskStatusSuccess, Progress: "100%", Properties: model.Properties{OriginModelName: "seedance-2.0"}, Data: body}
+	converted, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	assert.Contains(t, string(converted), `"status":"completed"`)
+	assert.Contains(t, string(converted), `"url":"https://cdn.example/video.mp4"`)
+	assert.NotContains(t, string(converted), "upstream-123")
 }
