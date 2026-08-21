@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -35,6 +36,10 @@ func MaybeAutoRefundZeroReplyQuota(ctx *gin.Context, relayInfo *relaycommon.Rela
 		return false
 	}
 	if !operation_setting.IsZeroReplyAutoRefundEnabled() {
+		return false
+	}
+	// Embedding 只有输入 token、没有 completion token 是正常协议语义，不能按 0 回复退款。
+	if relayInfo.GetFinalRequestRelayFormat() == types.RelayFormatEmbedding {
 		return false
 	}
 	// 与 0回复统计口径一致：有输入、无输出、且本次实际扣了费

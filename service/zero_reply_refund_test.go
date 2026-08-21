@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -79,6 +80,7 @@ func countRefundLogs(t *testing.T) int64 {
 
 func TestZeroReplyAutoRefundEnabledHit(t *testing.T) {
 	ctx, relayInfo := setupZeroReplyRefundTest(t, true)
+	relayInfo.FinalRequestRelayFormat = types.RelayFormatOpenAI
 
 	// 模拟已扣费 50：先真实扣掉，让退款能把余额恢复
 	require.NoError(t, model.DecreaseUserQuota(1, 50, false))
@@ -111,6 +113,23 @@ func TestZeroReplyAutoRefundEnabledHit(t *testing.T) {
 	assert.Equal(t, "gpt-test", logs[0].ModelName)
 	assert.Contains(t, logs[0].Content, "zero-reply auto refund")
 	assert.Contains(t, logs[0].Other, "zero_reply_auto_refund")
+}
+
+func TestZeroReplyAutoRefundSkipsEmbeddingFormat(t *testing.T) {
+	ctx, relayInfo := setupZeroReplyRefundTest(t, true)
+	// 通过最终上游协议格式判断，而不是依赖模型名。
+	relayInfo.FinalRequestRelayFormat = types.RelayFormatEmbedding
+
+	params := zeroReplyConsumeParams(120, 0, 50)
+	params.ModelName = "text-embedding-3-small"
+	refunded := MaybeAutoRefundZeroReplyQuota(ctx, relayInfo, params)
+	assert.False(t, refunded)
+
+	assert.Equal(t, 1000, getQuota(t, 1))
+	assert.Equal(t, 1000, getTokenRemain(t, 10))
+	assert.Equal(t, 50, params.Quota)
+	assert.NotContains(t, params.Content, "已自动回退")
+	assert.Equal(t, int64(0), countRefundLogs(t))
 }
 
 func TestZeroReplyAutoRefundDisabledNoChange(t *testing.T) {
