@@ -952,6 +952,9 @@ func (channel *Channel) ValidateSettings() error {
 			return err
 		}
 	}
+	if !channelParams.VideoUpstreamProtocol.Valid() {
+		return fmt.Errorf("invalid video_upstream_protocol: %s", channelParams.VideoUpstreamProtocol)
+	}
 	if channel.Type == constant.ChannelTypeAdvancedCustom {
 		if channelOtherSettings.AdvancedCustom == nil {
 			return fmt.Errorf("advanced_custom is required")

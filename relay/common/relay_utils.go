@@ -215,8 +215,8 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	if seconds == 0 {
 		seconds = req.Duration
 	}
-	if req.InputReference != "" {
-		req.Images = []string{req.InputReference}
+	if inputReference, ok := req.InputReference.(string); ok && strings.TrimSpace(inputReference) != "" {
+		req.Images = []string{strings.TrimSpace(inputReference)}
 	} else if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {
 		// 兼容单图上传
 		req.Images = []string{strings.TrimSpace(req.Image)}

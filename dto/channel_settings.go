@@ -10,13 +10,32 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 )
 
+type VideoUpstreamProtocol string
+
+const (
+	VideoUpstreamProtocolDefault          VideoUpstreamProtocol = "channel_default"
+	VideoUpstreamProtocolOpenAI           VideoUpstreamProtocol = "openai_video"
+	VideoUpstreamProtocolSeedanceAsync    VideoUpstreamProtocol = "seedance_async"
+	VideoUpstreamProtocolSeedanceDiscount VideoUpstreamProtocol = "seedance_discount"
+)
+
+func (p VideoUpstreamProtocol) Valid() bool {
+	switch p {
+	case "", VideoUpstreamProtocolDefault, VideoUpstreamProtocolOpenAI, VideoUpstreamProtocolSeedanceAsync, VideoUpstreamProtocolSeedanceDiscount:
+		return true
+	default:
+		return false
+	}
+}
+
 type ChannelSettings struct {
-	ForceFormat            bool   `json:"force_format,omitempty"`
-	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
-	Proxy                  string `json:"proxy"`
-	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
-	SystemPrompt           string `json:"system_prompt,omitempty"`
-	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`
+	ForceFormat            bool                  `json:"force_format,omitempty"`
+	ThinkingToContent      bool                  `json:"thinking_to_content,omitempty"`
+	Proxy                  string                `json:"proxy"`
+	PassThroughBodyEnabled bool                  `json:"pass_through_body_enabled,omitempty"`
+	SystemPrompt           string                `json:"system_prompt,omitempty"`
+	SystemPromptOverride   bool                  `json:"system_prompt_override,omitempty"`
+	VideoUpstreamProtocol  VideoUpstreamProtocol `json:"video_upstream_protocol,omitempty"`
 }
 
 type VertexKeyType string

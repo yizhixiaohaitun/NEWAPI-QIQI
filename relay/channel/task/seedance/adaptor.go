@@ -25,7 +25,11 @@ import (
 	"github.com/pkg/errors"
 )
 
-const seedanceTasksPath = "/async/tasks"
+const (
+	seedanceTasksPath          = "/async/tasks"
+	seedanceDiscountCreatePath = "/kyyReactApiServer/v1/seedance-discount/videos"
+	seedanceDiscountResultPath = "/kyyReactApiServer/v1/result"
+)
 
 var windowsPathPattern = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 
@@ -49,13 +53,39 @@ var allowedRatios = map[string]struct{}{
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	apiKey  string
-	baseURL string
+	// Protocol is explicitly selected per channel and persisted in task.Platform.
+	Protocol string
+	apiKey   string
+	baseURL  string
 }
 
 type seedanceRequest struct {
 	Model string         `json:"model"`
 	Input map[string]any `json:"input"`
+}
+
+type discountMediaURL struct {
+	URL any `json:"url"`
+}
+
+type discountContentItem struct {
+	Type     string            `json:"type"`
+	Text     string            `json:"text,omitempty"`
+	Role     string            `json:"role,omitempty"`
+	ImageURL *discountMediaURL `json:"image_url,omitempty"`
+	VideoURL *discountMediaURL `json:"video_url,omitempty"`
+	AudioURL *discountMediaURL `json:"audio_url,omitempty"`
+}
+
+type discountRequest struct {
+	Model           string                `json:"model"`
+	Ratio           string                `json:"ratio"`
+	Duration        int                   `json:"duration"`
+	GenerateAudio   *bool                 `json:"generate_audio,omitempty"`
+	ReturnLastFrame *bool                 `json:"return_last_frame,omitempty"`
+	Seed            *int                  `json:"seed,omitempty"`
+	Tools           []any                 `json:"tools,omitempty"`
+	Content         []discountContentItem `json:"content"`
 }
 
 type responseWire struct {
@@ -200,9 +230,20 @@ func IsSupportedModel(value string) bool {
 	return ok
 }
 
+func normalizeBaseURL(raw string) string {
+	base := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if strings.HasSuffix(strings.ToLower(base), "/v1") {
+		base = strings.TrimRight(base[:len(base)-3], "/")
+	}
+	return base
+}
+
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.apiKey = info.ApiKey
-	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
+	a.baseURL = normalizeBaseURL(info.ChannelBaseUrl)
+	if a.Protocol == "" {
+		a.Protocol = string(dto.VideoUpstreamProtocolSeedanceAsync)
+	}
 }
 
 func parseInteger(value any) (int, bool) {
@@ -973,6 +1014,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 }
 
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
+	if a.Protocol == string(dto.VideoUpstreamProtocolSeedanceDiscount) {
+		return a.baseURL + seedanceDiscountCreatePath, nil
+	}
 	return endpointURL(a.baseURL, ""), nil
 }
 
@@ -981,6 +1025,51 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	return nil
+}
+
+func discountReferenceContent(input map[string]any, prompt string) []discountContentItem {
+	content := []discountContentItem{{Type: "text", Text: prompt}}
+	appendRefs := func(key, mediaType, role, valueKey string) {
+		for _, raw := range inputArray(input, key) {
+			value := raw
+			if object, ok := raw.(map[string]any); ok {
+				for _, candidate := range []string{"url", valueKey, "data", "base64"} {
+					if object[candidate] != nil {
+						value = object[candidate]
+						break
+					}
+				}
+			}
+			item := discountContentItem{Type: mediaType + "_url", Role: role}
+			switch mediaType {
+			case "image":
+				item.ImageURL = &discountMediaURL{URL: value}
+			case "video":
+				item.VideoURL = &discountMediaURL{URL: value}
+			case "audio":
+				item.AudioURL = &discountMediaURL{URL: value}
+			}
+			content = append(content, item)
+		}
+	}
+	appendRefs("start_frames", "image", "first_frame", "image_url")
+	appendRefs("end_frames", "image", "last_frame", "image_url")
+	appendRefs("image_references", "image", "reference_image", "image_url")
+	appendRefs("video_references", "video", "reference_video", "video_url")
+	appendRefs("audio_references", "audio", "reference_audio", "audio_url")
+	return content
+}
+
+func discountModel(modelName, resolution string, hasVideo bool) string {
+	family := "sd_2.0"
+	if strings.Contains(strings.ToLower(modelName), "fast") {
+		family = "sd_2.0_fast"
+	}
+	name := family + "_discount_" + strings.TrimSuffix(strings.ToLower(resolution), "p") + "p"
+	if hasVideo {
+		name += "_with_video_ref"
+	}
+	return name
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
@@ -992,7 +1081,30 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	data, err := common.Marshal(payload)
+	var wire any = payload
+	if a.Protocol == string(dto.VideoUpstreamProtocolSeedanceDiscount) {
+		duration, ok := parseInteger(payload.Input["duration"])
+		if !ok {
+			return nil, fmt.Errorf("duration must be an integer")
+		}
+		resolution := inputString(payload.Input, "resolution")
+		hasVideo := len(inputArray(payload.Input, "video_references")) > 0
+		audio, _ := payload.Input["audio"].(bool)
+		returnLastFrame, optionErr := boolOption(req, "return_last_frame")
+		if optionErr != nil {
+			return nil, optionErr
+		}
+		seed, optionErr := intOption(req, "seed")
+		if optionErr != nil {
+			return nil, optionErr
+		}
+		wire = discountRequest{
+			Model: discountModel(payload.Model, resolution, hasVideo), Ratio: inputString(payload.Input, "aspect_ratio"), Duration: duration,
+			GenerateAudio: &audio, ReturnLastFrame: returnLastFrame, Seed: seed,
+			Tools: inputArray(payload.Input, "tools"), Content: discountReferenceContent(payload.Input, inputString(payload.Input, "prompt")),
+		}
+	}
+	data, err := common.Marshal(wire)
 	if err != nil {
 		return nil, err
 	}
@@ -1186,15 +1298,30 @@ func asyncTaskResponse(task taskWire, publicID, modelName string) map[string]any
 	}
 }
 
+func readableUpstreamError(resp *http.Response, body []byte) error {
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	summary := strings.TrimSpace(string(body))
+	lowerSummary := strings.ToLower(summary)
+	if strings.Contains(strings.ToLower(contentType), "text/html") || strings.HasPrefix(lowerSummary, "<!doctype html") || strings.HasPrefix(lowerSummary, "<html") {
+		summary = "upstream returned HTML instead of JSON"
+	} else if len(summary) > 240 {
+		summary = summary[:240] + "..."
+	}
+	return fmt.Errorf("upstream status=%d content-type=%q: %s", resp.StatusCode, contentType, summary)
+}
+
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (string, []byte, *dto.TaskError) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
 	}
 	_ = resp.Body.Close()
+	if (resp.StatusCode != 0 && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices)) || strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/html") {
+		return "", nil, service.TaskErrorWrapper(readableUpstreamError(resp, body), "invalid_upstream_response", http.StatusBadGateway)
+	}
 	task, err := parseTask(body)
 	if err != nil {
-		return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", body), "invalid_response", http.StatusInternalServerError)
+		return "", nil, service.TaskErrorWrapper(readableUpstreamError(resp, body), "invalid_response", http.StatusBadGateway)
 	}
 	if strings.TrimSpace(task.ID) == "" {
 		message := taskErrorMessage(task)

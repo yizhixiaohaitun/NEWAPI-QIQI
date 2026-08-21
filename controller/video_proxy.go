@@ -30,6 +30,28 @@ func videoProxyError(c *gin.Context, status int, errType, message string) {
 	})
 }
 
+func persistedVideoDownloadURL(task *model.Task, channel *model.Channel, baseURL string) (string, bool, bool) {
+	switch task.Platform {
+	case constant.TaskPlatformOpenAIVideo:
+		return fmt.Sprintf("%s/v1/videos/%s/content", strings.TrimRight(baseURL, "/"), url.PathEscape(task.GetUpstreamTaskID())), true, true
+	case constant.TaskPlatformSeedance, constant.TaskPlatformSeedanceDiscount:
+		return task.GetResultURL(), false, true
+	default:
+		return "", false, false
+	}
+}
+
+func explicitVideoContentURL(task *model.Task, baseURL string) (string, bool, bool) {
+	switch task.Platform {
+	case constant.TaskPlatformOpenAIVideo:
+		return fmt.Sprintf("%s/v1/videos/%s/content", strings.TrimRight(baseURL, "/"), url.PathEscape(task.GetUpstreamTaskID())), true, true
+	case constant.TaskPlatformSeedance, constant.TaskPlatformSeedanceDiscount:
+		return task.GetResultURL(), false, true
+	default:
+		return "", false, false
+	}
+}
+
 func VideoProxy(c *gin.Context) {
 	taskID := c.Param("task_id")
 	if taskID == "" {
@@ -89,8 +111,13 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
-	if task.Platform == constant.TaskPlatformSeedance {
-		videoURL = task.GetResultURL()
+	// The protocol persisted at creation time wins over the mutable channel
+	// type. Legacy numeric platforms keep the historical channel-type dispatch.
+	if persistedURL, needsAuth, handled := persistedVideoDownloadURL(task, channel, baseURL); handled {
+		videoURL = persistedURL
+		if needsAuth {
+			req.Header.Set("Authorization", "Bearer "+channel.Key)
+		}
 	} else {
 		switch channel.Type {
 		case constant.ChannelTypeGemini:
@@ -115,10 +142,9 @@ func VideoProxy(c *gin.Context) {
 				return
 			}
 		case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
-			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
+			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", strings.TrimRight(baseURL, "/"), url.PathEscape(task.GetUpstreamTaskID()))
 			req.Header.Set("Authorization", "Bearer "+channel.Key)
 		default:
-			// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
 			videoURL = task.GetResultURL()
 		}
 	}
