@@ -819,7 +819,11 @@ func buildSeedanceRequest(req relaycommon.TaskSubmitReq, upstreamModel string) (
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(req.InputReference) == "" && strings.TrimSpace(req.Image) == "" {
+	inputReferenceEmpty := req.InputReference == nil
+	if inputReference, ok := req.InputReference.(string); ok {
+		inputReferenceEmpty = strings.TrimSpace(inputReference) == ""
+	}
+	if inputReferenceEmpty && strings.TrimSpace(req.Image) == "" {
 		for _, rawImage := range req.Images {
 			image, imageErr := officialMediaReference(rawImage, "image")
 			if imageErr != nil {
@@ -848,8 +852,11 @@ func buildSeedanceRequest(req relaycommon.TaskSubmitReq, upstreamModel string) (
 		return nil, err
 	}
 	if len(startFrames) == 0 {
-		for _, candidate := range []string{req.InputReference, req.Image} {
-			if strings.TrimSpace(candidate) == "" {
+		for _, candidate := range []any{req.InputReference, req.Image} {
+			if candidate == nil {
+				continue
+			}
+			if text, ok := candidate.(string); ok && strings.TrimSpace(text) == "" {
 				continue
 			}
 			value, valueErr := officialMediaReference(candidate, "image")

@@ -36,7 +36,7 @@ func NewUpstreamResourceInsufficientError() *types.NewAPIError {
 	return types.NewErrorWithStatusCode(
 		errors.New(upstreamResourceInsufficientMessage),
 		types.ErrorCodeUpstreamResourceInsufficient,
-		http.StatusInternalServerError,
+		http.StatusTooManyRequests,
 	)
 }
 

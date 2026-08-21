@@ -56,11 +56,11 @@ func TestSanitizeFinalRelayError(t *testing.T) {
 	upstream := types.NewOpenAIError(errors.New(raw), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
 	sanitized := SanitizeFinalRelayError(upstream)
 	require.NotSame(t, upstream, sanitized)
-	assert.Equal(t, http.StatusInternalServerError, sanitized.StatusCode)
+	assert.Equal(t, http.StatusTooManyRequests, sanitized.StatusCode)
 	assert.Equal(t, types.ErrorCodeUpstreamResourceInsufficient, sanitized.GetErrorCode())
 	assert.Equal(t, upstreamResourceInsufficientMessage, sanitized.ToOpenAIError().Message)
 	assert.Equal(t, upstreamResourceInsufficientMessage, sanitized.ToClaudeError().Message)
-	assert.Equal(t, "status_code=500, "+upstreamResourceInsufficientMessage, PublicRelayErrorLogContent(upstream))
+	assert.Equal(t, "status_code=429, "+upstreamResourceInsufficientMessage, PublicRelayErrorLogContent(upstream))
 	assert.NotContains(t, sanitized.Error(), "0.226296")
 	assert.NotContains(t, sanitized.Error(), "0.576756")
 	assert.NotContains(t, sanitized.Error(), "upstream-example")
@@ -71,7 +71,7 @@ func TestSanitizeFinalRelayError(t *testing.T) {
 	assert.Contains(t, markedRaw.Error(), "0.576756")
 	assert.Contains(t, markedRaw.Error(), "upstream-example")
 	markedSanitized := SanitizeFinalRelayError(markedRaw)
-	assert.Equal(t, http.StatusInternalServerError, markedSanitized.StatusCode)
+	assert.Equal(t, http.StatusTooManyRequests, markedSanitized.StatusCode)
 	assert.Equal(t, upstreamResourceInsufficientMessage, markedSanitized.Error())
 
 	// Retry and channel-health code continues to receive the untouched error.
@@ -85,14 +85,16 @@ func TestSanitizeFinalRelayError(t *testing.T) {
 	localQuota := types.NewErrorWithStatusCode(
 		errors.New("用户额度不足, 剩余额度: $1"),
 		types.ErrorCodeInsufficientUserQuota,
-		http.StatusForbidden,
+		http.StatusTooManyRequests,
 	)
 	assert.Same(t, localQuota, SanitizeFinalRelayError(localQuota))
+	assert.Equal(t, http.StatusTooManyRequests, localQuota.StatusCode)
 
 	localPreConsume := types.NewErrorWithStatusCode(
 		errors.New("预扣费额度失败, 用户剩余额度: $0.001, 需要预扣费额度: $0.25"),
 		types.ErrorCodePreConsumeTokenQuotaFailed,
-		http.StatusForbidden,
+		http.StatusTooManyRequests,
 	)
 	assert.Same(t, localPreConsume, SanitizeFinalRelayError(localPreConsume))
+	assert.Equal(t, http.StatusTooManyRequests, localPreConsume.StatusCode)
 }
