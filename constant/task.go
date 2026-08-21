@@ -5,15 +5,17 @@ import "strconv"
 type TaskPlatform string
 
 const (
-	TaskPlatformSuno       TaskPlatform = "suno"
-	TaskPlatformMidjourney              = "mj"
-	TaskPlatformSeedance                = "seedance_async"
+	TaskPlatformSuno             TaskPlatform = "suno"
+	TaskPlatformMidjourney                    = "mj"
+	TaskPlatformOpenAIVideo                   = "openai_video"
+	TaskPlatformSeedance                      = "seedance_async"
+	TaskPlatformSeedanceDiscount              = "seedance_discount"
 )
 
 // IsVideoTaskPlatform reports whether platform is a known persisted video-task
 // platform. Unknown and non-video platforms must remain refundable.
 func IsVideoTaskPlatform(platform TaskPlatform) bool {
-	if platform == TaskPlatformSeedance {
+	if platform == TaskPlatformOpenAIVideo || platform == TaskPlatformSeedance || platform == TaskPlatformSeedanceDiscount {
 		return true
 	}
 

@@ -34,8 +34,11 @@ var supportedModels = map[string]struct{}{
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	apiKey  string
-	baseURL string
+	// Protocol is explicit and persisted in task.Platform. It is never inferred
+	// from the model name or an upstream error response.
+	Protocol string
+	apiKey   string
+	baseURL  string
 }
 
 type responseError struct {
@@ -58,9 +61,20 @@ type responseWire struct {
 	Data    json.RawMessage `json:"data"`
 }
 
+func normalizeBaseURL(raw string) string {
+	base := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if strings.HasSuffix(strings.ToLower(base), "/v1") {
+		base = strings.TrimRight(base[:len(base)-3], "/")
+	}
+	return base
+}
+
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.apiKey = info.ApiKey
-	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
+	a.baseURL = normalizeBaseURL(info.ChannelBaseUrl)
+	if a.Protocol == "" {
+		a.Protocol = string(dto.VideoUpstreamProtocolSeedanceAsync)
+	}
 }
 
 func normalizedModel(model string) string { return strings.ToLower(strings.TrimSpace(model)) }
@@ -156,7 +170,106 @@ func validateReferences(input map[string]any, key string, max int) error {
 		if err := validateReferenceValue(item); err != nil {
 			return fmt.Errorf("input.%s: %w", key, err)
 		}
+		if key == "video_references" || key == "audio_references" {
+			if object, ok := item.(map[string]any); ok {
+				if _, exists := object["strength"]; exists {
+					return fmt.Errorf("input.%s does not support strength", key)
+				}
+			}
+		}
 	}
+	return nil
+}
+
+func publicSize(size, resolution, aspectRatio string) (string, string, error) {
+	size = strings.ToLower(strings.TrimSpace(size))
+	resolution = strings.ToLower(strings.TrimSpace(resolution))
+	aspectRatio = strings.TrimSpace(aspectRatio)
+	if size == "" {
+		if resolution == "" {
+			resolution = "720p"
+		}
+		if aspectRatio == "" {
+			aspectRatio = "16:9"
+		}
+		return resolution, aspectRatio, nil
+	}
+	var sizeResolution, sizeRatio string
+	switch size {
+	case "854x480", "480p", "480p-landscape": sizeResolution, sizeRatio = "480p", "16:9"
+	case "480x854", "480p-portrait": sizeResolution, sizeRatio = "480p", "9:16"
+	case "1280x720", "720p", "720p-landscape": sizeResolution, sizeRatio = "720p", "16:9"
+	case "720x1280", "720p-portrait": sizeResolution, sizeRatio = "720p", "9:16"
+	case "1920x1080", "1080p", "1080p-landscape": sizeResolution, sizeRatio = "1080p", "16:9"
+	case "1080x1920", "1080p-portrait": sizeResolution, sizeRatio = "1080p", "9:16"
+	case "480x480": sizeResolution, sizeRatio = "480p", "1:1"
+	case "720x720": sizeResolution, sizeRatio = "720p", "1:1"
+	case "1080x1080": sizeResolution, sizeRatio = "1080p", "1:1"
+	default: return "", "", fmt.Errorf("size must be a supported 480p, 720p, or 1080p landscape, portrait, or square size")
+	}
+	if resolution != "" && resolution != sizeResolution {
+		return "", "", fmt.Errorf("size conflicts with resolution")
+	}
+	if aspectRatio != "" && aspectRatio != sizeRatio {
+		return "", "", fmt.Errorf("size conflicts with aspect_ratio")
+	}
+	return sizeResolution, sizeRatio, nil
+}
+
+func normalizePublicRequest(req *relaycommon.TaskSubmitReq) error {
+	if req.Input == nil { req.Input = map[string]any{} }
+	input := req.Input
+	if nestedPrompt, ok := input["prompt"].(string); ok && strings.TrimSpace(req.Prompt) != "" && strings.TrimSpace(nestedPrompt) != strings.TrimSpace(req.Prompt) {
+		return fmt.Errorf("prompt conflicts with input.prompt")
+	}
+	if req.Prompt == "" { req.Prompt = inputString(input, "prompt") }
+
+	duration := req.Duration
+	if req.Seconds != "" {
+		seconds, err := strconv.Atoi(strings.TrimSpace(req.Seconds)); if err != nil { return fmt.Errorf("seconds must be an integer") }
+		if duration != 0 && duration != seconds { return fmt.Errorf("seconds conflicts with duration") }
+		duration = seconds
+	}
+	if nested, exists := input["duration"]; exists {
+		n, ok := parsePositiveInt(nested); if !ok { return fmt.Errorf("input.duration must be an integer") }
+		if duration != 0 && duration != n { return fmt.Errorf("duration conflicts with input.duration") }
+		duration = n
+	}
+	if duration == 0 { duration = 4 }
+	req.Duration = duration
+
+	resolution := req.Resolution
+	if nested := inputString(input, "resolution"); nested != "" {
+		if resolution != "" && !strings.EqualFold(resolution, nested) { return fmt.Errorf("resolution conflicts with input.resolution") }
+		resolution = nested
+	}
+	aspectRatio := inputString(input, "aspect_ratio")
+	mappedResolution, mappedRatio, err := publicSize(req.Size, resolution, aspectRatio); if err != nil { return err }
+	input["resolution"], input["aspect_ratio"] = mappedResolution, mappedRatio
+	input["duration"] = duration
+	if req.GenerateAudio != nil {
+		if nested, exists := input["audio"]; exists { if b, ok := nested.(bool); !ok || b != *req.GenerateAudio { return fmt.Errorf("generate_audio conflicts with input.audio") } }
+		input["audio"] = *req.GenerateAudio
+	}
+	if _, exists := input["audio"]; !exists { input["audio"] = true }
+
+	if req.InputReference != nil {
+		items, ok := req.InputReference.([]any); if !ok { items = []any{req.InputReference} }
+		for _, raw := range items {
+			item, ok := raw.(map[string]any); if !ok { return fmt.Errorf("input_reference items must be objects") }
+			typ, _ := item["type"].(string)
+			switch strings.ToLower(strings.TrimSpace(typ)) {
+			case "image":
+				value := item["image_url"]; if value == nil { return fmt.Errorf("image input_reference requires image_url") }
+				input["start_frames"] = append(inputArray(input, "start_frames"), value)
+			case "video":
+				value := item["video_url"]; if value == nil { return fmt.Errorf("video input_reference requires video_url") }
+				input["video_references"] = append(inputArray(input, "video_references"), value)
+			default: return fmt.Errorf("input_reference type must be image or video")
+			}
+		}
+	}
+	input["n"] = 1
 	return nil
 }
 
@@ -227,6 +340,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
 		return invalidRequest(err)
 	}
+	if strings.HasPrefix(c.Request.URL.Path, "/v1/videos") {
+		if err := normalizePublicRequest(&req); err != nil { return invalidRequest(err) }
+	}
 	if err := validateSeedanceRequest(req); err != nil {
 		return invalidRequest(err)
 	}
@@ -257,6 +373,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 }
 
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
+	if a.Protocol == string(dto.VideoUpstreamProtocolSeedanceDiscount) {
+		return a.baseURL + "/kyyReactApiServer/v1/seedance-discount/videos", nil
+	}
 	return a.baseURL + "/async/tasks", nil
 }
 
@@ -265,6 +384,33 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	return nil
+}
+
+func discountReferenceContent(input map[string]any, prompt string) []map[string]any {
+	content := []map[string]any{{"type": "text", "text": prompt}}
+	appendRefs := func(key, typ, role, valueKey string) {
+		for _, raw := range inputArray(input, key) {
+			value := raw
+			if object, ok := raw.(map[string]any); ok {
+				for _, candidate := range []string{"url", valueKey, "data", "base64" { if object[candidate] != nil { value = object[candidate]; break } }
+			}
+			content = append(content, map[string]any{"type": typ, "role": role, valueKey: map[string]any{"url": value}})
+		}
+	}
+	appendRefs("start_frames", "image_url", "first_frame", "image_url")
+	appendRefs("end_frames", "image_url", "last_frame", "image_url")
+	appendRefs("image_references", "image_url", "reference_image", "image_url")
+	appendRefs("video_references", "video_url", "reference_video", "video_url")
+	appendRefs("audio_references", "audio_url", "reference_audio", "audio_url")
+	return content
+}
+
+func discountModel(modelName, resolution string, hasVideo bool) string {
+	family := "sd_2.0"
+	if strings.Contains(strings.ToLower(modelName), "fast") { family = "sd_2.0_fast" }
+	name := family + "_discount_" + strings.TrimSuffix(strings.ToLower(resolution), "p") + "p"
+	if hasVideo { name += "_with_video_ref" }
+	return name
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {

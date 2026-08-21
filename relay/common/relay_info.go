@@ -739,9 +739,13 @@ type TaskSubmitReq struct {
 	Image          string                 `json:"image,omitempty"`
 	Images         []string               `json:"images,omitempty"`
 	Size           string                 `json:"size,omitempty"`
+	Resolution     string                 `json:"resolution,omitempty"`
+	FPS            int                    `json:"fps,omitempty"`
+	GenerateAudio  *bool                  `json:"generate_audio,omitempty"`
+	Watermark      *bool                  `json:"watermark,omitempty"`
 	Duration       int                    `json:"duration,omitempty"`
 	Seconds        string                 `json:"seconds,omitempty"`
-	InputReference string                 `json:"input_reference,omitempty"`
+	InputReference any                    `json:"input_reference,omitempty"`
 	Input          map[string]interface{} `json:"input,omitempty"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }

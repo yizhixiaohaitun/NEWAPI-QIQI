@@ -2,8 +2,11 @@ package relay
 
 import (
 	"strconv"
+	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
 	"github.com/QuantumNous/new-api/relay/channel/ali"
@@ -132,13 +135,23 @@ func GetAdaptor(apiType int) channel.Adaptor {
 }
 
 func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
-	// A route-specific platform describes the wire protocol and must take
-	// precedence over the selected channel type. For example /async/tasks may
-	// use a DoubaoVideo channel while still requiring the Seedance async
-	// protocol adaptor. Routes without an explicit platform retain the legacy
-	// channel-type dispatch used by /v1/video/generations.
+	// Native routes keep their explicit protocol. For the public OpenAI Videos
+	// route, an explicit channel setting selects the upstream wire protocol;
+	// channel_default deliberately preserves legacy channel-type dispatch.
 	if platform := constant.TaskPlatform(c.GetString("platform")); platform != "" {
 		return platform
+	}
+	if strings.HasPrefix(c.Request.URL.Path, "/v1/videos") {
+		if setting, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting); ok {
+			switch setting.VideoUpstreamProtocol {
+			case dto.VideoUpstreamProtocolOpenAI:
+				return constant.TaskPlatformOpenAIVideo
+			case dto.VideoUpstreamProtocolSeedanceAsync:
+				return constant.TaskPlatformSeedance
+			case dto.VideoUpstreamProtocolSeedanceDiscount:
+				return constant.TaskPlatformSeedanceDiscount
+			}
+		}
 	}
 	channelType := c.GetInt("channel_type")
 	if channelType > 0 {
@@ -153,8 +166,12 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 	//	return &aiproxy.Adaptor{}
 	case constant.TaskPlatformSuno:
 		return &suno.TaskAdaptor{}
+	case constant.TaskPlatformOpenAIVideo:
+		return &tasksora.TaskAdaptor{}
 	case constant.TaskPlatformSeedance:
-		return &taskseedance.TaskAdaptor{}
+		return &taskseedance.TaskAdaptor{Protocol: string(dto.VideoUpstreamProtocolSeedanceAsync)}
+	case constant.TaskPlatformSeedanceDiscount:
+		return &taskseedance.TaskAdaptor{Protocol: string(dto.VideoUpstreamProtocolSeedanceDiscount)}
 	}
 	if channelType, err := strconv.ParseInt(string(platform), 10, 64); err == nil {
 		switch channelType {
