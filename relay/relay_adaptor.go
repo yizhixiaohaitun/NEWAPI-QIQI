@@ -141,7 +141,7 @@ func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
 	if platform := constant.TaskPlatform(c.GetString("platform")); platform != "" {
 		return platform
 	}
-	if strings.HasPrefix(c.Request.URL.Path, "/v1/videos") {
+	if c.Request != nil && strings.HasPrefix(c.Request.URL.Path, "/v1/videos") {
 		if setting, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting); ok {
 			switch setting.VideoUpstreamProtocol {
 			case dto.VideoUpstreamProtocolOpenAI:

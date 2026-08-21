@@ -283,8 +283,10 @@ func firstTaskImage(req relaycommon.TaskSubmitReq) string {
 			return trimmed
 		}
 	}
-	if inputReference := strings.TrimSpace(req.InputReference); inputReference != "" {
-		return inputReference
+	if inputReference, ok := req.InputReference.(string); ok {
+		if inputReference = strings.TrimSpace(inputReference); inputReference != "" {
+			return inputReference
+		}
 	}
 	return ""
 }

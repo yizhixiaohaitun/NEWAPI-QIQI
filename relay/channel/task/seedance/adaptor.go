@@ -25,6 +25,12 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+const (
+	seedanceAsyncPath          = "/async/tasks"
+	seedanceDiscountCreatePath = "/kyyReactApiServer/v1/seedance-discount/videos"
+	seedanceDiscountResultPath = "/kyyReactApiServer/v1/result"
+)
+
 var windowsPathPattern = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 
 var supportedModels = map[string]struct{}{
@@ -43,16 +49,60 @@ type TaskAdaptor struct {
 
 type responseError struct {
 	Message string `json:"message"`
+	Code    string `json:"code,omitempty"`
+}
+
+func (e *responseError) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := common.Unmarshal(data, &text); err == nil {
+		e.Message = text
+		return nil
+	}
+	type alias responseError
+	return common.Unmarshal(data, (*alias)(e))
 }
 
 type taskWire struct {
-	TaskID     string          `json:"task_id"`
-	Status     string          `json:"status"`
-	Progress   json.RawMessage `json:"progress"`
-	FailReason string          `json:"fail_reason"`
-	Data       json.RawMessage `json:"data"`
-	Outputs    []any           `json:"outputs"`
-	Error      *responseError  `json:"error"`
+	ID           string          `json:"id,omitempty"`
+	TaskID       string          `json:"task_id,omitempty"`
+	Object       string          `json:"object,omitempty"`
+	Model        string          `json:"model,omitempty"`
+	Status       string          `json:"status"`
+	Progress     json.RawMessage `json:"progress,omitempty"`
+	FailReason   string          `json:"fail_reason,omitempty"`
+	Data         json.RawMessage `json:"data,omitempty"`
+	Outputs      []any           `json:"outputs,omitempty"`
+	VideoURL     string          `json:"video_url,omitempty"`
+	LastFrameURL string          `json:"last_frame_url,omitempty"`
+	Created      int64           `json:"created,omitempty"`
+	CreatedAt    int64           `json:"created_at,omitempty"`
+	Error        *responseError  `json:"error,omitempty"`
+	Amount       float64         `json:"amount,omitempty"`
+	TotalTokens  int             `json:"totalTokens,omitempty"`
+}
+
+type discountMediaURL struct {
+	URL any `json:"url"`
+}
+
+type discountContentItem struct {
+	Type     string            `json:"type"`
+	Text     string            `json:"text,omitempty"`
+	Role     string            `json:"role,omitempty"`
+	ImageURL *discountMediaURL `json:"image_url,omitempty"`
+	VideoURL *discountMediaURL `json:"video_url,omitempty"`
+	AudioURL *discountMediaURL `json:"audio_url,omitempty"`
+}
+
+type discountRequest struct {
+	Model           string                `json:"model"`
+	Ratio           string                `json:"ratio"`
+	Duration        int                   `json:"duration"`
+	GenerateAudio   *bool                 `json:"generate_audio,omitempty"`
+	ReturnLastFrame *bool                 `json:"return_last_frame,omitempty"`
+	Seed            *int                  `json:"seed,omitempty"`
+	Tools           []any                 `json:"tools,omitempty"`
+	Content         []discountContentItem `json:"content"`
 }
 
 type responseWire struct {
@@ -196,16 +246,26 @@ func publicSize(size, resolution, aspectRatio string) (string, string, error) {
 	}
 	var sizeResolution, sizeRatio string
 	switch size {
-	case "854x480", "480p", "480p-landscape": sizeResolution, sizeRatio = "480p", "16:9"
-	case "480x854", "480p-portrait": sizeResolution, sizeRatio = "480p", "9:16"
-	case "1280x720", "720p", "720p-landscape": sizeResolution, sizeRatio = "720p", "16:9"
-	case "720x1280", "720p-portrait": sizeResolution, sizeRatio = "720p", "9:16"
-	case "1920x1080", "1080p", "1080p-landscape": sizeResolution, sizeRatio = "1080p", "16:9"
-	case "1080x1920", "1080p-portrait": sizeResolution, sizeRatio = "1080p", "9:16"
-	case "480x480": sizeResolution, sizeRatio = "480p", "1:1"
-	case "720x720": sizeResolution, sizeRatio = "720p", "1:1"
-	case "1080x1080": sizeResolution, sizeRatio = "1080p", "1:1"
-	default: return "", "", fmt.Errorf("size must be a supported 480p, 720p, or 1080p landscape, portrait, or square size")
+	case "854x480", "480p", "480p-landscape":
+		sizeResolution, sizeRatio = "480p", "16:9"
+	case "480x854", "480p-portrait":
+		sizeResolution, sizeRatio = "480p", "9:16"
+	case "1280x720", "720p", "720p-landscape":
+		sizeResolution, sizeRatio = "720p", "16:9"
+	case "720x1280", "720p-portrait":
+		sizeResolution, sizeRatio = "720p", "9:16"
+	case "1920x1080", "1080p", "1080p-landscape":
+		sizeResolution, sizeRatio = "1080p", "16:9"
+	case "1080x1920", "1080p-portrait":
+		sizeResolution, sizeRatio = "1080p", "9:16"
+	case "480x480":
+		sizeResolution, sizeRatio = "480p", "1:1"
+	case "720x720":
+		sizeResolution, sizeRatio = "720p", "1:1"
+	case "1080x1080":
+		sizeResolution, sizeRatio = "1080p", "1:1"
+	default:
+		return "", "", fmt.Errorf("size must be a supported 480p, 720p, or 1080p landscape, portrait, or square size")
 	}
 	if resolution != "" && resolution != sizeResolution {
 		return "", "", fmt.Errorf("size conflicts with resolution")
@@ -217,55 +277,125 @@ func publicSize(size, resolution, aspectRatio string) (string, string, error) {
 }
 
 func normalizePublicRequest(req *relaycommon.TaskSubmitReq) error {
-	if req.Input == nil { req.Input = map[string]any{} }
+	if req.Input == nil {
+		req.Input = map[string]any{}
+	}
 	input := req.Input
 	if nestedPrompt, ok := input["prompt"].(string); ok && strings.TrimSpace(req.Prompt) != "" && strings.TrimSpace(nestedPrompt) != strings.TrimSpace(req.Prompt) {
 		return fmt.Errorf("prompt conflicts with input.prompt")
 	}
-	if req.Prompt == "" { req.Prompt = inputString(input, "prompt") }
+	if req.Prompt == "" {
+		req.Prompt = inputString(input, "prompt")
+	}
 
 	duration := req.Duration
 	if req.Seconds != "" {
-		seconds, err := strconv.Atoi(strings.TrimSpace(req.Seconds)); if err != nil { return fmt.Errorf("seconds must be an integer") }
-		if duration != 0 && duration != seconds { return fmt.Errorf("seconds conflicts with duration") }
+		seconds, err := strconv.Atoi(strings.TrimSpace(req.Seconds))
+		if err != nil {
+			return fmt.Errorf("seconds must be an integer")
+		}
+		if duration != 0 && duration != seconds {
+			return fmt.Errorf("seconds conflicts with duration")
+		}
 		duration = seconds
 	}
-	if nested, exists := input["duration"]; exists {
-		n, ok := parsePositiveInt(nested); if !ok { return fmt.Errorf("input.duration must be an integer") }
-		if duration != 0 && duration != n { return fmt.Errorf("duration conflicts with input.duration") }
-		duration = n
+	for _, key := range []string{"duration", "seconds"} {
+		if nested, exists := input[key]; exists {
+			n, ok := parsePositiveInt(nested)
+			if !ok {
+				return fmt.Errorf("input.%s must be an integer", key)
+			}
+			if duration != 0 && duration != n {
+				return fmt.Errorf("duration/seconds conflicts with input.%s", key)
+			}
+			duration = n
+		}
 	}
-	if duration == 0 { duration = 4 }
+	if duration == 0 {
+		duration = 4
+	}
 	req.Duration = duration
 
 	resolution := req.Resolution
 	if nested := inputString(input, "resolution"); nested != "" {
-		if resolution != "" && !strings.EqualFold(resolution, nested) { return fmt.Errorf("resolution conflicts with input.resolution") }
+		if resolution != "" && !strings.EqualFold(resolution, nested) {
+			return fmt.Errorf("resolution conflicts with input.resolution")
+		}
 		resolution = nested
 	}
-	aspectRatio := inputString(input, "aspect_ratio")
-	mappedResolution, mappedRatio, err := publicSize(req.Size, resolution, aspectRatio); if err != nil { return err }
+	aspectRatio := strings.TrimSpace(req.AspectRatio)
+	if nested := inputString(input, "aspect_ratio"); nested != "" {
+		if aspectRatio != "" && aspectRatio != nested {
+			return fmt.Errorf("aspect_ratio conflicts with input.aspect_ratio")
+		}
+		aspectRatio = nested
+	}
+	mappedResolution, mappedRatio, err := publicSize(req.Size, resolution, aspectRatio)
+	if err != nil {
+		return err
+	}
 	input["resolution"], input["aspect_ratio"] = mappedResolution, mappedRatio
 	input["duration"] = duration
+	var audioValue *bool
 	if req.GenerateAudio != nil {
-		if nested, exists := input["audio"]; exists { if b, ok := nested.(bool); !ok || b != *req.GenerateAudio { return fmt.Errorf("generate_audio conflicts with input.audio") } }
-		input["audio"] = *req.GenerateAudio
+		value := *req.GenerateAudio
+		audioValue = &value
 	}
-	if _, exists := input["audio"]; !exists { input["audio"] = true }
+	for _, key := range []string{"generate_audio", "audio"} {
+		if nested, exists := input[key]; exists {
+			value, ok := nested.(bool)
+			if !ok {
+				return fmt.Errorf("input.%s must be a boolean", key)
+			}
+			if audioValue != nil && *audioValue != value {
+				return fmt.Errorf("generate_audio conflicts with input.%s", key)
+			}
+			audioValue = &value
+		}
+	}
+	if audioValue == nil {
+		value := true
+		audioValue = &value
+	}
+	input["audio"] = *audioValue
+	delete(input, "generate_audio")
 
 	if req.InputReference != nil {
-		items, ok := req.InputReference.([]any); if !ok { items = []any{req.InputReference} }
+		items, ok := req.InputReference.([]any)
+		if !ok {
+			items = []any{req.InputReference}
+		}
 		for _, raw := range items {
-			item, ok := raw.(map[string]any); if !ok { return fmt.Errorf("input_reference items must be objects") }
+			if value, ok := raw.(string); ok {
+				input["start_frames"] = append(inputArray(input, "start_frames"), strings.TrimSpace(value))
+				continue
+			}
+			item, ok := raw.(map[string]any)
+			if !ok {
+				return fmt.Errorf("input_reference items must be objects or URL strings")
+			}
 			typ, _ := item["type"].(string)
 			switch strings.ToLower(strings.TrimSpace(typ)) {
 			case "image":
-				value := item["image_url"]; if value == nil { return fmt.Errorf("image input_reference requires image_url") }
+				value := item["image_url"]
+				if value == nil {
+					return fmt.Errorf("image input_reference requires image_url")
+				}
+				if strength, exists := item["strength"]; exists {
+					value = map[string]any{"url": value, "strength": strength}
+				}
 				input["start_frames"] = append(inputArray(input, "start_frames"), value)
 			case "video":
-				value := item["video_url"]; if value == nil { return fmt.Errorf("video input_reference requires video_url") }
+				value := item["video_url"]
+				if value == nil {
+					return fmt.Errorf("video input_reference requires video_url")
+				}
+				if _, exists := item["strength"]; exists {
+					return fmt.Errorf("video input_reference does not support strength")
+				}
 				input["video_references"] = append(inputArray(input, "video_references"), value)
-			default: return fmt.Errorf("input_reference type must be image or video")
+			default:
+				return fmt.Errorf("input_reference type must be image or video")
 			}
 		}
 	}
@@ -335,22 +465,72 @@ func validateSeedanceRequest(req relaycommon.TaskSubmitReq) error {
 	return nil
 }
 
+func appendMultipartInputReference(c *gin.Context, req *relaycommon.TaskSubmitReq) error {
+	if !strings.Contains(c.GetHeader("Content-Type"), "multipart/form-data") {
+		return nil
+	}
+	form, err := common.ParseMultipartFormReusable(c)
+	if err != nil {
+		return err
+	}
+	files := form.File["input_reference"]
+	if len(files) > 1 {
+		return fmt.Errorf("input_reference supports at most 1 uploaded file")
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	file, err := files[0].Open()
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return err
+	}
+	contentType := files[0].Header.Get("Content-Type")
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = http.DetectContentType(data)
+	}
+	req.InputReference = "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(data)
+	return nil
+}
+
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	var req relaycommon.TaskSubmitReq
 	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
 		return invalidRequest(err)
 	}
+	if err := appendMultipartInputReference(c, &req); err != nil {
+		return invalidRequest(err)
+	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/videos") {
-		if err := normalizePublicRequest(&req); err != nil { return invalidRequest(err) }
+		if err := normalizePublicRequest(&req); err != nil {
+			return invalidRequest(err)
+		}
+	} else {
+		// Native /async/tasks keeps the documented envelope while normalizing
+		// scalar spellings used by existing clients.
+		if req.Input == nil {
+			req.Input = map[string]any{}
+		}
+		if duration, ok := parsePositiveInt(req.Input["duration"]); ok {
+			req.Duration = duration
+			req.Input["duration"] = duration
+		}
+		if resolution := inputString(req.Input, "resolution"); resolution != "" {
+			req.Input["resolution"] = strings.ToLower(resolution)
+		}
+		if _, exists := req.Input["n"]; !exists {
+			req.Input["n"] = 1
+		}
+		if _, exists := req.Input["audio"]; !exists {
+			req.Input["audio"] = true
+		}
 	}
 	if err := validateSeedanceRequest(req); err != nil {
 		return invalidRequest(err)
-	}
-	if _, exists := req.Input["n"]; !exists {
-		req.Input["n"] = 1
-	}
-	if _, exists := req.Input["audio"]; !exists {
-		req.Input["audio"] = true
 	}
 	info.Action = constant.TaskActionGenerate
 	c.Set("task_request", req)
@@ -386,31 +566,73 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	return nil
 }
 
-func discountReferenceContent(input map[string]any, prompt string) []map[string]any {
-	content := []map[string]any{{"type": "text", "text": prompt}}
-	appendRefs := func(key, typ, role, valueKey string) {
+func discountReferenceContent(input map[string]any, prompt string) []discountContentItem {
+	content := []discountContentItem{{Type: "text", Text: prompt}}
+	appendRefs := func(key, mediaType, role, valueKey string) {
 		for _, raw := range inputArray(input, key) {
 			value := raw
 			if object, ok := raw.(map[string]any); ok {
-				for _, candidate := range []string{"url", valueKey, "data", "base64" { if object[candidate] != nil { value = object[candidate]; break } }
+				for _, candidate := range []string{"url", valueKey, "data", "base64"} {
+					if object[candidate] != nil {
+						value = object[candidate]
+						break
+					}
+				}
 			}
-			content = append(content, map[string]any{"type": typ, "role": role, valueKey: map[string]any{"url": value}})
+			item := discountContentItem{Type: mediaType + "_url", Role: role}
+			switch mediaType {
+			case "image":
+				item.ImageURL = &discountMediaURL{URL: value}
+			case "video":
+				item.VideoURL = &discountMediaURL{URL: value}
+			case "audio":
+				item.AudioURL = &discountMediaURL{URL: value}
+			}
+			content = append(content, item)
 		}
 	}
-	appendRefs("start_frames", "image_url", "first_frame", "image_url")
-	appendRefs("end_frames", "image_url", "last_frame", "image_url")
-	appendRefs("image_references", "image_url", "reference_image", "image_url")
-	appendRefs("video_references", "video_url", "reference_video", "video_url")
-	appendRefs("audio_references", "audio_url", "reference_audio", "audio_url")
+	appendRefs("start_frames", "image", "first_frame", "image_url")
+	appendRefs("end_frames", "image", "last_frame", "image_url")
+	appendRefs("image_references", "image", "reference_image", "image_url")
+	appendRefs("video_references", "video", "reference_video", "video_url")
+	appendRefs("audio_references", "audio", "reference_audio", "audio_url")
 	return content
 }
 
 func discountModel(modelName, resolution string, hasVideo bool) string {
 	family := "sd_2.0"
-	if strings.Contains(strings.ToLower(modelName), "fast") { family = "sd_2.0_fast" }
+	if strings.Contains(strings.ToLower(modelName), "fast") {
+		family = "sd_2.0_fast"
+	}
 	name := family + "_discount_" + strings.TrimSuffix(strings.ToLower(resolution), "p") + "p"
-	if hasVideo { name += "_with_video_ref" }
+	if hasVideo {
+		name += "_with_video_ref"
+	}
 	return name
+}
+
+func optionalBool(input map[string]any, key string) (*bool, error) {
+	raw, exists := input[key]
+	if !exists {
+		return nil, nil
+	}
+	value, ok := raw.(bool)
+	if !ok {
+		return nil, fmt.Errorf("input.%s must be a boolean", key)
+	}
+	return &value, nil
+}
+
+func optionalInt(input map[string]any, key string) (*int, error) {
+	raw, exists := input[key]
+	if !exists {
+		return nil, nil
+	}
+	value, ok := parsePositiveInt(raw)
+	if !ok {
+		return nil, fmt.Errorf("input.%s must be an integer", key)
+	}
+	return &value, nil
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
@@ -418,19 +640,50 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	input := make(map[string]any, len(req.Input))
-	for key, value := range req.Input {
-		input[key] = value
+	if isAsyncTaskRequest(c) {
+		payload, marshalErr := common.Marshal(map[string]any{"model": info.UpstreamModelName, "input": req.Input})
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		return bytes.NewReader(payload), nil
 	}
-	input["prompt"] = req.Prompt
-	input["duration"] = req.Duration
-	input["resolution"] = strings.ToLower(inputString(input, "resolution"))
-	input["aspect_ratio"] = inputString(input, "aspect_ratio")
-	input["n"] = 1
-	if _, exists := input["audio"]; !exists {
+	input := map[string]any{
+		"prompt":       req.Prompt,
+		"duration":     req.Duration,
+		"resolution":   strings.ToLower(inputString(req.Input, "resolution")),
+		"aspect_ratio": inputString(req.Input, "aspect_ratio"),
+		"n":            1,
+	}
+	if audio, ok := req.Input["audio"].(bool); ok {
+		input["audio"] = audio
+	} else {
 		input["audio"] = true
 	}
-	payload, err := common.Marshal(map[string]any{"model": info.UpstreamModelName, "input": input})
+	for _, key := range []string{"image_references", "video_references", "audio_references", "start_frames", "end_frames"} {
+		if values := inputArray(req.Input, key); len(values) > 0 {
+			input[key] = values
+		}
+	}
+	var wire any = map[string]any{"model": info.UpstreamModelName, "input": input}
+	if a.Protocol == string(dto.VideoUpstreamProtocolSeedanceDiscount) {
+		hasVideo := len(inputArray(req.Input, "video_references")) > 0
+		modelName := discountModel(req.Model, inputString(req.Input, "resolution"), hasVideo)
+		audio, _ := req.Input["audio"].(bool)
+		returnLastFrame, optionErr := optionalBool(req.Input, "return_last_frame")
+		if optionErr != nil {
+			return nil, optionErr
+		}
+		seed, optionErr := optionalInt(req.Input, "seed")
+		if optionErr != nil {
+			return nil, optionErr
+		}
+		wire = discountRequest{
+			Model: modelName, Ratio: inputString(req.Input, "aspect_ratio"), Duration: req.Duration,
+			GenerateAudio: &audio, ReturnLastFrame: returnLastFrame, Seed: seed,
+			Tools: inputArray(req.Input, "tools"), Content: discountReferenceContent(req.Input, req.Prompt),
+		}
+	}
+	payload, err := common.Marshal(wire)
 	if err != nil {
 		return nil, err
 	}
@@ -448,12 +701,104 @@ func parseNestedTask(body []byte) (taskWire, error) {
 	}
 	var task taskWire
 	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
-		return task, fmt.Errorf("response data is empty")
+		return task, fmt.Errorf("response data is empty: %s", strings.TrimSpace(envelope.Message))
 	}
 	if err := common.Unmarshal(envelope.Data, &task); err != nil {
 		return task, err
 	}
+	if task.TaskID == "" {
+		task.TaskID = task.ID
+	}
+	if task.ID == "" {
+		task.ID = task.TaskID
+	}
 	return task, nil
+}
+
+func (a *TaskAdaptor) parseUpstreamTask(body []byte) (taskWire, error) {
+	if a.Protocol == string(dto.VideoUpstreamProtocolSeedanceDiscount) {
+		var task taskWire
+		if err := common.Unmarshal(body, &task); err != nil {
+			return task, err
+		}
+		if task.TaskID == "" {
+			task.TaskID = task.ID
+		}
+		if task.ID == "" {
+			task.ID = task.TaskID
+		}
+		return task, nil
+	}
+	return parseNestedTask(body)
+}
+
+func readableUpstreamError(resp *http.Response, body []byte) error {
+	contentType := resp.Header.Get("Content-Type")
+	summary := strings.TrimSpace(string(body))
+	if len(summary) > 240 {
+		summary = summary[:240] + "..."
+	}
+	if strings.Contains(strings.ToLower(contentType), "text/html") {
+		summary = "upstream returned HTML instead of JSON"
+	}
+	return fmt.Errorf("upstream status=%d content-type=%q: %s", resp.StatusCode, contentType, summary)
+}
+
+func openAIStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "queued", "pending", "submitted", "not_start":
+		return dto.VideoStatusQueued
+	case "running", "processing", "in_progress":
+		return dto.VideoStatusInProgress
+	case "success", "succeeded", "completed", "complete":
+		return dto.VideoStatusCompleted
+	case "failure", "failed", "cancelled", "canceled":
+		return dto.VideoStatusFailed
+	default:
+		return dto.VideoStatusUnknown
+	}
+}
+
+func toOpenAIVideo(task taskWire, publicID, modelName string) map[string]any {
+	if publicID == "" {
+		publicID = task.TaskID
+	}
+	if modelName == "" {
+		modelName = task.Model
+	}
+	status := openAIStatus(task.Status)
+	progress := 0
+	switch status {
+	case dto.VideoStatusQueued:
+		progress = 20
+	case dto.VideoStatusInProgress:
+		progress = 50
+	case dto.VideoStatusCompleted, dto.VideoStatusFailed:
+		progress = 100
+	}
+	result := map[string]any{"id": publicID, "object": "video", "model": modelName, "status": status, "progress": progress}
+	created := task.CreatedAt
+	if created == 0 {
+		created = task.Created
+	}
+	if created > 0 {
+		result["created_at"] = created
+	}
+	if videoURL := outputURL(task); videoURL != "" {
+		result["metadata"] = map[string]any{"url": videoURL}
+	}
+	message := strings.TrimSpace(task.FailReason)
+	if message == "" && task.Error != nil {
+		message = strings.TrimSpace(task.Error.Message)
+	}
+	if message != "" {
+		result["error"] = map[string]any{"message": message}
+	}
+	return result
+}
+
+func isAsyncTaskRequest(c *gin.Context) bool {
+	return c != nil && c.Request != nil && strings.HasPrefix(c.Request.URL.Path, "/async/tasks")
 }
 
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (string, []byte, *dto.TaskError) {
@@ -462,18 +807,25 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
 	}
 	_ = resp.Body.Close()
-	task, err := parseNestedTask(body)
+	if (resp.StatusCode != 0 && (resp.StatusCode < 200 || resp.StatusCode >= 300)) || strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/html") {
+		return "", nil, service.TaskErrorWrapper(readableUpstreamError(resp, body), "invalid_upstream_response", http.StatusBadGateway)
+	}
+	task, err := a.parseUpstreamTask(body)
 	if err != nil {
-		return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", body), "invalid_response", http.StatusInternalServerError)
+		return "", nil, service.TaskErrorWrapper(readableUpstreamError(resp, body), "invalid_response", http.StatusBadGateway)
 	}
 	if strings.TrimSpace(task.TaskID) == "" {
-		return "", nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+		return "", nil, service.TaskErrorWrapper(fmt.Errorf("upstream response did not contain task_id"), "invalid_response", http.StatusBadGateway)
 	}
-	publicBody, err := rewritePublicTaskIDs(body, info.PublicTaskID)
-	if err != nil {
-		return "", nil, service.TaskErrorWrapper(err, "rewrite_response_failed", http.StatusInternalServerError)
+	if isAsyncTaskRequest(c) {
+		publicBody, rewriteErr := rewritePublicTaskIDs(body, info.PublicTaskID)
+		if rewriteErr != nil {
+			return "", nil, service.TaskErrorWrapper(rewriteErr, "rewrite_response_failed", http.StatusInternalServerError)
+		}
+		c.Data(http.StatusOK, "application/json", publicBody)
+	} else {
+		c.JSON(http.StatusOK, toOpenAIVideo(task, info.PublicTaskID, info.OriginModelName))
 	}
-	c.Data(http.StatusOK, "application/json", publicBody)
 	return task.TaskID, body, nil
 }
 
@@ -482,7 +834,12 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	if !ok || strings.TrimSpace(taskID) == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/async/tasks/"+url.PathEscape(taskID), nil)
+	baseURL = normalizeBaseURL(baseURL)
+	path := "/async/tasks/" + url.PathEscape(taskID)
+	if a.Protocol == string(dto.VideoUpstreamProtocolSeedanceDiscount) {
+		path = "/kyyReactApiServer/v1/result/" + url.PathEscape(taskID)
+	}
+	req, err := http.NewRequest(http.MethodGet, baseURL+path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -515,6 +872,9 @@ func responseProgress(raw json.RawMessage) string {
 }
 
 func outputURL(task taskWire) string {
+	if strings.TrimSpace(task.VideoURL) != "" {
+		return strings.TrimSpace(task.VideoURL)
+	}
 	outputs := task.Outputs
 	if len(outputs) == 0 && len(task.Data) > 0 {
 		var nested struct {
@@ -542,7 +902,7 @@ func outputURL(task taskWire) string {
 }
 
 func (a *TaskAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error) {
-	task, err := parseNestedTask(body)
+	task, err := a.parseUpstreamTask(body)
 	if err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
 	}
@@ -565,6 +925,7 @@ func (a *TaskAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error
 			result.Reason = "task failed"
 		}
 	}
+	result.TotalTokens = task.TotalTokens
 	return result, nil
 }
 
@@ -600,6 +961,30 @@ func (a *TaskAdaptor) ConvertTaskResponse(task *model.Task) ([]byte, error) {
 		return nil, fmt.Errorf("task response is empty")
 	}
 	return rewritePublicTaskIDs(task.Data, task.TaskID)
+}
+
+func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
+	if len(task.Data) == 0 {
+		return nil, fmt.Errorf("task response is empty")
+	}
+	upstream, err := a.parseUpstreamTask(task.Data)
+	if err != nil {
+		return nil, errors.Wrap(err, "unmarshal Seedance task data failed")
+	}
+	video := toOpenAIVideo(upstream, task.TaskID, task.Properties.OriginModelName)
+	video["status"] = task.Status.ToVideoStatus()
+	if task.Progress != "" {
+		if progress, parseErr := strconv.Atoi(strings.TrimSuffix(task.Progress, "%")); parseErr == nil {
+			video["progress"] = progress
+		}
+	}
+	if resultURL := task.GetResultURL(); resultURL != "" {
+		video["metadata"] = map[string]any{"url": resultURL}
+	}
+	if task.FailReason != "" {
+		video["error"] = map[string]any{"message": task.FailReason}
+	}
+	return common.Marshal(video)
 }
 
 func (a *TaskAdaptor) GetModelList() []string { return []string{"seedance-2.0", "seedance-2.0-fast"} }

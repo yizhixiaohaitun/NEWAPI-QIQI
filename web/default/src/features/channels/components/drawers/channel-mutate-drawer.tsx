@@ -286,6 +286,7 @@ const SENSITIVE_FORM_FIELDS = [
   'pass_through_body_enabled',
   'system_prompt',
   'system_prompt_override',
+  'video_upstream_protocol',
   'allow_service_tier',
   'disable_store',
   'allow_safety_identifier',
@@ -338,6 +339,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.thinking_to_content ||
     values.pass_through_body_enabled ||
     values.system_prompt_override ||
+    (values.video_upstream_protocol && values.video_upstream_protocol !== 'channel_default') ||
     values.claude_beta_query ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
@@ -4153,6 +4155,28 @@ export function ChannelMutateDrawer({
                                         onCheckedChange={field.onChange}
                                       />
                                     </FormControl>
+                                  </FormItem>
+                                )}
+                              />
+
+                              <FormField
+                                control={form.control}
+                                name='video_upstream_protocol'
+                                render={({ field }) => (
+                                  <FormItem className='px-4 py-3'>
+                                    <FormLabel>{t('Video Upstream Protocol')}</FormLabel>
+                                    <Select value={field.value || 'channel_default'} onValueChange={field.onChange}>
+                                      <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                                      <SelectContent>
+                                        <SelectGroup>
+                                          <SelectItem value='channel_default'>{t('Channel default')}</SelectItem>
+                                          <SelectItem value='openai_video'>{t('OpenAI Videos / Sora')}</SelectItem>
+                                          <SelectItem value='seedance_async'>{t('Seedance official async')}</SelectItem>
+                                          <SelectItem value='seedance_discount'>{t('Seedance discount')}</SelectItem>
+                                        </SelectGroup>
+                                      </SelectContent>
+                                    </Select>
+                                    <FormDescription>{t('Explicitly selects the upstream video wire protocol; it is not inferred from the model name.')}</FormDescription>
                                   </FormItem>
                                 )}
                               />

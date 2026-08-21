@@ -740,6 +740,7 @@ type TaskSubmitReq struct {
 	Images         []string               `json:"images,omitempty"`
 	Size           string                 `json:"size,omitempty"`
 	Resolution     string                 `json:"resolution,omitempty"`
+	AspectRatio    string                 `json:"aspect_ratio,omitempty"`
 	FPS            int                    `json:"fps,omitempty"`
 	GenerateAudio  *bool                  `json:"generate_audio,omitempty"`
 	Watermark      *bool                  `json:"watermark,omitempty"`
@@ -761,8 +762,9 @@ func (t *TaskSubmitReq) HasImage() bool {
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	type Alias TaskSubmitReq
 	aux := &struct {
-		Metadata json.RawMessage `json:"metadata,omitempty"`
-		Duration json.RawMessage `json:"duration,omitempty"`
+		Metadata      json.RawMessage `json:"metadata,omitempty"`
+		Duration      json.RawMessage `json:"duration,omitempty"`
+		GenerateAudio json.RawMessage `json:"generate_audio,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -782,6 +784,21 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 				if v, err := strconv.Atoi(durationStr); err == nil {
 					t.Duration = v
 				}
+			}
+		}
+	}
+	if len(aux.GenerateAudio) > 0 {
+		var value bool
+		if err := common.Unmarshal(aux.GenerateAudio, &value); err == nil {
+			t.GenerateAudio = &value
+		} else {
+			var text string
+			if err := common.Unmarshal(aux.GenerateAudio, &text); err == nil {
+				parsed, parseErr := strconv.ParseBool(strings.TrimSpace(text))
+				if parseErr != nil {
+					return fmt.Errorf("generate_audio must be a boolean")
+				}
+				t.GenerateAudio = &parsed
 			}
 		}
 	}
