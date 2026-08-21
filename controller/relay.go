@@ -199,6 +199,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	retryLimit := common.RetryTimes
 
 	for retryParam.GetRetry() <= retryLimit {
+		if requestErr := c.Request.Context().Err(); requestErr != nil {
+			newAPIError = service.NewClientClosedRequestError(requestErr)
+			break
+		}
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		relayInfo.ResponsesStreamErrorBeforeCommit = false
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
@@ -235,10 +239,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		default:
 			newAPIError = relayHandler(c, relayInfo)
 		}
+		requestContextErr := c.Request.Context().Err()
+		upstreamContextErr := upstreamCtx.Err()
 		cancelUpstream()
-		if errors.Is(upstreamCtx.Err(), context.DeadlineExceeded) {
-			newAPIError = service.NewUpstreamTimeoutError()
-		}
+		newAPIError = normalizeRelayContextError(newAPIError, requestContextErr, upstreamContextErr)
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
@@ -269,6 +273,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
 	}
+}
+
+func normalizeRelayContextError(relayErr *types.NewAPIError, requestContextErr, upstreamContextErr error) *types.NewAPIError {
+	if requestContextErr != nil {
+		return service.NewClientClosedRequestError(requestContextErr)
+	}
+	if errors.Is(upstreamContextErr, context.DeadlineExceeded) {
+		return service.NewUpstreamTimeoutError()
+	}
+	return relayErr
 }
 
 func retryLimitForRelayError(relayInfo *relaycommon.RelayInfo, currentLimit int) int {
@@ -354,6 +368,12 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
 	if openaiErr == nil {
+		return false
+	}
+	if openaiErr.GetErrorCode() == types.ErrorCodeClientClosedRequest {
+		return false
+	}
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
 		return false
 	}
 	if service.IsResponsesStateResourceMismatchError(openaiErr) && service.ShouldProtectResponsesStateAffinity(c) {
@@ -579,6 +599,10 @@ func RelayTask(c *gin.Context) {
 	retryLimit := common.RetryTimes
 
 	for retryParam.GetRetry() <= retryLimit {
+		if requestErr := c.Request.Context().Err(); requestErr != nil {
+			taskErr = service.TaskErrorFromAPIError(service.NewClientClosedRequestError(requestErr))
+			break
+		}
 		var channel *model.Channel
 
 		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
@@ -614,8 +638,12 @@ func RelayTask(c *gin.Context) {
 		upstreamCtx, cancelUpstream := service.NewUpstreamRequestContext(c.Request.Context(), relayInfo.UpstreamTimeout)
 		relayInfo.UpstreamContext = upstreamCtx
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
+		requestContextErr := c.Request.Context().Err()
+		upstreamContextErr := upstreamCtx.Err()
 		cancelUpstream()
-		if errors.Is(upstreamCtx.Err(), context.DeadlineExceeded) {
+		if requestContextErr != nil {
+			taskErr = service.TaskErrorFromAPIError(service.NewClientClosedRequestError(requestContextErr))
+		} else if errors.Is(upstreamContextErr, context.DeadlineExceeded) {
 			taskErr = service.TaskErrorFromAPIError(service.NewUpstreamTimeoutError())
 		}
 		if taskErr == nil {
@@ -677,9 +705,12 @@ func RelayTask(c *gin.Context) {
 	}
 }
 
-// respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）
+// respondTaskError 统一输出 Task 错误响应。用户自身额度不足保留原始提示；
+// 只有上游限流类 429 才改写为负载饱和。
 func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
-	if taskErr.StatusCode == http.StatusTooManyRequests {
+	if taskErr.StatusCode == http.StatusTooManyRequests &&
+		taskErr.Code != string(types.ErrorCodeInsufficientUserQuota) &&
+		taskErr.Code != string(types.ErrorCodePreConsumeTokenQuotaFailed) {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
 	c.JSON(taskErr.StatusCode, taskErr)
@@ -689,7 +720,10 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	if taskErr == nil {
 		return false
 	}
-	if taskErr.Code == string(types.ErrorCodeUpstreamTimeout) {
+	if taskErr.Code == string(types.ErrorCodeClientClosedRequest) || taskErr.Code == string(types.ErrorCodeUpstreamTimeout) {
+		return false
+	}
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
 		return false
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {

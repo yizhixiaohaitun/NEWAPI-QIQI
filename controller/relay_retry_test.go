@@ -1,12 +1,14 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -68,6 +70,71 @@ func TestUpstreamPreConsumeFailureRetriesWhenForbidden(t *testing.T) {
 	)
 	assert.True(t, shouldRetry(ctx, upstream, 1))
 	assert.False(t, shouldRetry(ctx, upstream, 0))
+}
+
+func TestClientClosedRequestBecomes499AndDoesNotRetry(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`)).WithContext(requestContext)
+
+	relayErr := types.NewErrorWithStatusCode(
+		fmt.Errorf("do request failed"),
+		types.ErrorCodeDoRequestFailed,
+		http.StatusInternalServerError,
+	)
+	normalized := normalizeRelayContextError(relayErr, requestContext.Err(), context.Canceled)
+
+	require.NotNil(t, normalized)
+	assert.Equal(t, service.StatusClientClosedRequest, normalized.StatusCode)
+	assert.Equal(t, types.ErrorCodeClientClosedRequest, normalized.GetErrorCode())
+	assert.False(t, shouldRetry(ctx, normalized, 3))
+}
+
+func TestUpstreamDeadlineRemains500AndDoesNotRetry(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
+
+	normalized := normalizeRelayContextError(nil, nil, context.DeadlineExceeded)
+
+	require.NotNil(t, normalized)
+	assert.Equal(t, http.StatusInternalServerError, normalized.StatusCode)
+	assert.Equal(t, types.ErrorCodeUpstreamTimeout, normalized.GetErrorCode())
+	assert.False(t, shouldRetry(ctx, normalized, 3))
+}
+
+func TestRespondTaskErrorPreservesUserQuota429Message(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	taskErr := &dto.TaskError{
+		Code:       string(types.ErrorCodeInsufficientUserQuota),
+		Message:    "用户额度不足，请充值后重试",
+		StatusCode: http.StatusTooManyRequests,
+	}
+
+	respondTaskError(ctx, taskErr)
+
+	assert.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "用户额度不足，请充值后重试")
+	assert.NotContains(t, recorder.Body.String(), "当前分组上游负载已饱和")
+}
+
+func TestRespondTaskErrorRewritesGenericUpstream429Message(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	taskErr := &dto.TaskError{
+		Code:       "rate_limit_exceeded",
+		Message:    "raw upstream rate limit message",
+		StatusCode: http.StatusTooManyRequests,
+	}
+
+	respondTaskError(ctx, taskErr)
+
+	assert.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "当前分组上游负载已饱和，请稍后再试")
+	assert.NotContains(t, recorder.Body.String(), "raw upstream rate limit message")
 }
 
 func TestRetryLimitForEarlyResponsesStreamError(t *testing.T) {

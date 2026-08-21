@@ -48,6 +48,7 @@ const (
 	ErrorCodeInvalidApiType               ErrorCode = "invalid_api_type"
 	ErrorCodeJsonMarshalFailed            ErrorCode = "json_marshal_failed"
 	ErrorCodeDoRequestFailed              ErrorCode = "do_request_failed"
+	ErrorCodeClientClosedRequest          ErrorCode = "client_closed_request"
 	ErrorCodeUpstreamTimeout              ErrorCode = "upstream_timeout"
 	ErrorCodeUpstreamResourceInsufficient ErrorCode = "upstream_resource_insufficient"
 	ErrorCodeGetChannelFailed             ErrorCode = "get_channel_failed"
