@@ -21,6 +21,13 @@ type ThemeAssets struct {
 	ClassicIndexPage []byte
 }
 
+func isAPIRequestURI(requestURI string) bool {
+	return strings.HasPrefix(requestURI, "/v1") ||
+		strings.HasPrefix(requestURI, "/api") ||
+		strings.HasPrefix(requestURI, "/async") ||
+		strings.HasPrefix(requestURI, "/assets")
+}
+
 func SetWebRouter(router *gin.Engine, assets ThemeAssets) {
 	defaultFS := common.EmbedFolder(assets.DefaultBuildFS, "web/default/dist")
 	classicFS := common.EmbedFolder(assets.ClassicBuildFS, "web/classic/dist")
@@ -32,7 +39,7 @@ func SetWebRouter(router *gin.Engine, assets ThemeAssets) {
 	router.Use(static.Serve("/", themeFS))
 	router.NoRoute(func(c *gin.Context) {
 		c.Set(middleware.RouteTagKey, "web")
-		if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
+		if isAPIRequestURI(c.Request.RequestURI) {
 			controller.RelayNotFound(c)
 			return
 		}

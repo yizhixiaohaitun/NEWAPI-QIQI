@@ -22,6 +22,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func summarizeTaskUpstreamError(contentType string, responseBody []byte) string {
+	contentType = strings.TrimSpace(contentType)
+	summary := strings.TrimSpace(string(responseBody))
+	lowerSummary := strings.ToLower(summary)
+	if strings.Contains(strings.ToLower(contentType), "text/html") || strings.HasPrefix(lowerSummary, "<!doctype html") || strings.HasPrefix(lowerSummary, "<html") {
+		return "HTML page (possible wrong API path or SPA fallback)"
+	}
+	if len(summary) > 240 {
+		return summary[:240] + "..."
+	}
+	return summary
+}
+
 type TaskSubmitResult struct {
 	UpstreamTaskID string
 	TaskData       []byte
@@ -220,7 +233,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
-		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
+		contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+		summary := summarizeTaskUpstreamError(contentType, responseBody)
+		return nil, service.TaskErrorWrapper(
+			fmt.Errorf("upstream status=%d content-type=%q summary=%q", resp.StatusCode, contentType, summary),
+			"fail_to_fetch_task",
+			resp.StatusCode,
+		)
 	}
 
 	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
