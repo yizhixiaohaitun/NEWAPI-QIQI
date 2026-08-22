@@ -1,6 +1,0 @@
-./adaptor.go
-./constants.go
-./dto.go
-./relay-ollama.go
-./stream.go
-./stream_test.go

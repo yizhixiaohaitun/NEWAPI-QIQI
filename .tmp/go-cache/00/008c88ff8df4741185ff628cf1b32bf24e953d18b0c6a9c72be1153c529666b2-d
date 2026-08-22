@@ -1,8 +1,0 @@
-./chat_to_responses.go
-./chat_to_responses_response.go
-./policy.go
-./regex.go
-./responses_request_to_chat.go
-./responses_to_chat.go
-./chat_responses_compat_test.go
-./responses_request_to_chat_test.go

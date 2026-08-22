@@ -1,6 +1,0 @@
-./adaptor.go
-./constants.go
-./dto.go
-./relay-claude.go
-./message_delta_usage_patch_test.go
-./relay_claude_test.go

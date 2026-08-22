@@ -1,9 +1,0 @@
-./adaptor.go
-./adaptor_responses.go
-./constant.go
-./relay-gemini-native.go
-./relay-gemini.go
-./relay_responses.go
-./adaptor_responses_test.go
-./relay_gemini_usage_test.go
-./relay_responses_test.go

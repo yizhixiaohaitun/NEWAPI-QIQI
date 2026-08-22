@@ -1,5 +1,0 @@
-./adaptor.go
-./constants.go
-./dto.go
-./relay-aws.go
-./relay_aws_test.go
