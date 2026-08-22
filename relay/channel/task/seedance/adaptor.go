@@ -540,7 +540,7 @@ func normalizePublicRequest(req *relaycommon.TaskSubmitReq) error {
 		}
 	}
 	if !durationSet {
-		duration = 4
+		return fmt.Errorf("duration is required")
 	}
 	req.Duration = duration
 	input["duration"] = duration
@@ -587,11 +587,9 @@ func normalizePublicRequest(req *relaycommon.TaskSubmitReq) error {
 			audioValue = &value
 		}
 	}
-	if audioValue == nil {
-		value := true
-		audioValue = &value
+	if audioValue != nil {
+		input["audio"] = *audioValue
 	}
-	input["audio"] = *audioValue
 	delete(input, "generate_audio")
 	return nil
 }

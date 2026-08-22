@@ -114,7 +114,7 @@ func TestBuildRequestBodyTranslatesStandardSoraFields(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"model":"seedance-2.0-fast",
-		"input":{"prompt":"a lighthouse at dusk","duration":8,"aspect_ratio":"16:9","resolution":"720p","audio":true,"start_frames":["assetId://asset-123"],"n":1}
+		"input":{"prompt":"a lighthouse at dusk","duration":8,"aspect_ratio":"16:9","resolution":"720p","start_frames":["assetId://asset-123"],"n":1}
 	}`, string(forwarded))
 }
 
@@ -163,7 +163,7 @@ func TestBuildRequestBodyAcceptsLegacyNestedPrompt(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"model":"seedance-2.0",
-		"input":{"prompt":"legacy river scene","duration":5,"aspect_ratio":"16:9","resolution":"720p","audio":true,"n":1}
+		"input":{"prompt":"legacy river scene","duration":5,"aspect_ratio":"16:9","resolution":"720p","n":1}
 	}`, string(forwarded))
 }
 
@@ -190,7 +190,7 @@ func TestBuildRequestBodyTranslatesContentResources(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"model":"seedance-2.0",
-		"input":{"prompt":"a car crossing a bridge","image_references":["assetId://image-1"],"video_references":["https://cdn.example/ref.mp4"],"audio_references":["assetId://audio-1"],"duration":6,"aspect_ratio":"16:9","resolution":"720p","audio":true,"n":1}
+		"input":{"prompt":"a car crossing a bridge","image_references":["assetId://image-1"],"video_references":["https://cdn.example/ref.mp4"],"audio_references":["assetId://audio-1"],"duration":6,"aspect_ratio":"16:9","resolution":"720p","n":1}
 	}`, string(forwarded))
 }
 
@@ -215,7 +215,7 @@ func TestBuildRequestBodyTranslatesContentFrameRoles(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"model":"seedance-2.0",
-		"input":{"prompt":"smooth transition","duration":5,"aspect_ratio":"16:9","resolution":"720p","audio":true,"start_frames":["assetId://first"],"end_frames":["assetId://last"],"n":1}
+		"input":{"prompt":"smooth transition","duration":5,"aspect_ratio":"16:9","resolution":"720p","start_frames":["assetId://first"],"end_frames":["assetId://last"],"n":1}
 	}`, string(forwarded))
 }
 
@@ -249,7 +249,7 @@ func TestBuildRequestBodyAcceptsMultipartRemoteInputReference(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"model":"seedance-2.0-fast",
-		"input":{"prompt":"coastline","duration":6,"aspect_ratio":"16:9","resolution":"720p","audio":true,"start_frames":["assetId://asset-456"],"n":1}
+		"input":{"prompt":"coastline","duration":6,"aspect_ratio":"16:9","resolution":"720p","start_frames":["assetId://asset-456"],"n":1}
 	}`, string(forwarded))
 }
 
@@ -314,23 +314,23 @@ func TestSeedanceValidationBoundaries(t *testing.T) {
 		body    string
 		message string
 	}{
-		{name: "unsupported model", body: `{"model":"seedance-1.0","prompt":"x"}`, message: "unsupported Seedance model"},
-		{name: "fast 1080p", body: `{"model":"seedance-2.0-fast","prompt":"x","size":"1920x1080"}`, message: "does not support resolution"},
+		{name: "unsupported model", body: `{"model":"seedance-1.0","prompt":"x","duration":5}`, message: "unsupported Seedance model"},
+		{name: "fast 1080p", body: `{"model":"seedance-2.0-fast","prompt":"x","duration":5,"size":"1920x1080"}`, message: "does not support resolution"},
 		{name: "duration too short", body: `{"model":"seedance-2.0","prompt":"x","seconds":"3"}`, message: "between 4 and 15"},
 		{name: "fractional duration", body: `{"model":"seedance-2.0","prompt":"x","input":{"duration":5.5}}`, message: "integer between 4 and 15"},
 		{name: "malformed duration", body: `{"model":"seedance-2.0","prompt":"x","input":{"duration":"five"}}`, message: "integer between 4 and 15"},
-		{name: "bad ratio", body: `{"model":"seedance-2.0","prompt":"x","input":{"aspect_ratio":"bogus"}}`, message: "aspect_ratio"},
-		{name: "generate audio type", body: `{"model":"seedance-2.0","prompt":"x","input":{"generate_audio":"false"}}`, message: "must be a boolean"},
-		{name: "too many images", body: `{"model":"seedance-2.0","prompt":"x","input":{"reference_images":["https://e.example/1","https://e.example/2","https://e.example/3","https://e.example/4","https://e.example/5"]}}`, message: "at most 4"},
-		{name: "too many videos", body: `{"model":"seedance-2.0","prompt":"x","input":{"video_references":["https://e.example/1.mp4","https://e.example/2.mp4","https://e.example/3.mp4","https://e.example/4.mp4"]}}`, message: "at most 3"},
-		{name: "too many audios", body: `{"model":"seedance-2.0","prompt":"x","input":{"audio_references":["https://e.example/1.mp3","https://e.example/2.mp3"]}}`, message: "at most 1"},
-		{name: "too many start frames", body: `{"model":"seedance-2.0","prompt":"x","input":{"start_frames":["https://e.example/1.png","https://e.example/2.png"]}}`, message: "at most 1"},
-		{name: "too many end frames", body: `{"model":"seedance-2.0","prompt":"x","input":{"start_frames":["https://e.example/start.png"],"end_frames":["https://e.example/1.png","https://e.example/2.png"]}}`, message: "at most 1"},
-		{name: "last frame without first", body: `{"model":"seedance-2.0","prompt":"x","input":{"last_image":"https://e.example/end.png"}}`, message: "requires start_frames"},
-		{name: "video strength", body: `{"model":"seedance-2.0","prompt":"x","input":{"video_references":[{"video_url":"https://e.example/ref.mp4","strength":0.8}]}}`, message: "do not support strength"},
-		{name: "audio strength", body: `{"model":"seedance-2.0","prompt":"x","input":{"audio_references":[{"audio_url":"https://e.example/ref.mp3","strength":0.8}]}}`, message: "do not support strength"},
-		{name: "local path", body: `{"model":"seedance-2.0","prompt":"x","input":{"reference_videos":["C:\\\\secret.mp4"]}}`, message: "media reference"},
-		{name: "empty reference object", body: `{"model":"seedance-2.0","prompt":"x","input":{"reference_videos":[{"strength":0.8}]}}`, message: "must contain"},
+		{name: "bad ratio", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"aspect_ratio":"bogus"}}`, message: "aspect_ratio"},
+		{name: "generate audio type", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"generate_audio":"false"}}`, message: "must be a boolean"},
+		{name: "too many images", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"reference_images":["https://e.example/1","https://e.example/2","https://e.example/3","https://e.example/4","https://e.example/5"]}}`, message: "at most 4"},
+		{name: "too many videos", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"video_references":["https://e.example/1.mp4","https://e.example/2.mp4","https://e.example/3.mp4","https://e.example/4.mp4"]}}`, message: "at most 3"},
+		{name: "too many audios", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"audio_references":["https://e.example/1.mp3","https://e.example/2.mp3"]}}`, message: "at most 1"},
+		{name: "too many start frames", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"start_frames":["https://e.example/1.png","https://e.example/2.png"]}}`, message: "at most 1"},
+		{name: "too many end frames", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"start_frames":["https://e.example/start.png"],"end_frames":["https://e.example/1.png","https://e.example/2.png"]}}`, message: "at most 1"},
+		{name: "last frame without first", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"last_image":"https://e.example/end.png"}}`, message: "requires start_frames"},
+		{name: "video strength", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"video_references":[{"video_url":"https://e.example/ref.mp4","strength":0.8}]}}`, message: "do not support strength"},
+		{name: "audio strength", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"audio_references":[{"audio_url":"https://e.example/ref.mp3","strength":0.8}]}}`, message: "do not support strength"},
+		{name: "local path", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"reference_videos":["C:\\\\secret.mp4"]}}`, message: "media reference"},
+		{name: "empty reference object", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"reference_videos":[{"strength":0.8}]}}`, message: "must contain"},
 	}
 
 	for _, test := range tests {
@@ -344,7 +344,7 @@ func TestSeedanceValidationBoundaries(t *testing.T) {
 }
 
 func TestAssetReferenceAndFirstLastFramesAreAccepted(t *testing.T) {
-	body := `{"model":"seedance-2.0","prompt":"transition","input":{"first_image":"assetId://first","last_image":"assetId://last"}}`
+	body := `{"model":"seedance-2.0","prompt":"transition","duration":5,"input":{"first_image":"assetId://first","last_image":"assetId://last"}}`
 	context, info := newTaskContext(t, body)
 	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(context, info))
 }

@@ -15,8 +15,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPublicRequestDefaultsArePreserved(t *testing.T) {
-	context, info := newTaskContext(t, `{"model":"seedance-2.0","prompt":"defaults"}`)
+func TestPublicRequestRequiresDuration(t *testing.T) {
+	context, info := newTaskContext(t, `{"model":"seedance-2.0","prompt":"missing duration"}`)
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(context, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	assert.Contains(t, taskErr.Message, "duration is required")
+}
+
+func TestPublicRequestDoesNotDefaultAudio(t *testing.T) {
+	context, info := newTaskContext(t, `{"model":"seedance-2.0","prompt":"no default audio","duration":4}`)
 	adaptor := &TaskAdaptor{}
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
 
@@ -24,7 +32,7 @@ func TestPublicRequestDefaultsArePreserved(t *testing.T) {
 	require.NoError(t, err)
 	body, err := io.ReadAll(reader)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"model":"seedance-2.0","input":{"prompt":"defaults","duration":4,"resolution":"720p","aspect_ratio":"16:9","audio":true,"n":1}}`, string(body))
+	assert.JSONEq(t, `{"model":"seedance-2.0","input":{"prompt":"no default audio","duration":4,"resolution":"720p","aspect_ratio":"16:9","n":1}}`, string(body))
 }
 
 func TestPublicRequestRejectsTopLevelInputConflicts(t *testing.T) {
@@ -35,10 +43,10 @@ func TestPublicRequestRejectsTopLevelInputConflicts(t *testing.T) {
 	}{
 		{name: "duration", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"input":{"duration":6}}`, message: "conflicts"},
 		{name: "duration alias", body: `{"model":"seedance-2.0","prompt":"x","seconds":"5","input":{"duration":6}}`, message: "conflicts"},
-		{name: "resolution", body: `{"model":"seedance-2.0","prompt":"x","resolution":"720p","input":{"resolution":"1080p"}}`, message: "conflicts"},
-		{name: "aspect ratio", body: `{"model":"seedance-2.0","prompt":"x","aspect_ratio":"16:9","input":{"aspect_ratio":"9:16"}}`, message: "conflicts"},
-		{name: "generate audio", body: `{"model":"seedance-2.0","prompt":"x","generate_audio":true,"input":{"audio":false}}`, message: "conflicts"},
-		{name: "size resolution", body: `{"model":"seedance-2.0","prompt":"x","size":"1280x720","input":{"resolution":"1080p"}}`, message: "conflicts"},
+		{name: "resolution", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"resolution":"720p","input":{"resolution":"1080p"}}`, message: "conflicts"},
+		{name: "aspect ratio", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"aspect_ratio":"16:9","input":{"aspect_ratio":"9:16"}}`, message: "conflicts"},
+		{name: "generate audio", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"generate_audio":true,"input":{"audio":false}}`, message: "conflicts"},
+		{name: "size resolution", body: `{"model":"seedance-2.0","prompt":"x","duration":5,"size":"1280x720","input":{"resolution":"1080p"}}`, message: "conflicts"},
 	}
 
 	for _, test := range tests {
@@ -75,7 +83,7 @@ func TestPublicRequestRejectsMalformedTopLevelScalars(t *testing.T) {
 }
 
 func TestMappedUpstreamModelMustBeSupported(t *testing.T) {
-	context, info := newTaskContext(t, `{"model":"seedance-2.0","prompt":"mapped model"}`)
+	context, info := newTaskContext(t, `{"model":"seedance-2.0","prompt":"mapped model","duration":5}`)
 	adaptor := &TaskAdaptor{}
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
 	info.UpstreamModelName = "sd_2.0_unknown"
