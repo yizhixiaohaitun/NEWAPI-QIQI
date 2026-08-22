@@ -134,14 +134,18 @@ func GetAdaptor(apiType int) channel.Adaptor {
 	return nil
 }
 
+func isPublicVideoCompatibilityPath(path string) bool {
+	return strings.HasPrefix(path, "/v1/videos") ||
+		strings.HasPrefix(path, "/v1/video/generations")
+}
+
 func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
-	// Native routes keep their explicit protocol. For the public OpenAI Videos
-	// route, an explicit channel setting selects the upstream wire protocol;
-	// channel_default deliberately preserves legacy channel-type dispatch.
-	if platform := constant.TaskPlatform(c.GetString("platform")); platform != "" {
-		return platform
-	}
-	if c.Request != nil && strings.HasPrefix(c.Request.URL.Path, "/v1/videos") {
+	// Public compatibility routes may infer a platform from the requested model
+	// before a channel is selected. An explicit per-channel wire protocol must
+	// win over that inference; otherwise a Seedance model sent through an
+	// OpenAI-compatible /v1/videos upstream is incorrectly posted to
+	// /async/tasks. Native protocol routes keep their explicit platform.
+	if c.Request != nil && isPublicVideoCompatibilityPath(c.Request.URL.Path) {
 		if setting, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting); ok {
 			switch setting.VideoUpstreamProtocol {
 			case dto.VideoUpstreamProtocolOpenAI:
@@ -152,6 +156,9 @@ func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
 				return constant.TaskPlatformSeedanceDiscount
 			}
 		}
+	}
+	if platform := constant.TaskPlatform(c.GetString("platform")); platform != "" {
+		return platform
 	}
 	channelType := c.GetInt("channel_type")
 	if channelType > 0 {

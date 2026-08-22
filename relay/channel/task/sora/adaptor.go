@@ -331,6 +331,136 @@ func buildMiniMaxH3ResolutionBody(bodyMap map[string]interface{}, req relaycommo
 	return common.Marshal(payload)
 }
 
+func isSeedanceOpenAIVideoModel(modelName string) bool {
+	name := strings.ToLower(strings.TrimSpace(modelName))
+	if separator := strings.IndexByte(name, ':'); separator > 0 {
+		numericNamespace := true
+		for _, character := range name[:separator] {
+			if character < '0' || character > '9' {
+				numericNamespace = false
+				break
+			}
+		}
+		if numericNamespace {
+			name = name[separator+1:]
+		}
+	}
+	return name == "seedance-2.0" || name == "seedance-2.0-fast"
+}
+
+func appendReferenceURLs(urls []string, seen map[string]struct{}, value interface{}) []string {
+	switch typed := value.(type) {
+	case string:
+		url := strings.TrimSpace(typed)
+		if url != "" {
+			if _, exists := seen[url]; !exists {
+				seen[url] = struct{}{}
+				urls = append(urls, url)
+			}
+		}
+	case []string:
+		for _, item := range typed {
+			urls = appendReferenceURLs(urls, seen, item)
+		}
+	case []interface{}:
+		for _, item := range typed {
+			urls = appendReferenceURLs(urls, seen, item)
+		}
+	case map[string]interface{}:
+		for _, key := range []string{"url", "image_url", "image", "source"} {
+			if nested, exists := typed[key]; exists {
+				urls = appendReferenceURLs(urls, seen, nested)
+			}
+		}
+	}
+	return urls
+}
+
+func collectSeedanceReferenceURLs(bodyMap map[string]interface{}) []string {
+	urls := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, key := range []string{"images", "image_urls", "reference_images", "image", "input_reference"} {
+		urls = appendReferenceURLs(urls, seen, bodyMap[key])
+	}
+	for _, containerKey := range []string{"metadata", "input"} {
+		container, ok := bodyMap[containerKey].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for _, key := range []string{"images", "image_urls", "reference_images", "image_references", "image", "input_reference"} {
+			urls = appendReferenceURLs(urls, seen, container[key])
+		}
+	}
+	return urls
+}
+
+func addSeedanceDimensions(bodyMap map[string]interface{}) {
+	if _, hasWidth := bodyMap["width"]; hasWidth {
+		if _, hasHeight := bodyMap["height"]; hasHeight {
+			return
+		}
+	}
+	resolution, _ := bodyMap["resolution"].(string)
+	aspectRatio, _ := bodyMap["aspect_ratio"].(string)
+	resolution = strings.ToLower(strings.TrimSpace(resolution))
+	aspectRatio = strings.TrimSpace(aspectRatio)
+
+	var landscapeWidth, landscapeHeight int
+	switch resolution {
+	case "480p":
+		landscapeWidth, landscapeHeight = 854, 480
+	case "720p":
+		landscapeWidth, landscapeHeight = 1280, 720
+	case "1080p":
+		landscapeWidth, landscapeHeight = 1920, 1080
+	default:
+		return
+	}
+
+	switch aspectRatio {
+	case "16:9":
+		bodyMap["width"], bodyMap["height"] = landscapeWidth, landscapeHeight
+	case "9:16":
+		bodyMap["width"], bodyMap["height"] = landscapeHeight, landscapeWidth
+	case "1:1":
+		bodyMap["width"], bodyMap["height"] = landscapeHeight, landscapeHeight
+	}
+}
+
+// normalizeSeedanceOpenAIVideoBody emits the redundant image aliases used by
+// OpenAI-compatible Seedance gateways. Some gateways accept `images` but only
+// consume the first item; sending the same ordered list through image_urls and
+// metadata.reference_images keeps all references visible without changing the
+// public request contract.
+func normalizeSeedanceOpenAIVideoBody(bodyMap map[string]interface{}) {
+	urls := collectSeedanceReferenceURLs(bodyMap)
+	if len(urls) == 0 {
+		return
+	}
+	bodyMap["image"] = urls[0]
+	bodyMap["images"] = urls
+	bodyMap["image_urls"] = urls
+
+	metadata, ok := bodyMap["metadata"].(map[string]interface{})
+	if !ok {
+		metadata = make(map[string]interface{})
+		bodyMap["metadata"] = metadata
+	}
+	metadata["image_urls"] = urls
+	metadata["reference_images"] = urls
+	if _, exists := metadata["resolution"]; !exists {
+		if resolution, exists := bodyMap["resolution"]; exists {
+			metadata["resolution"] = resolution
+		}
+	}
+	if _, exists := metadata["aspect_ratio"]; !exists {
+		if aspectRatio, exists := bodyMap["aspect_ratio"]; exists {
+			metadata["aspect_ratio"] = aspectRatio
+		}
+	}
+	addSeedanceDimensions(bodyMap)
+}
+
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
@@ -363,6 +493,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 				return bytes.NewReader(newBody), nil
 			}
 			bodyMap["model"] = info.UpstreamModelName
+			if isSeedanceOpenAIVideoModel(info.UpstreamModelName) {
+				normalizeSeedanceOpenAIVideoBody(bodyMap)
+			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				return bytes.NewReader(newBody), nil
 			}

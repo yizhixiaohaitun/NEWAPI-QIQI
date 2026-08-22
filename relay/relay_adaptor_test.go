@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	taskseedance "github.com/QuantumNous/new-api/relay/channel/task/seedance"
+	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -53,6 +54,24 @@ func TestExplicitVideoProtocolOverridesChannelTypeWithoutModelInference(t *testi
 			context.Set("original_model", "not-a-seedance-model")
 			common.SetContextKey(context, constant.ContextKeyChannelSetting, dto.ChannelSettings{VideoUpstreamProtocol: test.setting})
 			assert.Equal(t, test.platform, GetTaskPlatform(context))
+		})
+	}
+}
+
+func TestExplicitOpenAIVideoProtocolOverridesInferredSeedancePlatformOnBothPublicRoutes(t *testing.T) {
+	for _, path := range []string{"/v1/videos", "/v1/video/generations"} {
+		t.Run(path, func(t *testing.T) {
+			context, _ := gin.CreateTestContext(nil)
+			context.Request = httptest.NewRequest("POST", path, nil)
+			context.Set("platform", string(constant.TaskPlatformSeedance))
+			context.Set("channel_type", constant.ChannelTypeDoubaoVideo)
+			common.SetContextKey(context, constant.ContextKeyChannelSetting, dto.ChannelSettings{
+				VideoUpstreamProtocol: dto.VideoUpstreamProtocolOpenAI,
+			})
+
+			platform := GetTaskPlatform(context)
+			assert.Equal(t, constant.TaskPlatformOpenAIVideo, platform)
+			assert.IsType(t, &tasksora.TaskAdaptor{}, GetTaskAdaptor(platform))
 		})
 	}
 }

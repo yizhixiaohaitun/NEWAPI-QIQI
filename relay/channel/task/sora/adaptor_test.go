@@ -128,6 +128,52 @@ func TestMiniMaxH3ResolutionFamilyFlattensCompatibleInput(t *testing.T) {
 	assert.JSONEq(t, `{"model":"MiniMaxH3-2k-pro","prompt":"a comet","resolution":"2k","duration":8}`, string(forwarded))
 }
 
+func TestSeedanceOpenAIVideoBodyExpandsOrderedImageAliases(t *testing.T) {
+	body := `{"model":"seedance-2.0","prompt":"run in a neon alley","duration":5,"aspect_ratio":"16:9","resolution":"720p","audio":true,"n":1,"images":[" https://example.com/one.png ","https://example.com/two.jpg","https://example.com/one.png"]}`
+	context, info := newJSONTaskContextForModel(t, body, "47:seedance-2.0")
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+	reader, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	wantURLs := []any{"https://example.com/one.png", "https://example.com/two.jpg"}
+	assert.Equal(t, "47:seedance-2.0", payload["model"])
+	assert.Equal(t, "https://example.com/one.png", payload["image"])
+	assert.Equal(t, wantURLs, payload["images"])
+	assert.Equal(t, wantURLs, payload["image_urls"])
+	assert.Equal(t, float64(1280), payload["width"])
+	assert.Equal(t, float64(720), payload["height"])
+
+	metadata, ok := payload["metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, wantURLs, metadata["image_urls"])
+	assert.Equal(t, wantURLs, metadata["reference_images"])
+	assert.Equal(t, "720p", metadata["resolution"])
+	assert.Equal(t, "16:9", metadata["aspect_ratio"])
+}
+
+func TestNonSeedanceOpenAIVideoBodyIsNotExpanded(t *testing.T) {
+	body := `{"model":"sora-2","prompt":"a lighthouse","images":["https://example.com/one.png","https://example.com/two.jpg"]}`
+	context, info := newJSONTaskContextForModel(t, body, "sora-2")
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+	reader, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	assert.NotContains(t, payload, "image_urls")
+	assert.NotContains(t, payload, "metadata")
+}
+
 func TestMiniMaxH3ProtocolFamiliesStayDistinct(t *testing.T) {
 	assert.True(t, isMiniMaxH3Model("MiniMax-H3"))
 	assert.False(t, isMiniMaxH3ResolutionModel("MiniMax-H3"))
