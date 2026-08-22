@@ -93,6 +93,19 @@ func TestMappedUpstreamModelMustBeSupported(t *testing.T) {
 	assert.Contains(t, err.Error(), "mapped upstream model")
 }
 
+func TestNamespacedMappedUpstreamModelIsPreserved(t *testing.T) {
+	context, info := newTaskContext(t, `{"model":"seedance-2.0","prompt":"namespaced model","duration":5}`)
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+	info.UpstreamModelName = "47:seedance-2.0"
+
+	reader, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	body, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"47:seedance-2.0","input":{"prompt":"namespaced model","duration":5,"resolution":"720p","aspect_ratio":"16:9","n":1}}`, string(body))
+}
+
 func TestMultipartAudioIsParsedAndConflictsAreRejected(t *testing.T) {
 	buildContext := func(t *testing.T, generateAudio, audio string) (*gin.Context, *relaycommon.RelayInfo) {
 		t.Helper()

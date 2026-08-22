@@ -216,8 +216,22 @@ func resolutionSet(values ...string) map[string]struct{} {
 
 func normalizedModel(value string) string { return strings.ToLower(strings.TrimSpace(value)) }
 
-func canonicalModel(value string) (string, bool) {
+func namespacedModelBase(value string) (string, bool) {
 	value = normalizedModel(value)
+	separator := strings.IndexByte(value, ':')
+	if separator <= 0 || separator == len(value)-1 {
+		return value, false
+	}
+	for _, character := range value[:separator] {
+		if character < '0' || character > '9' {
+			return value, false
+		}
+	}
+	return value[separator+1:], true
+}
+
+func canonicalModel(value string) (string, bool) {
+	value, _ = namespacedModelBase(value)
 	if target, ok := modelAliases[value]; ok {
 		value = target
 	}
@@ -830,6 +844,9 @@ func officialSeedanceModel(value string) (string, error) {
 	canonical, ok := canonicalModel(value)
 	if !ok {
 		return "", fmt.Errorf("unsupported Seedance model: %s", normalizedModel(value))
+	}
+	if _, namespaced := namespacedModelBase(value); namespaced {
+		return strings.TrimSpace(value), nil
 	}
 	if strings.Contains(canonical, "fast") {
 		return "seedance-2.0-fast", nil
