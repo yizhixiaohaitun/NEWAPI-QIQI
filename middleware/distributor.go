@@ -262,17 +262,6 @@ func getJSONStringValue(result gjson.Result, field string) (string, error) {
 	return result.String(), nil
 }
 
-func isSeedanceModelCenterModel(modelName string) bool {
-	switch strings.ToLower(strings.TrimSpace(modelName)) {
-	case "seedance-2.0", "seedance-2.0-fast",
-		"sd_2.0_discount", "sd_2.0_fast_discount", "sd_2.0_mini_discount",
-		"sd_2.0_special", "sd_2.0_fast_special", "sd_2.0_mini_special":
-		return true
-	default:
-		return false
-	}
-}
-
 func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	var modelRequest ModelRequest
 	shouldSelectChannel := true
@@ -363,9 +352,9 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			}
 			if req != nil {
 				modelRequest.Model = req.Model
-				if isSeedanceModelCenterModel(req.Model) {
-					c.Set("platform", string(constant.TaskPlatformSeedance))
-				}
+				// A model name describes capability, not the upstream wire protocol.
+				// Let the selected channel (or its explicit protocol setting) decide
+				// whether this public compatibility route uses /v1/videos or /async/tasks.
 			}
 		} else if c.Request.Method == http.MethodGet {
 			relayMode = relayconstant.RelayModeVideoFetchByID
@@ -381,9 +370,6 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 				return nil, false, err
 			}
 			modelRequest.Model = req.Model
-			if isSeedanceModelCenterModel(req.Model) {
-				c.Set("platform", string(constant.TaskPlatformSeedance))
-			}
 			relayMode = relayconstant.RelayModeVideoSubmit
 		} else if c.Request.Method == http.MethodGet {
 			relayMode = relayconstant.RelayModeVideoFetchByID

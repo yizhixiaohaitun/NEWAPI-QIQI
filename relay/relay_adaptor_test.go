@@ -70,18 +70,22 @@ func TestExplicitOpenAIVideoProtocolOverridesInferredSeedancePlatformOnBothPubli
 			})
 
 			platform := GetTaskPlatform(context)
-			assert.Equal(t, constant.TaskPlatformOpenAIVideo, platform)
+			assert.Equal(t, constant.TaskPlatform(constant.TaskPlatformOpenAIVideo), platform)
 			assert.IsType(t, &tasksora.TaskAdaptor{}, GetTaskAdaptor(platform))
 		})
 	}
 }
 
-func TestChannelDefaultPreservesSoraDispatchEvenForSeedanceModelName(t *testing.T) {
-	context, _ := gin.CreateTestContext(nil)
-	context.Request = httptest.NewRequest("POST", "/v1/videos", nil)
-	context.Set("channel_type", constant.ChannelTypeSora)
-	context.Set("original_model", "seedance-2.0")
-	common.SetContextKey(context, constant.ContextKeyChannelSetting, dto.ChannelSettings{VideoUpstreamProtocol: dto.VideoUpstreamProtocolDefault})
-	platform := GetTaskPlatform(context)
-	assert.Equal(t, constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora)), platform)
+func TestChannelDefaultPreservesOpenAIVideoDispatchEvenForSeedanceModelName(t *testing.T) {
+	for _, channelType := range []int{constant.ChannelTypeSora, constant.ChannelTypeOpenAI} {
+		context, _ := gin.CreateTestContext(nil)
+		context.Request = httptest.NewRequest("POST", "/v1/videos", nil)
+		context.Set("channel_type", channelType)
+		context.Set("original_model", "seedance-2.0")
+		common.SetContextKey(context, constant.ContextKeyChannelSetting, dto.ChannelSettings{VideoUpstreamProtocol: dto.VideoUpstreamProtocolDefault})
+
+		platform := GetTaskPlatform(context)
+		assert.Equal(t, constant.TaskPlatform(strconv.Itoa(channelType)), platform)
+		assert.IsType(t, &tasksora.TaskAdaptor{}, GetTaskAdaptor(platform))
+	}
 }

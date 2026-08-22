@@ -14,26 +14,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetModelRequestForSeedanceVideos(t *testing.T) {
-	tests := []struct {
-		model            string
-		expectedPlatform string
-	}{
-		{model: "seedance-2.0", expectedPlatform: string(constant.TaskPlatformSeedance)},
-		{model: "seedance-2.0-fast", expectedPlatform: string(constant.TaskPlatformSeedance)},
-		{model: "sd_2.0_discount", expectedPlatform: string(constant.TaskPlatformSeedance)},
-		{model: "sd_2.0_fast_discount", expectedPlatform: string(constant.TaskPlatformSeedance)},
-		{model: "sd_2.0_mini_discount", expectedPlatform: string(constant.TaskPlatformSeedance)},
-		{model: "sd_2.0_special", expectedPlatform: string(constant.TaskPlatformSeedance)},
-		{model: "sd_2.0_fast_special", expectedPlatform: string(constant.TaskPlatformSeedance)},
-		{model: "sd_2.0_mini_special", expectedPlatform: string(constant.TaskPlatformSeedance)},
-		{model: "sora-2"},
-		{model: "MiniMax-H3"},
+func TestGetModelRequestForPublicVideosDoesNotInferUpstreamProtocolFromModel(t *testing.T) {
+	models := []string{
+		"seedance-2.0",
+		"seedance-2.0-fast",
+		"sd_2.0_discount",
+		"sd_2.0_fast_discount",
+		"sd_2.0_mini_discount",
+		"sd_2.0_special",
+		"sd_2.0_fast_special",
+		"sd_2.0_mini_special",
+		"sora-2",
+		"MiniMax-H3",
 	}
 
-	for _, test := range tests {
-		t.Run(test.model, func(t *testing.T) {
-			body := `{"model":"` + test.model + `","prompt":"test"}`
+	for _, model := range models {
+		t.Run(model, func(t *testing.T) {
+			body := `{"model":"` + model + `","prompt":"test"}`
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
 			c.Request.Header.Set("Content-Type", "application/json")
@@ -43,26 +40,19 @@ func TestGetModelRequestForSeedanceVideos(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, request)
 			assert.True(t, shouldSelectChannel)
-			assert.Equal(t, test.model, request.Model)
-			assert.Equal(t, test.expectedPlatform, common.GetContextKeyString(c, "platform"))
+			assert.Equal(t, model, request.Model)
+			assert.Empty(t, common.GetContextKeyString(c, "platform"))
 			assert.Equal(t, relayconstant.RelayModeVideoSubmit, common.GetContextKeyInt(c, "relay_mode"))
 		})
 	}
 }
 
-func TestGetModelRequestForSeedanceVideoGenerations(t *testing.T) {
-	tests := []struct {
-		model            string
-		expectedPlatform string
-	}{
-		{model: "seedance-2.0", expectedPlatform: string(constant.TaskPlatformSeedance)},
-		{model: "sd_2.0_discount", expectedPlatform: string(constant.TaskPlatformSeedance)},
-		{model: "MiniMax-H3"},
-	}
+func TestGetModelRequestForPublicVideoGenerationsDoesNotInferUpstreamProtocolFromModel(t *testing.T) {
+	models := []string{"seedance-2.0", "sd_2.0_discount", "MiniMax-H3"}
 
-	for _, test := range tests {
-		t.Run(test.model, func(t *testing.T) {
-			body := `{"model":"` + test.model + `","prompt":"test"}`
+	for _, model := range models {
+		t.Run(model, func(t *testing.T) {
+			body := `{"model":"` + model + `","prompt":"test"}`
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
 			c.Request.Header.Set("Content-Type", "application/json")
@@ -72,8 +62,8 @@ func TestGetModelRequestForSeedanceVideoGenerations(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, request)
 			assert.True(t, shouldSelectChannel)
-			assert.Equal(t, test.model, request.Model)
-			assert.Equal(t, test.expectedPlatform, common.GetContextKeyString(c, "platform"))
+			assert.Equal(t, model, request.Model)
+			assert.Empty(t, common.GetContextKeyString(c, "platform"))
 			assert.Equal(t, relayconstant.RelayModeVideoSubmit, common.GetContextKeyInt(c, "relay_mode"))
 		})
 	}
