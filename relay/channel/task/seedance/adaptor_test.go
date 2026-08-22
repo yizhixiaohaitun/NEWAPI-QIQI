@@ -114,7 +114,7 @@ func TestBuildRequestBodyTranslatesStandardSoraFields(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"model":"seedance-2.0-fast",
-		"input":{"prompt":"a lighthouse at dusk","duration":8,"aspect_ratio":"16:9","resolution":"720p","start_frames":["assetId://asset-123"],"n":1}
+		"input":{"prompt":"a lighthouse at dusk","duration":8,"aspect_ratio":"16:9","resolution":"720p","audio":true,"start_frames":["assetId://asset-123"],"n":1}
 	}`, string(forwarded))
 }
 
@@ -163,7 +163,7 @@ func TestBuildRequestBodyAcceptsLegacyNestedPrompt(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"model":"seedance-2.0",
-		"input":{"prompt":"legacy river scene","duration":5,"aspect_ratio":"16:9","resolution":"720p","n":1}
+		"input":{"prompt":"legacy river scene","duration":5,"aspect_ratio":"16:9","resolution":"720p","audio":true,"n":1}
 	}`, string(forwarded))
 }
 
@@ -190,7 +190,7 @@ func TestBuildRequestBodyTranslatesContentResources(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"model":"seedance-2.0",
-		"input":{"prompt":"a car crossing a bridge","image_references":["assetId://image-1"],"video_references":["https://cdn.example/ref.mp4"],"audio_references":["assetId://audio-1"],"duration":6,"aspect_ratio":"16:9","resolution":"720p","n":1}
+		"input":{"prompt":"a car crossing a bridge","image_references":["assetId://image-1"],"video_references":["https://cdn.example/ref.mp4"],"audio_references":["assetId://audio-1"],"duration":6,"aspect_ratio":"16:9","resolution":"720p","audio":true,"n":1}
 	}`, string(forwarded))
 }
 
@@ -215,7 +215,7 @@ func TestBuildRequestBodyTranslatesContentFrameRoles(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"model":"seedance-2.0",
-		"input":{"prompt":"smooth transition","duration":5,"aspect_ratio":"16:9","resolution":"720p","start_frames":["assetId://first"],"end_frames":["assetId://last"],"n":1}
+		"input":{"prompt":"smooth transition","duration":5,"aspect_ratio":"16:9","resolution":"720p","audio":true,"start_frames":["assetId://first"],"end_frames":["assetId://last"],"n":1}
 	}`, string(forwarded))
 }
 
@@ -249,7 +249,7 @@ func TestBuildRequestBodyAcceptsMultipartRemoteInputReference(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"model":"seedance-2.0-fast",
-		"input":{"prompt":"coastline","duration":6,"aspect_ratio":"16:9","resolution":"720p","start_frames":["assetId://asset-456"],"n":1}
+		"input":{"prompt":"coastline","duration":6,"aspect_ratio":"16:9","resolution":"720p","audio":true,"start_frames":["assetId://asset-456"],"n":1}
 	}`, string(forwarded))
 }
 

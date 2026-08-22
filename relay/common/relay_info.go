@@ -782,11 +782,14 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 			t.Duration = durationInt
 		} else {
 			var durationStr string
-			if err := common.Unmarshal(aux.Duration, &durationStr); err == nil && durationStr != "" {
-				if v, err := strconv.Atoi(durationStr); err == nil {
-					t.Duration = v
-				}
+			if err := common.Unmarshal(aux.Duration, &durationStr); err != nil {
+				return fmt.Errorf("duration must be an integer")
 			}
+			value, err := strconv.Atoi(strings.TrimSpace(durationStr))
+			if err != nil {
+				return fmt.Errorf("duration must be an integer")
+			}
+			t.Duration = value
 		}
 	}
 	if len(aux.GenerateAudio) > 0 {
@@ -795,13 +798,14 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 			t.GenerateAudio = &value
 		} else {
 			var text string
-			if err := common.Unmarshal(aux.GenerateAudio, &text); err == nil {
-				parsed, parseErr := strconv.ParseBool(strings.TrimSpace(text))
-				if parseErr != nil {
-					return fmt.Errorf("generate_audio must be a boolean")
-				}
-				t.GenerateAudio = &parsed
+			if err := common.Unmarshal(aux.GenerateAudio, &text); err != nil {
+				return fmt.Errorf("generate_audio must be a boolean")
 			}
+			parsed, parseErr := strconv.ParseBool(strings.TrimSpace(text))
+			if parseErr != nil {
+				return fmt.Errorf("generate_audio must be a boolean")
+			}
+			t.GenerateAudio = &parsed
 		}
 	}
 

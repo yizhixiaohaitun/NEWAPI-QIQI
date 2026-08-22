@@ -314,6 +314,33 @@ func mergeTopLevelCompatibilityFields(body []byte, req *relaycommon.TaskSubmitRe
 	if req.Input == nil {
 		req.Input = make(map[string]any)
 	}
+	var topDuration int
+	topDurationSet := false
+	for _, key := range []string{"duration", "seconds"} {
+		if raw, exists := root[key]; exists {
+			value, ok := parseInteger(raw)
+			if !ok {
+				return fmt.Errorf("%s must be an integer", key)
+			}
+			if topDurationSet && topDuration != value {
+				return fmt.Errorf("duration conflicts with seconds")
+			}
+			topDuration, topDurationSet = value, true
+		}
+	}
+	if topDurationSet {
+		for _, key := range []string{"duration", "seconds"} {
+			if raw, exists := req.Input[key]; exists {
+				value, ok := parseInteger(raw)
+				if !ok {
+					return fmt.Errorf("input.%s must be an integer between 4 and 15", key)
+				}
+				if topDuration != value {
+					return fmt.Errorf("duration/seconds conflicts with input.%s", key)
+				}
+			}
+		}
+	}
 	for _, key := range []string{
 		"duration", "seconds", "aspect_ratio", "ratio", "resolution", "generate_audio", "audio", "watermark", "seed", "tools",
 		"reference_images", "image_references", "reference_videos", "video_references",
@@ -427,6 +454,145 @@ func mergeContentResources(raw any, req *relaycommon.TaskSubmitReq) error {
 			req.Input[key] = values
 		}
 	}
+	return nil
+}
+
+func publicSize(size, resolution, aspectRatio string) (string, string, error) {
+	size = strings.ToLower(strings.TrimSpace(size))
+	resolution = strings.ToLower(strings.TrimSpace(resolution))
+	aspectRatio = strings.TrimSpace(aspectRatio)
+	if size == "" {
+		if resolution == "" {
+			resolution = "720p"
+		}
+		if aspectRatio == "" {
+			aspectRatio = "16:9"
+		}
+		return resolution, aspectRatio, nil
+	}
+
+	var sizeResolution, sizeRatio string
+	switch size {
+	case "854x480", "480p", "480p-landscape":
+		sizeResolution, sizeRatio = "480p", "16:9"
+	case "480x854", "480p-portrait":
+		sizeResolution, sizeRatio = "480p", "9:16"
+	case "1280x720", "720p", "720p-landscape":
+		sizeResolution, sizeRatio = "720p", "16:9"
+	case "720x1280", "720p-portrait":
+		sizeResolution, sizeRatio = "720p", "9:16"
+	case "1920x1080", "1080p", "1080p-landscape":
+		sizeResolution, sizeRatio = "1080p", "16:9"
+	case "1080x1920", "1080p-portrait":
+		sizeResolution, sizeRatio = "1080p", "9:16"
+	case "480x480":
+		sizeResolution, sizeRatio = "480p", "1:1"
+	case "720x720":
+		sizeResolution, sizeRatio = "720p", "1:1"
+	case "1080x1080":
+		sizeResolution, sizeRatio = "1080p", "1:1"
+	default:
+		return "", "", fmt.Errorf("size must be a supported 480p, 720p, or 1080p landscape, portrait, or square size")
+	}
+	if resolution != "" && !strings.EqualFold(resolution, sizeResolution) {
+		return "", "", fmt.Errorf("size conflicts with resolution")
+	}
+	if aspectRatio != "" && aspectRatio != sizeRatio {
+		return "", "", fmt.Errorf("size conflicts with aspect_ratio")
+	}
+	return sizeResolution, sizeRatio, nil
+}
+
+func normalizePublicRequest(req *relaycommon.TaskSubmitReq) error {
+	if req.Input == nil {
+		req.Input = map[string]any{}
+	}
+	input := req.Input
+	if nestedPrompt, ok := input["prompt"].(string); ok && strings.TrimSpace(req.Prompt) != "" && strings.TrimSpace(nestedPrompt) != strings.TrimSpace(req.Prompt) {
+		return fmt.Errorf("prompt conflicts with input.prompt")
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		req.Prompt = inputString(input, "prompt")
+	}
+
+	duration := req.Duration
+	durationSet := req.Duration != 0
+	if strings.TrimSpace(req.Seconds) != "" {
+		seconds, ok := parseInteger(req.Seconds)
+		if !ok {
+			return fmt.Errorf("seconds must be an integer")
+		}
+		if durationSet && duration != seconds {
+			return fmt.Errorf("seconds conflicts with duration")
+		}
+		duration, durationSet = seconds, true
+	}
+	for _, key := range []string{"duration", "seconds"} {
+		if nested, exists := input[key]; exists {
+			value, ok := parseInteger(nested)
+			if !ok {
+				return fmt.Errorf("input.%s must be an integer between 4 and 15", key)
+			}
+			if durationSet && duration != value {
+				return fmt.Errorf("duration/seconds conflicts with input.%s", key)
+			}
+			duration, durationSet = value, true
+		}
+	}
+	if !durationSet {
+		duration = 4
+	}
+	req.Duration = duration
+	input["duration"] = duration
+	delete(input, "seconds")
+
+	resolution := strings.TrimSpace(req.Resolution)
+	if nested := inputString(input, "resolution"); nested != "" {
+		if resolution != "" && !strings.EqualFold(resolution, nested) {
+			return fmt.Errorf("resolution conflicts with input.resolution")
+		}
+		resolution = nested
+	}
+	aspectRatio := strings.TrimSpace(req.AspectRatio)
+	for _, key := range []string{"aspect_ratio", "ratio"} {
+		if nested := inputString(input, key); nested != "" {
+			if aspectRatio != "" && aspectRatio != nested {
+				return fmt.Errorf("aspect_ratio conflicts with input.%s", key)
+			}
+			aspectRatio = nested
+		}
+	}
+	mappedResolution, mappedRatio, err := publicSize(req.Size, resolution, aspectRatio)
+	if err != nil {
+		return err
+	}
+	input["resolution"] = mappedResolution
+	input["aspect_ratio"] = mappedRatio
+	delete(input, "ratio")
+
+	var audioValue *bool
+	if req.GenerateAudio != nil {
+		value := *req.GenerateAudio
+		audioValue = &value
+	}
+	for _, key := range []string{"generate_audio", "audio"} {
+		if nested, exists := input[key]; exists {
+			value, ok := nested.(bool)
+			if !ok {
+				return fmt.Errorf("input.%s must be a boolean", key)
+			}
+			if audioValue != nil && *audioValue != value {
+				return fmt.Errorf("generate_audio conflicts with input.%s", key)
+			}
+			audioValue = &value
+		}
+	}
+	if audioValue == nil {
+		value := true
+		audioValue = &value
+	}
+	input["audio"] = *audioValue
+	delete(input, "generate_audio")
 	return nil
 }
 
@@ -663,17 +829,14 @@ func intOption(req relaycommon.TaskSubmitReq, key string) (*int, error) {
 }
 
 func officialSeedanceModel(value string) (string, error) {
-	value = normalizedModel(value)
-	switch {
-	case value == "seedance-2.0", value == "seedance-2.0-fast":
-		return value, nil
-	case strings.HasPrefix(value, "sd_2.0_") && strings.Contains(value, "fast"):
-		return "seedance-2.0-fast", nil
-	case strings.HasPrefix(value, "sd_2.0_"):
-		return "seedance-2.0", nil
-	default:
-		return "", fmt.Errorf("unsupported Seedance model: %s", value)
+	canonical, ok := canonicalModel(value)
+	if !ok {
+		return "", fmt.Errorf("unsupported Seedance model: %s", normalizedModel(value))
 	}
+	if strings.Contains(canonical, "fast") {
+		return "seedance-2.0-fast", nil
+	}
+	return "seedance-2.0", nil
 }
 
 func validOfficialMediaValue(value string) bool {
@@ -784,10 +947,7 @@ func officialFrameReferences(input map[string]any, keys ...string) ([]any, error
 func buildSeedanceRequest(req relaycommon.TaskSubmitReq, upstreamModel string) (*seedanceRequest, error) {
 	modelName, err := officialSeedanceModel(upstreamModel)
 	if err != nil {
-		modelName, err = officialSeedanceModel(req.Model)
-	}
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("mapped upstream model: %w", err)
 	}
 	if strings.TrimSpace(req.Prompt) == "" {
 		return nil, fmt.Errorf("prompt is required")
@@ -938,16 +1098,10 @@ func endpointURL(baseURL string, taskID string) string {
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	if strings.Contains(c.GetHeader("Content-Type"), "multipart/form-data") {
+	multipartRequest := strings.Contains(c.GetHeader("Content-Type"), "multipart/form-data")
+	if multipartRequest {
 		if taskErr := relaycommon.ValidateMultipartDirect(c, info); taskErr != nil {
 			return taskErr
-		}
-		form, err := common.ParseMultipartFormReusable(c)
-		if err != nil {
-			return invalidRequest(err)
-		}
-		if len(form.File["input_reference"]) > 0 {
-			return invalidRequest(fmt.Errorf("file input_reference is not supported by this upstream; upload it through /v1/video/assets and pass assetId://{asset_id}"))
 		}
 	} else {
 		storage, err := common.GetBodyStorage(c)
@@ -980,10 +1134,46 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		info.Action = constant.TaskActionGenerate
 		c.Set("task_request", req)
 	}
+
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return invalidRequest(err)
 	}
+	if multipartRequest {
+		form, formErr := common.ParseMultipartFormReusable(c)
+		if formErr != nil {
+			return invalidRequest(formErr)
+		}
+		if len(form.File["input_reference"]) > 0 {
+			return invalidRequest(fmt.Errorf("file input_reference is not supported by this upstream; upload it through /v1/video/assets and pass assetId://{asset_id}"))
+		}
+		if values := form.Value["duration"]; len(values) > 0 {
+			if req.Input == nil {
+				req.Input = make(map[string]any)
+			}
+			req.Input["duration"] = values[0]
+		}
+		if values := form.Value["audio"]; len(values) > 0 && strings.TrimSpace(values[0]) != "" {
+			value, parseErr := strconv.ParseBool(strings.TrimSpace(values[0]))
+			if parseErr != nil {
+				return invalidRequest(fmt.Errorf("audio must be a boolean"))
+			}
+			if req.GenerateAudio != nil && *req.GenerateAudio != value {
+				return invalidRequest(fmt.Errorf("generate_audio conflicts with audio"))
+			}
+			if req.Input == nil {
+				req.Input = make(map[string]any)
+			}
+			req.Input["audio"] = value
+		}
+	}
+	if !isAsyncTaskRequest(c) {
+		if err := normalizePublicRequest(&req); err != nil {
+			return invalidRequest(err)
+		}
+	}
+	c.Set("task_request", req)
+
 	if !IsSupportedModel(req.Model) {
 		return invalidRequest(fmt.Errorf("unsupported Seedance model: %s", req.Model))
 	}

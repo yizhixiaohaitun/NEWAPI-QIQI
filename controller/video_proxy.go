@@ -41,17 +41,6 @@ func persistedVideoDownloadURL(task *model.Task, channel *model.Channel, baseURL
 	}
 }
 
-func explicitVideoContentURL(task *model.Task, baseURL string) (string, bool, bool) {
-	switch task.Platform {
-	case constant.TaskPlatformOpenAIVideo:
-		return fmt.Sprintf("%s/v1/videos/%s/content", strings.TrimRight(baseURL, "/"), url.PathEscape(task.GetUpstreamTaskID())), true, true
-	case constant.TaskPlatformSeedance, constant.TaskPlatformSeedanceDiscount:
-		return task.GetResultURL(), false, true
-	default:
-		return "", false, false
-	}
-}
-
 func VideoProxy(c *gin.Context) {
 	taskID := c.Param("task_id")
 	if taskID == "" {
