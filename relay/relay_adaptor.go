@@ -135,7 +135,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 }
 
 func isPublicVideoCompatibilityPath(path string) bool {
-	return strings.HasPrefix(path, "/v1/videos") ||
+	return path == "/v1/video" ||
+		strings.HasPrefix(path, "/v1/videos") ||
 		strings.HasPrefix(path, "/v1/video/generations")
 }
 

@@ -36,6 +36,10 @@ func SetVideoRouter(router *gin.Engine) {
 	videoV1Router.Use(middleware.RouteTag("relay"))
 	videoV1Router.Use(middleware.TokenAuth(), middleware.ContextRequestAudit(), middleware.Distribute())
 	{
+		// Compatibility alias for clients that use the singular /v1/video
+		// endpoint. Keep this exact route isolated so existing /v1/videos and
+		// /v1/video/assets behavior remains unchanged.
+		videoV1Router.POST("/video", controller.RelayTask)
 		videoV1Router.POST("/video/generations", controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
 		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)

@@ -59,7 +59,7 @@ func TestExplicitVideoProtocolOverridesChannelTypeWithoutModelInference(t *testi
 }
 
 func TestExplicitOpenAIVideoProtocolOverridesInferredSeedancePlatformOnBothPublicRoutes(t *testing.T) {
-	for _, path := range []string{"/v1/videos", "/v1/video/generations"} {
+	for _, path := range []string{"/v1/videos", "/v1/video", "/v1/video/generations"} {
 		t.Run(path, func(t *testing.T) {
 			context, _ := gin.CreateTestContext(nil)
 			context.Request = httptest.NewRequest("POST", path, nil)

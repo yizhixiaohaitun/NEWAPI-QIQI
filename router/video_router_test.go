@@ -21,6 +21,7 @@ func TestSetVideoRouterRegistersAsyncTaskRoutes(t *testing.T) {
 	assert.True(t, routes["POST /v1/video/assets"])
 	assert.True(t, routes["GET /v1/video/assets/:asset_id"])
 	assert.True(t, routes["POST /v1/videos"], "MiniMax-H3 route must remain registered")
+	assert.True(t, routes["POST /v1/video"], "singular compatibility alias must be registered")
 	assert.True(t, routes["POST /v1/video/generations"], "existing Doubao route must remain registered")
 }
 

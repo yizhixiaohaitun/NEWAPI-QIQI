@@ -362,7 +362,10 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			modelRequest.Model = getTaskOriginModelName(c)
 		}
 		c.Set("relay_mode", relayMode)
-	} else if strings.Contains(c.Request.URL.Path, "/v1/video/generations") {
+	} else if c.Request.URL.Path == "/v1/video" || strings.Contains(c.Request.URL.Path, "/v1/video/generations") {
+		// /v1/video is an exact compatibility alias for video generation.
+		// Do not use a broad prefix match here: /v1/video/assets has its own
+		// protocol and must continue through the Seedance asset branch above.
 		relayMode := relayconstant.RelayModeUnknown
 		if c.Request.Method == http.MethodPost {
 			req, err := getModelFromRequest(c)

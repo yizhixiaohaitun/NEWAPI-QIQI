@@ -69,6 +69,22 @@ func TestGetModelRequestForPublicVideoGenerationsDoesNotInferUpstreamProtocolFro
 	}
 }
 
+func TestGetModelRequestForSingularVideoAlias(t *testing.T) {
+	body := `{"model":"seedance-2.0","prompt":"test"}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/video", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	defer common.CleanupBodyStorage(c)
+
+	request, shouldSelectChannel, err := getModelRequest(c)
+	require.NoError(t, err)
+	require.NotNil(t, request)
+	assert.True(t, shouldSelectChannel)
+	assert.Equal(t, "seedance-2.0", request.Model)
+	assert.Empty(t, common.GetContextKeyString(c, "platform"))
+	assert.Equal(t, relayconstant.RelayModeVideoSubmit, common.GetContextKeyInt(c, "relay_mode"))
+}
+
 func TestGetModelRequestForSeedanceAssets(t *testing.T) {
 	tests := []struct {
 		name          string
