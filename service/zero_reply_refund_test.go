@@ -4,6 +4,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -127,6 +129,26 @@ func TestZeroReplyAutoRefundSkipsEmbeddingFormat(t *testing.T) {
 
 	assert.Equal(t, 1000, getQuota(t, 1))
 	assert.Equal(t, 1000, getTokenRemain(t, 10))
+	assert.Equal(t, 50, params.Quota)
+	assert.NotContains(t, params.Content, "已自动回退")
+	assert.Equal(t, int64(0), countRefundLogs(t))
+}
+
+func TestZeroReplyAutoRefundSkipsExplicitUpstreamRejection(t *testing.T) {
+	ctx, relayInfo := setupZeroReplyRefundTest(t, true)
+	relayInfo.FinalRequestRelayFormat = types.RelayFormatClaude
+	common.SetContextKey(ctx, constant.ContextKeyAdminRejectReason, "claude_stop_reason=refusal")
+
+	require.NoError(t, model.DecreaseUserQuota(1, 50, false))
+	require.NoError(t, model.DecreaseTokenQuota(10, "zero-reply-key", 50))
+
+	params := zeroReplyConsumeParams(111, 0, 50)
+	refunded := MaybeAutoRefundZeroReplyQuota(ctx, relayInfo, params)
+	assert.False(t, refunded)
+
+	// stop_reason=refusal 是上游返回的明确错误型回复，原扣费必须保留。
+	assert.Equal(t, 950, getQuota(t, 1))
+	assert.Equal(t, 950, getTokenRemain(t, 10))
 	assert.Equal(t, 50, params.Quota)
 	assert.NotContains(t, params.Content, "已自动回退")
 	assert.Equal(t, int64(0), countRefundLogs(t))

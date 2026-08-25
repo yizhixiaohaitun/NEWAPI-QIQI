@@ -42,6 +42,13 @@ func MaybeAutoRefundZeroReplyQuota(ctx *gin.Context, relayInfo *relaycommon.Rela
 	if relayInfo.GetFinalRequestRelayFormat() == types.RelayFormatEmbedding {
 		return false
 	}
+	// 上游已经给出明确的拒绝/拦截结果时，虽然 completion_tokens 可能为 0，
+	// 但这不是“模型没有回复”。例如 Claude 会返回 stop_reason=refusal，
+	// 并可能在 stop_details.explanation 中说明错误原因；这类请求保留正常扣费，
+	// 不能按 0 回复自动退款。各适配器统一通过 AdminRejectReason 标记此类结果。
+	if common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason) != "" {
+		return false
+	}
 	// 与 0回复统计口径一致：有输入、无输出、且本次实际扣了费
 	if params.PromptTokens <= 0 || params.CompletionTokens != 0 || params.Quota <= 0 {
 		return false
