@@ -11,15 +11,17 @@ const (
 	ContextKeyRequestStartTime ContextKey = "request_start_time"
 
 	/* token related keys */
-	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"
-	ContextKeyTokenKey               ContextKey = "token_key"
-	ContextKeyTokenId                ContextKey = "token_id"
-	ContextKeyTokenGroup             ContextKey = "token_group"
-	ContextKeyTokenSpecificChannelId ContextKey = "specific_channel_id"
-	ContextKeyTokenModelLimitEnabled ContextKey = "token_model_limit_enabled"
-	ContextKeyTokenModelLimit        ContextKey = "token_model_limit"
-	ContextKeyTokenCrossGroupRetry   ContextKey = "token_cross_group_retry"
-	ContextKeyTokenUpstreamTimeout   ContextKey = "token_upstream_timeout"
+	ContextKeyTokenUnlimited                ContextKey = "token_unlimited_quota"
+	ContextKeyTokenKey                      ContextKey = "token_key"
+	ContextKeyTokenId                       ContextKey = "token_id"
+	ContextKeyTokenGroup                    ContextKey = "token_group"
+	ContextKeyTokenSpecificChannelId        ContextKey = "specific_channel_id"
+	ContextKeyTokenModelLimitEnabled        ContextKey = "token_model_limit_enabled"
+	ContextKeyTokenModelLimit               ContextKey = "token_model_limit"
+	ContextKeyTokenCrossGroupRetry          ContextKey = "token_cross_group_retry"
+	ContextKeyTokenUpstreamTimeout          ContextKey = "token_upstream_timeout"
+	ContextKeyTokenNonStreamUpstreamTimeout ContextKey = "token_non_stream_upstream_timeout"
+	ContextKeyUpstreamCancel                ContextKey = "upstream_cancel"
 
 	/* channel related keys */
 	ContextKeyChannelId                ContextKey = "channel_id"

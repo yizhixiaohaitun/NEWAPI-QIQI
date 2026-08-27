@@ -190,6 +190,20 @@ func AddToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if token.NonStreamUpstreamTimeout == nil {
+		// Older API clients only know upstream_timeout. Mirroring it on create
+		// preserves their historical non-stream behavior while new clients send
+		// the dedicated field explicitly.
+		fallback := model.DefaultTokenNonStreamUpstreamTimeout
+		if request.UpstreamTimeout != nil {
+			fallback = *request.UpstreamTimeout
+		}
+		token.NonStreamUpstreamTimeout = common.GetPointer(fallback)
+	}
+	if err := model.ValidateTokenUpstreamTimeout(*token.NonStreamUpstreamTimeout); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	// 非无限额度时，检查额度值是否超出有效范围
 	if !token.UnlimitedQuota {
 		if token.RemainQuota < 0 {
@@ -223,20 +237,21 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	cleanToken := model.Token{
-		UserId:             c.GetInt("id"),
-		Name:               token.Name,
-		Key:                key,
-		CreatedTime:        common.GetTimestamp(),
-		AccessedTime:       common.GetTimestamp(),
-		ExpiredTime:        token.ExpiredTime,
-		RemainQuota:        token.RemainQuota,
-		UnlimitedQuota:     token.UnlimitedQuota,
-		ModelLimitsEnabled: token.ModelLimitsEnabled,
-		ModelLimits:        token.ModelLimits,
-		AllowIps:           token.AllowIps,
-		Group:              token.Group,
-		CrossGroupRetry:    token.CrossGroupRetry,
-		UpstreamTimeout:    token.UpstreamTimeout,
+		UserId:                   c.GetInt("id"),
+		Name:                     token.Name,
+		Key:                      key,
+		CreatedTime:              common.GetTimestamp(),
+		AccessedTime:             common.GetTimestamp(),
+		ExpiredTime:              token.ExpiredTime,
+		RemainQuota:              token.RemainQuota,
+		UnlimitedQuota:           token.UnlimitedQuota,
+		ModelLimitsEnabled:       token.ModelLimitsEnabled,
+		ModelLimits:              token.ModelLimits,
+		AllowIps:                 token.AllowIps,
+		Group:                    token.Group,
+		CrossGroupRetry:          token.CrossGroupRetry,
+		UpstreamTimeout:          token.UpstreamTimeout,
+		NonStreamUpstreamTimeout: token.NonStreamUpstreamTimeout,
 	}
 	if request.UpstreamTimeout != nil && *request.UpstreamTimeout == 0 {
 		err = cleanToken.InsertWithExplicitUnlimitedTimeout()
@@ -288,6 +303,12 @@ func UpdateToken(c *gin.Context) {
 			return
 		}
 	}
+	if token.NonStreamUpstreamTimeout != nil {
+		if err := model.ValidateTokenUpstreamTimeout(*token.NonStreamUpstreamTimeout); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	if !token.UnlimitedQuota {
 		if token.RemainQuota < 0 {
 			common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
@@ -329,6 +350,12 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
 		if request.UpstreamTimeout != nil {
 			cleanToken.UpstreamTimeout = token.UpstreamTimeout
+		}
+		if token.NonStreamUpstreamTimeout != nil {
+			cleanToken.NonStreamUpstreamTimeout = token.NonStreamUpstreamTimeout
+		} else if request.UpstreamTimeout != nil {
+			// Preserve behavior for legacy clients that update only the old field.
+			cleanToken.NonStreamUpstreamTimeout = common.GetPointer(token.UpstreamTimeout)
 		}
 	}
 	err = cleanToken.Update()

@@ -82,6 +82,7 @@ const EditTokenModal = (props) => {
     group: '',
     cross_group_retry: false,
     upstream_timeout: 0,
+    non_stream_upstream_timeout: 0,
     tokenCount: 1,
   });
 
@@ -173,6 +174,9 @@ const EditTokenModal = (props) => {
       data.remain_amount = Number(
         quotaToDisplayAmount(data.remain_quota || 0).toFixed(6),
       );
+      if (data.non_stream_upstream_timeout == null) {
+        data.non_stream_upstream_timeout = data.upstream_timeout || 0;
+      }
       if (formApiRef.current) {
         formApiRef.current.setValues({ ...getInitValues(), ...data });
       }
@@ -633,20 +637,42 @@ const EditTokenModal = (props) => {
                   <Col span={24}>
                     <Form.InputNumber
                       field='upstream_timeout'
-                      label={t('上游请求超时')}
+                      label={t('流式/长任务总时长截断')}
                       min={0}
                       step={1}
                       precision={0}
                       extraText={t(
-                        '单位：秒。填写 0 表示不限制时间；超时后会断开上游请求并返回 HTTP 500。',
+                        '适用于流式、Realtime 和异步任务提交，单位：秒。填写 0 表示不限制总时长；该设置不同于全局流式空闲超时。',
                       )}
                       rules={[
-                        { required: true, message: t('请输入上游超时') },
+                        { required: true, message: t('请输入流式总时长') },
                         {
                           validator: (_rule, value) =>
                             value >= 0
                               ? Promise.resolve()
-                              : Promise.reject(t('超时时间不能为负数')),
+                              : Promise.reject(t('流式总时长不能为负数')),
+                        },
+                      ]}
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.InputNumber
+                      field='non_stream_upstream_timeout'
+                      label={t('非流式请求超时截断')}
+                      min={0}
+                      step={1}
+                      precision={0}
+                      extraText={t(
+                        '仅适用于普通同步非流式请求，单位：秒。填写 0 表示不限制；不影响 Realtime、异步任务或流式请求。',
+                      )}
+                      rules={[
+                        { required: true, message: t('请输入非流式超时') },
+                        {
+                          validator: (_rule, value) =>
+                            value >= 0
+                              ? Promise.resolve()
+                              : Promise.reject(t('非流式超时时间不能为负数')),
                         },
                       ]}
                       style={{ width: '100%' }}

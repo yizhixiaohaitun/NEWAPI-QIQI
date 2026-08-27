@@ -9,6 +9,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestTokenRequestTimeoutSeconds(t *testing.T) {
+	dedicated := 15
+	disabled := 0
+
+	assert.Equal(t, 45, TokenRequestTimeoutSeconds(45, &dedicated, true), "stream keeps the existing SK total-duration cutoff")
+	assert.Equal(t, 15, TokenRequestTimeoutSeconds(45, &dedicated, false), "non-stream uses its dedicated cutoff")
+	assert.Equal(t, 45, TokenRequestTimeoutSeconds(45, nil, false), "legacy rows inherit the historical cutoff")
+	assert.Equal(t, 0, TokenRequestTimeoutSeconds(45, &disabled, false), "an explicit zero disables only the non-stream cutoff")
+}
+
 func TestNewUpstreamRequestContextDeadlineAndUnlimited(t *testing.T) {
 	t.Run("positive timeout sets a deadline", func(t *testing.T) {
 		started := time.Now()

@@ -354,6 +354,9 @@ func runTokenMigrationCompatibilityTest(t *testing.T, db *gorm.DB, dialect strin
 	if migratedToken.UpstreamTimeout != model.DefaultTokenUpstreamTimeout {
 		t.Fatalf("expected migrated legacy token timeout %d, got %d", model.DefaultTokenUpstreamTimeout, migratedToken.UpstreamTimeout)
 	}
+	if migratedToken.NonStreamUpstreamTimeout != nil {
+		t.Fatalf("expected migrated legacy token to inherit via NULL, got %v", *migratedToken.NonStreamUpstreamTimeout)
+	}
 
 	inserted := model.Token{
 		UserId:             8,
@@ -404,6 +407,25 @@ func TestAddTokenUpstreamTimeoutDefaultUnlimitedAndValidation(t *testing.T) {
 	if token.UpstreamTimeout != model.DefaultTokenUpstreamTimeout {
 		t.Fatalf("expected default timeout %d, got %d", model.DefaultTokenUpstreamTimeout, token.UpstreamTimeout)
 	}
+	if token.NonStreamUpstreamTimeout == nil || *token.NonStreamUpstreamTimeout != model.DefaultTokenNonStreamUpstreamTimeout {
+		t.Fatalf("expected default non-stream timeout %d, got %v", model.DefaultTokenNonStreamUpstreamTimeout, token.NonStreamUpstreamTimeout)
+	}
+
+	base["name"] = "legacy-client-timeout"
+	base["upstream_timeout"] = 12
+	delete(base, "non_stream_upstream_timeout")
+	ctx, recorder = newAuthenticatedContext(t, http.MethodPost, "/api/token/", base, 1)
+	AddToken(ctx)
+	if response := decodeAPIResponse(t, recorder); !response.Success {
+		t.Fatalf("expected legacy timeout payload to succeed: %s", response.Message)
+	}
+	var legacyClientToken model.Token
+	if err := db.First(&legacyClientToken, "name = ?", "legacy-client-timeout").Error; err != nil {
+		t.Fatalf("failed to load legacy client token: %v", err)
+	}
+	if legacyClientToken.NonStreamUpstreamTimeout == nil || *legacyClientToken.NonStreamUpstreamTimeout != 12 {
+		t.Fatalf("expected omitted dedicated timeout to inherit 12, got %v", legacyClientToken.NonStreamUpstreamTimeout)
+	}
 
 	base["name"] = "unlimited-timeout"
 	base["upstream_timeout"] = 0
@@ -427,6 +449,15 @@ func TestAddTokenUpstreamTimeoutDefaultUnlimitedAndValidation(t *testing.T) {
 	AddToken(ctx)
 	if response := decodeAPIResponse(t, recorder); response.Success {
 		t.Fatal("expected negative timeout to be rejected")
+	}
+
+	base["name"] = "invalid-non-stream-timeout"
+	base["upstream_timeout"] = 0
+	base["non_stream_upstream_timeout"] = -1
+	ctx, recorder = newAuthenticatedContext(t, http.MethodPost, "/api/token/", base, 1)
+	AddToken(ctx)
+	if response := decodeAPIResponse(t, recorder); response.Success {
+		t.Fatal("expected negative non-stream timeout to be rejected")
 	}
 }
 
@@ -459,6 +490,20 @@ func TestUpdateTokenUpstreamTimeoutExplicitZeroAndValidation(t *testing.T) {
 	UpdateToken(ctx)
 	if response := decodeAPIResponse(t, recorder); response.Success {
 		t.Fatal("expected negative timeout update to be rejected")
+	}
+
+	base["upstream_timeout"] = 30
+	base["non_stream_upstream_timeout"] = 7
+	ctx, recorder = newAuthenticatedContext(t, http.MethodPut, "/api/token/", base, 1)
+	UpdateToken(ctx)
+	if response := decodeAPIResponse(t, recorder); !response.Success {
+		t.Fatalf("expected dedicated timeout update to succeed: %s", response.Message)
+	}
+	if err := db.First(&updated, token.Id).Error; err != nil {
+		t.Fatalf("failed to reload updated token: %v", err)
+	}
+	if updated.NonStreamUpstreamTimeout == nil || *updated.NonStreamUpstreamTimeout != 7 {
+		t.Fatalf("expected dedicated timeout 7, got %v", updated.NonStreamUpstreamTimeout)
 	}
 }
 

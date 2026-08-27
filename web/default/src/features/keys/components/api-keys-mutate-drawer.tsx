@@ -558,7 +558,7 @@ export function ApiKeysMutateDrawer({
                       name='upstream_timeout'
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>{t('上游请求超时')}</FormLabel>
+                          <FormLabel>{t('流式/长任务总时长截断')}</FormLabel>
                           <FormControl>
                             <Input
                               {...field}
@@ -574,7 +574,36 @@ export function ApiKeysMutateDrawer({
                           </FormControl>
                           <FormDescription>
                             {t(
-                              '单位：秒。填写 0 表示不限制时间；超时后会断开上游请求并返回 HTTP 500。'
+                              '适用于流式、Realtime 和异步任务提交，单位：秒。填写 0 表示不限制总时长；该设置不同于全局流式空闲超时。'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name='non_stream_upstream_timeout'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('非流式请求超时截断')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              type='number'
+                              min='0'
+                              step='1'
+                              onChange={(event) =>
+                                field.onChange(
+                                  Number.parseInt(event.target.value, 10) || 0
+                                )
+                              }
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              '仅适用于普通同步非流式请求，单位：秒。填写 0 表示不限制；不影响 Realtime、异步任务或流式请求。'
                             )}
                           </FormDescription>
                           <FormMessage />

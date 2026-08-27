@@ -470,6 +470,9 @@ func TestStreamScannerHandler_StreamStatus_Timeout(t *testing.T) {
 
 	resp := &http.Response{Body: pr}
 	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+	upstreamCtx, cancelUpstream := context.WithCancel(context.Background())
+	t.Cleanup(cancelUpstream)
+	c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(cancelUpstream))
 
 	done := make(chan struct{})
 	go func() {
@@ -486,6 +489,135 @@ func TestStreamScannerHandler_StreamStatus_Timeout(t *testing.T) {
 	require.NotNil(t, info.StreamStatus)
 	assert.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason)
 	assert.False(t, info.StreamStatus.IsNormalEnd())
+	require.ErrorIs(t, upstreamCtx.Err(), context.Canceled, "stream timeout must cancel the upstream request context")
+}
+
+func TestStreamScannerHandler_SKTotalTimeoutCancelsUpstreamAndEndsHTTPResponse(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	upstreamCanceled := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"id\":1}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(upstreamCanceled)
+	}))
+	defer upstream.Close()
+
+	handlerDone := make(chan struct{})
+	router := gin.New()
+	router.GET("/stream", func(c *gin.Context) {
+		defer close(handlerDone)
+		upstreamCtx, cancelUpstream := context.WithTimeout(c.Request.Context(), 100*time.Millisecond)
+		defer cancelUpstream()
+		c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(cancelUpstream))
+		req, err := http.NewRequestWithContext(upstreamCtx, http.MethodGet, upstream.URL, nil)
+		if err != nil {
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return
+		}
+		info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}, UpstreamContext: upstreamCtx}
+		StreamScannerHandler(c, resp, info, func(data string, _ *StreamResult) {
+			_, _ = io.WriteString(c.Writer, "data: "+data+"\n\n")
+			c.Writer.Flush()
+		})
+		require.NotNil(t, info.StreamStatus)
+		require.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason)
+		require.ErrorIs(t, upstreamCtx.Err(), context.DeadlineExceeded)
+	})
+	relayServer := httptest.NewServer(router)
+	defer relayServer.Close()
+
+	resp, err := http.Get(relayServer.URL + "/stream")
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Contains(t, string(body), `data: {"id":1}`)
+	select {
+	case <-upstreamCanceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SK total timeout did not cancel the upstream HTTP request")
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SK total timeout did not end the downstream HTTP response")
+	}
+}
+
+func TestStreamScannerHandler_TimeoutCancelsUpstreamAndEndsHTTPResponse(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 1
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	upstreamCanceled := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"id\":1}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(upstreamCanceled)
+	}))
+	defer upstream.Close()
+
+	handlerDone := make(chan struct{})
+	handlerErr := make(chan error, 1)
+	router := gin.New()
+	router.GET("/stream", func(c *gin.Context) {
+		defer close(handlerDone)
+		upstreamCtx, cancelUpstream := context.WithCancel(c.Request.Context())
+		defer cancelUpstream()
+		c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(cancelUpstream))
+
+		req, err := http.NewRequestWithContext(upstreamCtx, http.MethodGet, upstream.URL, nil)
+		if err != nil {
+			handlerErr <- err
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			handlerErr <- err
+			return
+		}
+
+		info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+		StreamScannerHandler(c, resp, info, func(data string, _ *StreamResult) {
+			_, _ = io.WriteString(c.Writer, "data: "+data+"\n\n")
+			c.Writer.Flush()
+		})
+	})
+	relayServer := httptest.NewServer(router)
+	defer relayServer.Close()
+
+	resp, err := http.Get(relayServer.URL + "/stream")
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Contains(t, string(body), `data: {"id":1}`)
+
+	select {
+	case <-upstreamCanceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream timeout did not cancel the upstream HTTP request")
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream timeout did not end the downstream HTTP response")
+	}
+	select {
+	case err := <-handlerErr:
+		require.NoError(t, err)
+	default:
+	}
 }
 
 func TestStreamScannerHandler_StreamStatus_SoftErrors(t *testing.T) {

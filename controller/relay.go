@@ -225,9 +225,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
-		// One timeout covers the complete attempt, including streaming/body reads.
-		upstreamCtx, cancelUpstream := service.NewUpstreamRequestContext(c.Request.Context(), relayInfo.UpstreamTimeout)
+		// Buffered requests use the new dedicated cutoff. Existing stream and
+		// realtime requests retain the original token-level total-duration cutoff.
+		isStreamingTransport := relayInfo.IsStream || relayFormat == types.RelayFormatOpenAIRealtime
+		timeoutSeconds := service.TokenRequestTimeoutSeconds(relayInfo.UpstreamTimeout, relayInfo.NonStreamUpstreamTimeout, isStreamingTransport)
+		upstreamCtx, cancelUpstream := service.NewUpstreamRequestContext(c.Request.Context(), timeoutSeconds)
 		relayInfo.UpstreamContext = upstreamCtx
+		c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(cancelUpstream))
 
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
@@ -242,6 +246,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		requestContextErr := c.Request.Context().Err()
 		upstreamContextErr := upstreamCtx.Err()
 		cancelUpstream()
+		c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(nil))
 		newAPIError = normalizeRelayContextError(newAPIError, requestContextErr, upstreamContextErr)
 
 		if newAPIError == nil {

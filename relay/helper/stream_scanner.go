@@ -3,6 +3,7 @@ package helper
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -74,6 +75,20 @@ func ExtendWriteDeadline(c *gin.Context) {
 	_ = http.NewResponseController(c.Writer).SetWriteDeadline(time.Now().Add(streamWriteTimeout))
 }
 
+func cancelUpstreamRequest(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	cancelValue, exists := c.Get(string(constant.ContextKeyUpstreamCancel))
+	if !exists {
+		return
+	}
+	cancel, ok := cancelValue.(context.CancelFunc)
+	if ok && cancel != nil {
+		cancel()
+	}
+}
+
 func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string, sr *StreamResult)) {
 
 	if resp == nil || dataHandler == nil {
@@ -86,6 +101,10 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	ctx, cancel := context.WithCancel(context.Background())
 
 	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
+	var upstreamDone <-chan struct{}
+	if info.UpstreamContext != nil {
+		upstreamDone = info.UpstreamContext.Done()
+	}
 
 	var (
 		stopChan    = make(chan bool, 3) // 增加缓冲区避免阻塞
@@ -283,7 +302,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		if err := scanner.Err(); err != nil {
 			if err != io.EOF {
 				logger.LogError(c, "scanner error: "+err.Error())
-				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, err)
+				switch {
+				case info.UpstreamContext != nil && errors.Is(info.UpstreamContext.Err(), context.DeadlineExceeded):
+					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, context.DeadlineExceeded)
+				case c.Request.Context().Err() != nil:
+					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
+				default:
+					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, err)
+				}
 			}
 		}
 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
@@ -293,8 +319,17 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	select {
 	case <-ticker.C:
 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, nil)
+		// Closing resp.Body usually tears down the transport, but explicitly
+		// cancel the request context as well so every upstream transport observes
+		// the streaming idle timeout immediately. Record the timeout first so a
+		// resulting scanner error cannot win the end-reason race.
+		cancelUpstreamRequest(c)
 	case <-stopChan:
 		// EndReason already set by the goroutine that triggered stopChan
+	case <-upstreamDone:
+		if errors.Is(info.UpstreamContext.Err(), context.DeadlineExceeded) {
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, context.DeadlineExceeded)
+		}
 	case <-c.Request.Context().Done():
 		// 客户端断开：立即 cleanup 关闭上游 resp.Body，解除 scanner 阻塞并让上游停止生成，
 		// 避免为已放弃的请求继续消费上游 token。

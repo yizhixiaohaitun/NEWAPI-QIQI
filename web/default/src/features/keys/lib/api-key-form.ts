@@ -39,7 +39,10 @@ export function getApiKeyFormSchema(t: TFunction) {
       allow_ips: z.string().optional(),
       group: z.string().optional(),
       cross_group_retry: z.boolean().optional(),
-      upstream_timeout: z.number().min(0, t('超时时间不能为负数')),
+      upstream_timeout: z.number().min(0, t('流式总时长不能为负数')),
+      non_stream_upstream_timeout: z
+        .number()
+        .min(0, t('非流式超时时间不能为负数')),
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
@@ -76,6 +79,7 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   group: DEFAULT_GROUP,
   cross_group_retry: true,
   upstream_timeout: 0,
+  non_stream_upstream_timeout: 0,
   tokenCount: 1,
 }
 
@@ -114,6 +118,7 @@ export function transformFormDataToPayload(
     group: data.group || '',
     cross_group_retry: data.group === 'auto' ? !!data.cross_group_retry : false,
     upstream_timeout: data.upstream_timeout,
+    non_stream_upstream_timeout: data.non_stream_upstream_timeout,
   }
 }
 
@@ -140,6 +145,8 @@ export function transformApiKeyToFormDefaults(
     group: apiKey.group || DEFAULT_GROUP,
     cross_group_retry: !!apiKey.cross_group_retry,
     upstream_timeout: apiKey.upstream_timeout,
+    non_stream_upstream_timeout:
+      apiKey.non_stream_upstream_timeout ?? apiKey.upstream_timeout,
     tokenCount: 1,
   }
 }

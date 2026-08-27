@@ -9,6 +9,16 @@ import (
 	"github.com/QuantumNous/new-api/types"
 )
 
+// TokenRequestTimeoutSeconds selects the token-level total-duration cutoff.
+// Existing tokens with no dedicated non-stream value inherit upstreamTimeout,
+// preserving their historical behavior after the nullable column is added.
+func TokenRequestTimeoutSeconds(upstreamTimeout int, nonStreamTimeout *int, isStream bool) int {
+	if isStream || nonStreamTimeout == nil {
+		return upstreamTimeout
+	}
+	return *nonStreamTimeout
+}
+
 // NewUpstreamRequestContext creates the context used for one complete upstream
 // attempt. Its lifetime covers both client.Do and response body reads.
 func NewUpstreamRequestContext(parent context.Context, timeoutSeconds int) (context.Context, context.CancelFunc) {
