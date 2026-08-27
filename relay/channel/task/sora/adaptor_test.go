@@ -128,9 +128,9 @@ func TestMiniMaxH3ResolutionFamilyFlattensCompatibleInput(t *testing.T) {
 	assert.JSONEq(t, `{"model":"MiniMaxH3-2k-pro","prompt":"a comet","resolution":"2k","duration":8}`, string(forwarded))
 }
 
-func TestSeedanceOpenAIVideoBodyExpandsOrderedImageAliases(t *testing.T) {
-	body := `{"model":"seedance-2.0","prompt":"run in a neon alley","duration":5,"aspect_ratio":"16:9","resolution":"720p","audio":true,"n":1,"images":[" https://example.com/one.png ","https://example.com/two.jpg","https://example.com/one.png"]}`
-	context, info := newJSONTaskContextForModel(t, body, "47:seedance-2.0")
+func TestSeedanceOpenAIVideoBodyUsesXinshujuMultimodalContent(t *testing.T) {
+	body := `{"model":"seedance-2.0","prompt":"@图1，@图2，@图3，@图4 在广场奔跑","duration":5,"aspect_ratio":"16:9","resolution":"720p","audio":true,"n":1,"images":["https://example.com/one.png","https://example.com/two.jpg","https://example.com/three.webp","https://example.com/four.png"]}`
+	context, info := newJSONTaskContextForModel(t, body, "48:seedance-2.0-fast")
 	adaptor := &TaskAdaptor{}
 
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
@@ -139,22 +139,33 @@ func TestSeedanceOpenAIVideoBodyExpandsOrderedImageAliases(t *testing.T) {
 	forwarded, err := io.ReadAll(reader)
 	require.NoError(t, err)
 
+	assert.JSONEq(t, `{
+		"model":"48:seedance-2.0-fast",
+		"content":[
+			{"type":"text","text":"@图1，@图2，@图3，@图4 在广场奔跑"},
+			{"type":"image_url","image_url":{"url":"https://example.com/one.png"},"role":"reference_image"},
+			{"type":"image_url","image_url":{"url":"https://example.com/two.jpg"},"role":"reference_image"},
+			{"type":"image_url","image_url":{"url":"https://example.com/three.webp"},"role":"reference_image"},
+			{"type":"image_url","image_url":{"url":"https://example.com/four.png"},"role":"reference_image"}
+		],
+		"generate_audio":true,
+		"ratio":"16:9",
+		"duration":5,
+		"watermark":false,
+		"resolution":"720p"
+	}`, string(forwarded))
+	assert.JSONEq(t, string(forwarded), string(info.TaskRequestSnapshot))
+
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(forwarded, &payload))
-	wantURLs := []any{"https://example.com/one.png", "https://example.com/two.jpg"}
-	assert.Equal(t, "47:seedance-2.0", payload["model"])
-	assert.Equal(t, "https://example.com/one.png", payload["image"])
-	assert.Equal(t, wantURLs, payload["images"])
-	assert.Equal(t, wantURLs, payload["image_urls"])
-	assert.Equal(t, float64(1280), payload["width"])
-	assert.Equal(t, float64(720), payload["height"])
-
-	metadata, ok := payload["metadata"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, wantURLs, metadata["image_urls"])
-	assert.Equal(t, wantURLs, metadata["reference_images"])
-	assert.Equal(t, "720p", metadata["resolution"])
-	assert.Equal(t, "16:9", metadata["aspect_ratio"])
+	assert.NotContains(t, payload, "prompt")
+	assert.NotContains(t, payload, "audio")
+	assert.NotContains(t, payload, "aspect_ratio")
+	assert.NotContains(t, payload, "image")
+	assert.NotContains(t, payload, "images")
+	assert.NotContains(t, payload, "image_urls")
+	assert.NotContains(t, payload, "metadata")
+	assert.NotContains(t, payload, "n")
 }
 
 func TestNonSeedanceOpenAIVideoBodyIsNotExpanded(t *testing.T) {
