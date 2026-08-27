@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import { type ColumnDef } from '@tanstack/react-table'
+import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -39,7 +39,7 @@ import {
 import { useColumnsByCategory } from '../lib/columns'
 import { parseLogOther } from '../lib/format'
 import { fetchLogsByCategory } from '../lib/utils'
-import type { LogCategory } from '../types'
+import type { LogCategory, TaskLog } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
 import { UsageLogsMobileList } from './usage-logs-mobile-card'
@@ -64,8 +64,28 @@ function getColumnVisibilityStorageKey(
 }
 
 function deserializeLogTypeFilter(value: unknown): unknown[] {
-  const values = Array.isArray(value) ? value : value ? [value] : []
+  let values: unknown[] = []
+  if (Array.isArray(value)) {
+    values = value
+  } else if (value) {
+    values = [value]
+  }
   return values.filter((item) => String(item) !== LOG_TYPE_ALL_VALUE)
+}
+
+const TASK_LOG_POLL_INTERVAL_MS = 5_000
+const ACTIVE_TASK_STATUSES = new Set([
+  'NOT_START',
+  'SUBMITTED',
+  'QUEUED',
+  'IN_PROGRESS',
+])
+
+function hasActiveTask(items: unknown): boolean {
+  if (!Array.isArray(items)) return false
+  return (items as TaskLog[]).some((task) =>
+    ACTIVE_TASK_STATUSES.has(String(task.status || '').toUpperCase())
+  )
 }
 
 interface UsageLogsTableProps {
@@ -150,6 +170,11 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       }
       return undefined
     },
+    refetchInterval: (query) =>
+      logCategory === 'task' && hasActiveTask(query.state.data?.items)
+        ? TASK_LOG_POLL_INTERVAL_MS
+        : false,
+    refetchIntervalInBackground: false,
   })
 
   const logs = data?.items || []

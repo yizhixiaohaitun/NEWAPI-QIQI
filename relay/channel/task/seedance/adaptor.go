@@ -1320,6 +1320,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
+	// Persist the exact normalized request sent upstream (without headers).
+	// InitTask sanitizes this snapshot before writing it to the database.
+	info.TaskRequestSnapshot = append(json.RawMessage(nil), data...)
 	return bytes.NewReader(data), nil
 }
 

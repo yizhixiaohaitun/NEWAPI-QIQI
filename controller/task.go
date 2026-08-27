@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -58,6 +59,88 @@ func GetUserTask(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(tasksToDto(items, false))
 	common.ApiSuccess(c, pageInfo)
+}
+
+func GetAllTaskDetail(c *gin.Context) {
+	task, exists, err := model.GetByOnlyTaskId(c.Param("task_id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !exists {
+		common.ApiError(c, fmt.Errorf("task not found"))
+		return
+	}
+	if user, userErr := model.GetUserCache(task.UserId); userErr == nil {
+		task.Username = user.Username
+	}
+	common.ApiSuccess(c, taskToDetailDto(task, true))
+}
+
+func GetUserTaskDetail(c *gin.Context) {
+	task, exists, err := model.GetByTaskId(c.GetInt("id"), c.Param("task_id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !exists {
+		common.ApiError(c, fmt.Errorf("task not found"))
+		return
+	}
+	common.ApiSuccess(c, taskToDetailDto(task, false))
+}
+
+func taskToDetailDto(task *model.Task, includeChannel bool) *dto.TaskDetailDto {
+	base := relay.TaskModel2Dto(task)
+	if !includeChannel {
+		base.ChannelId = 0
+	}
+	base.FailReason = model.SanitizeTaskDetailText(base.FailReason)
+	base.ResultURL = model.SanitizeTaskDetailText(base.ResultURL)
+	base.Data = model.SanitizeTaskDetailJSON(base.Data)
+
+	properties := task.Properties
+	properties.ReferenceResources = append([]string(nil), task.Properties.ReferenceResources...)
+	properties.RequestSnapshot = append([]byte(nil), task.Properties.RequestSnapshot...)
+	properties.Input = model.SanitizeTaskDetailText(properties.Input)
+	for i, resource := range properties.ReferenceResources {
+		properties.ReferenceResources[i] = model.SanitizeTaskDetailText(resource)
+	}
+	properties.RequestSnapshot = model.SanitizeTaskDetailJSON(properties.RequestSnapshot)
+	base.Properties = properties
+
+	detail := &dto.TaskDetailDto{
+		TaskDto:         base,
+		DetailSource:    "normalized_upstream_request",
+		RequestSnapshot: properties.RequestSnapshot,
+	}
+	if len(detail.RequestSnapshot) > 0 {
+		return detail
+	}
+
+	legacy := map[string]any{}
+	if properties.OriginModelName != "" {
+		legacy["model"] = properties.OriginModelName
+	} else if properties.UpstreamModelName != "" {
+		legacy["model"] = properties.UpstreamModelName
+	}
+	if properties.Input != "" {
+		legacy["prompt"] = properties.Input
+	}
+	if len(properties.ReferenceResources) > 0 {
+		legacy["reference_resources"] = properties.ReferenceResources
+	}
+	if len(legacy) > 0 {
+		snapshot, _ := common.Marshal(legacy)
+		detail.RequestSnapshot = snapshot
+		detail.DetailSource = "legacy_partial"
+		detail.MissingFields = []string{"normalized_request_snapshot"}
+		return detail
+	}
+
+	detail.DetailSource = "unavailable"
+	detail.MissingFields = []string{"request_snapshot", "prompt", "reference_resources"}
+	return detail
 }
 
 func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {

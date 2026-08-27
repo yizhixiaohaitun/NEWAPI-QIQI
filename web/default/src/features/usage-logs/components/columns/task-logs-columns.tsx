@@ -230,13 +230,13 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
             >
               {t('View details')}
             </button>
-            {log.platform === 'suno' &&
-              log.status === TASK_STATUS.SUCCESS && (
-                <AudioPreviewCell log={log} />
-              )}
+            {log.platform === 'suno' && log.status === TASK_STATUS.SUCCESS && (
+              <AudioPreviewCell log={log} />
+            )}
             <TaskDetailsDialog
               log={log}
               open={dialogOpen}
+              isAdmin={isAdmin}
               onOpenChange={setDialogOpen}
             />
           </div>

@@ -52,6 +52,13 @@ type TaskDto struct {
 	Data       json.RawMessage `json:"data"`
 }
 
+type TaskDetailDto struct {
+	*TaskDto
+	DetailSource    string          `json:"detail_source"`
+	RequestSnapshot json.RawMessage `json:"request_snapshot,omitempty"`
+	MissingFields   []string        `json:"missing_fields,omitempty"`
+}
+
 type FetchReq struct {
 	IDs []string `json:"ids"`
 }

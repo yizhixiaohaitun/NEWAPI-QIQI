@@ -110,3 +110,11 @@ export const getAllTaskLogs = (params: GetTaskLogsParams) =>
 
 export const getUserTaskLogs = (params: GetTaskLogsParams) =>
   fetchLogs('/api/task', params, false)
+
+export async function getTaskDetail(taskId: string, isAdmin: boolean) {
+  const path = isAdmin
+    ? `/api/task/${encodeURIComponent(taskId)}`
+    : `/api/task/self/${encodeURIComponent(taskId)}`
+  const res = await api.get(path, { disableDuplicate: true })
+  return res.data
+}

@@ -313,6 +313,15 @@ export interface TaskLog {
   updated_at?: number
 }
 
+export interface TaskDetail extends TaskLog {
+  detail_source:
+    | 'normalized_upstream_request'
+    | 'legacy_partial'
+    | 'unavailable'
+  request_snapshot?: Record<string, unknown>
+  missing_fields?: string[]
+}
+
 // ============================================================================
 // Common Log Types
 // ============================================================================

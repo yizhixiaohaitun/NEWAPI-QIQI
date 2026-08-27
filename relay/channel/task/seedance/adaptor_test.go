@@ -82,6 +82,10 @@ func TestBuildRequestBodyTranslatesNestedCompatibilityShapeToSeedance(t *testing
 	assert.Equal(t, []any{"https://cdn.example/video.mp4"}, input["video_references"])
 	assert.NotContains(t, payload, "prompt")
 	assert.NotContains(t, payload, "reference_images")
+	assert.JSONEq(t, string(body), string(info.TaskRequestSnapshot))
+
+	persisted := model.InitTask("seedance", info)
+	assert.JSONEq(t, string(body), string(persisted.Properties.RequestSnapshot))
 }
 
 func TestBuildRequestBodyAcceptsTopLevelModelCenterFields(t *testing.T) {
