@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -128,9 +129,10 @@ func TestMiniMaxH3ResolutionFamilyFlattensCompatibleInput(t *testing.T) {
 	assert.JSONEq(t, `{"model":"MiniMaxH3-2k-pro","prompt":"a comet","resolution":"2k","duration":8}`, string(forwarded))
 }
 
-func TestSeedanceOpenAIVideoBodyUsesXinshujuMultimodalContent(t *testing.T) {
+func TestXinshujuProtocolUsesMultimodalContent(t *testing.T) {
 	body := `{"model":"seedance-2.0","prompt":"@图1，@图2，@图3，@图4 在广场奔跑","duration":5,"aspect_ratio":"16:9","resolution":"720p","audio":true,"n":1,"images":["https://example.com/one.png","https://example.com/two.jpg","https://example.com/three.webp","https://example.com/four.png"]}`
 	context, info := newJSONTaskContextForModel(t, body, "48:seedance-2.0-fast")
+	info.ChannelSetting.VideoUpstreamProtocol = dto.VideoUpstreamProtocolXinshujuContent
 	adaptor := &TaskAdaptor{}
 
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
@@ -166,6 +168,51 @@ func TestSeedanceOpenAIVideoBodyUsesXinshujuMultimodalContent(t *testing.T) {
 	assert.NotContains(t, payload, "image_urls")
 	assert.NotContains(t, payload, "metadata")
 	assert.NotContains(t, payload, "n")
+}
+
+func TestGenericOpenAIVideoProtocolDoesNotUseXinshujuFormatForSeedanceModel(t *testing.T) {
+	body := `{"model":"seedance-2.0","prompt":"a lighthouse","images":["https://example.com/one.png","https://example.com/two.jpg"]}`
+	context, info := newJSONTaskContextForModel(t, body, "48:seedance-2.0-fast")
+	info.ChannelSetting.VideoUpstreamProtocol = dto.VideoUpstreamProtocolOpenAI
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+	reader, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	assert.Equal(t, "48:seedance-2.0-fast", payload["model"])
+	assert.Equal(t, "a lighthouse", payload["prompt"])
+	assert.Len(t, payload["images"], 2)
+	assert.NotContains(t, payload, "content")
+}
+
+func TestXinshujuProtocolSelectionIsProviderScoped(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol dto.VideoUpstreamProtocol
+		baseURL  string
+		expected bool
+	}{
+		{"explicit protocol", dto.VideoUpstreamProtocolXinshujuContent, "https://proxy.example.com", true},
+		{"legacy exact host", dto.VideoUpstreamProtocolOpenAI, "https://xinshuju.net", true},
+		{"legacy www host", dto.VideoUpstreamProtocolOpenAI, "https://www.xinshuju.net/v1", true},
+		{"other Seedance provider", dto.VideoUpstreamProtocolOpenAI, "https://video.example.com", false},
+		{"lookalike host", dto.VideoUpstreamProtocolOpenAI, "https://xinshuju.net.evil.example", false},
+		{"channel default", dto.VideoUpstreamProtocolDefault, "https://www.xinshuju.net", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelBaseUrl: test.baseURL,
+				ChannelSetting: dto.ChannelSettings{VideoUpstreamProtocol: test.protocol},
+			}}
+			assert.Equal(t, test.expected, usesXinshujuContentProtocol(info))
+		})
+	}
 }
 
 func TestNonSeedanceOpenAIVideoBodyIsNotExpanded(t *testing.T) {

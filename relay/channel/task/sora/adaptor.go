@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -331,23 +332,6 @@ func buildMiniMaxH3ResolutionBody(bodyMap map[string]interface{}, req relaycommo
 	return common.Marshal(payload)
 }
 
-func isSeedanceOpenAIVideoModel(modelName string) bool {
-	name := strings.ToLower(strings.TrimSpace(modelName))
-	if separator := strings.IndexByte(name, ':'); separator > 0 {
-		numericNamespace := true
-		for _, character := range name[:separator] {
-			if character < '0' || character > '9' {
-				numericNamespace = false
-				break
-			}
-		}
-		if numericNamespace {
-			name = name[separator+1:]
-		}
-	}
-	return name == "seedance-2.0" || name == "seedance-2.0-fast"
-}
-
 func appendReferenceURLs(urls []string, seen map[string]struct{}, value interface{}) []string {
 	switch typed := value.(type) {
 	case string:
@@ -410,11 +394,29 @@ func collectSeedanceMediaURLs(bodyMap map[string]interface{}, rootKeys, nestedKe
 	return urls
 }
 
-// buildSeedanceOpenAIVideoBody translates the public OpenAI-compatible request
-// into the xinshuju Seedance content protocol. This provider only treats the
-// singular `image` alias as an input; multiple references must be individual
-// content items with the reference_image role.
-func buildSeedanceOpenAIVideoBody(bodyMap map[string]interface{}, upstreamModel string) map[string]interface{} {
+func usesXinshujuContentProtocol(info *relaycommon.RelayInfo) bool {
+	if info.ChannelSetting.VideoUpstreamProtocol == dto.VideoUpstreamProtocolXinshujuContent {
+		return true
+	}
+	// Migration compatibility for channels configured before the dedicated
+	// protocol existed. Scope the fallback to Xinshuju's real hostname instead
+	// of the model name so other Seedance providers keep their own wire format.
+	if info.ChannelSetting.VideoUpstreamProtocol != dto.VideoUpstreamProtocolOpenAI {
+		return false
+	}
+	upstreamURL, err := url.Parse(info.ChannelBaseUrl)
+	if err != nil {
+		return false
+	}
+	hostname := strings.ToLower(upstreamURL.Hostname())
+	return hostname == "xinshuju.net" || strings.HasSuffix(hostname, ".xinshuju.net")
+}
+
+// buildXinshujuContentBody translates the public OpenAI-compatible request
+// into Xinshuju's multimodal content protocol. The conversion is enabled only
+// by the explicit per-channel xinshuju_content protocol; model names must not
+// select a provider-specific wire format.
+func buildXinshujuContentBody(bodyMap map[string]interface{}, upstreamModel string) map[string]interface{} {
 	payload := map[string]interface{}{"model": upstreamModel}
 	content := make([]map[string]interface{}, 0, 5)
 
@@ -501,8 +503,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 				return bytes.NewReader(newBody), nil
 			}
 			bodyMap["model"] = info.UpstreamModelName
-			if isSeedanceOpenAIVideoModel(info.UpstreamModelName) {
-				bodyMap = buildSeedanceOpenAIVideoBody(bodyMap, info.UpstreamModelName)
+			if usesXinshujuContentProtocol(info) {
+				bodyMap = buildXinshujuContentBody(bodyMap, info.UpstreamModelName)
 			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				info.TaskRequestSnapshot = append(json.RawMessage(nil), newBody...)

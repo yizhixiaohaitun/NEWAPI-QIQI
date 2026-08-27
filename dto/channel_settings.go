@@ -15,13 +15,14 @@ type VideoUpstreamProtocol string
 const (
 	VideoUpstreamProtocolDefault          VideoUpstreamProtocol = "channel_default"
 	VideoUpstreamProtocolOpenAI           VideoUpstreamProtocol = "openai_video"
+	VideoUpstreamProtocolXinshujuContent  VideoUpstreamProtocol = "xinshuju_content"
 	VideoUpstreamProtocolSeedanceAsync    VideoUpstreamProtocol = "seedance_async"
 	VideoUpstreamProtocolSeedanceDiscount VideoUpstreamProtocol = "seedance_discount"
 )
 
 func (p VideoUpstreamProtocol) Valid() bool {
 	switch p {
-	case "", VideoUpstreamProtocolDefault, VideoUpstreamProtocolOpenAI, VideoUpstreamProtocolSeedanceAsync, VideoUpstreamProtocolSeedanceDiscount:
+	case "", VideoUpstreamProtocolDefault, VideoUpstreamProtocolOpenAI, VideoUpstreamProtocolXinshujuContent, VideoUpstreamProtocolSeedanceAsync, VideoUpstreamProtocolSeedanceDiscount:
 		return true
 	default:
 		return false

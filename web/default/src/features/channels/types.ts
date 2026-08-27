@@ -86,7 +86,12 @@ export interface ChannelSettings {
   pass_through_body_enabled?: boolean
   system_prompt?: string
   system_prompt_override?: boolean
-  video_upstream_protocol?: 'channel_default' | 'openai_video' | 'seedance_async' | 'seedance_discount'
+  video_upstream_protocol?:
+    | 'channel_default'
+    | 'openai_video'
+    | 'xinshuju_content'
+    | 'seedance_async'
+    | 'seedance_discount'
 }
 
 export interface ChannelOtherSettings {

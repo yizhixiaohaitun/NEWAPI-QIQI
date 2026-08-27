@@ -4171,6 +4171,11 @@ export function ChannelMutateDrawer({
                                         <SelectGroup>
                                           <SelectItem value='channel_default'>{t('Channel default')}</SelectItem>
                                           <SelectItem value='openai_video'>{t('OpenAI Videos / Sora')}</SelectItem>
+                                          <SelectItem value='xinshuju_content'>
+                                            {t(
+                                              'Xinshuju Videos (multimodal content)'
+                                            )}
+                                          </SelectItem>
                                           <SelectItem value='seedance_async'>{t('Seedance official async')}</SelectItem>
                                           <SelectItem value='seedance_discount'>{t('Seedance discount')}</SelectItem>
                                         </SelectGroup>

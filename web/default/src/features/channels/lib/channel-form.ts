@@ -192,7 +192,15 @@ export const channelFormSchema = z
     pass_through_body_enabled: z.boolean().optional(),
     system_prompt: z.string().optional(),
     system_prompt_override: z.boolean().optional(),
-    video_upstream_protocol: z.enum(['channel_default', 'openai_video', 'seedance_async', 'seedance_discount']).optional(),
+    video_upstream_protocol: z
+      .enum([
+        'channel_default',
+        'openai_video',
+        'xinshuju_content',
+        'seedance_async',
+        'seedance_discount',
+      ])
+      .optional(),
     // Type-specific settings (stored in settings JSON)
     is_enterprise_account: z.boolean().optional(), // OpenRouter specific
     vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
@@ -373,7 +381,12 @@ export function transformChannelToFormDefaults(
     pass_through_body_enabled: false,
     system_prompt: '',
     system_prompt_override: false,
-    video_upstream_protocol: 'channel_default' as 'channel_default' | 'openai_video' | 'seedance_async' | 'seedance_discount',
+    video_upstream_protocol: 'channel_default' as
+      | 'channel_default'
+      | 'openai_video'
+      | 'xinshuju_content'
+      | 'seedance_async'
+      | 'seedance_discount',
   }
 
   if (channel.setting) {
