@@ -505,6 +505,27 @@ func TestUpdateTokenUpstreamTimeoutExplicitZeroAndValidation(t *testing.T) {
 	if updated.NonStreamUpstreamTimeout == nil || *updated.NonStreamUpstreamTimeout != 7 {
 		t.Fatalf("expected dedicated timeout 7, got %v", updated.NonStreamUpstreamTimeout)
 	}
+
+	// An old client does not send non_stream_upstream_timeout. Updating the old
+	// stream field or any other setting must preserve an existing independent
+	// non-stream value.
+	delete(base, "non_stream_upstream_timeout")
+	base["upstream_timeout"] = 45
+	base["name"] = "updated-by-legacy-client"
+	ctx, recorder = newAuthenticatedContext(t, http.MethodPut, "/api/token/", base, 1)
+	UpdateToken(ctx)
+	if response := decodeAPIResponse(t, recorder); !response.Success {
+		t.Fatalf("expected legacy update to succeed: %s", response.Message)
+	}
+	if err := db.First(&updated, token.Id).Error; err != nil {
+		t.Fatalf("failed to reload legacy-updated token: %v", err)
+	}
+	if updated.UpstreamTimeout != 45 {
+		t.Fatalf("expected stream timeout 45, got %d", updated.UpstreamTimeout)
+	}
+	if updated.NonStreamUpstreamTimeout == nil || *updated.NonStreamUpstreamTimeout != 7 {
+		t.Fatalf("legacy update overwrote dedicated timeout: %v", updated.NonStreamUpstreamTimeout)
+	}
 }
 
 func TestTokenAutoMigrateUsesVarchar128KeyColumn(t *testing.T) {

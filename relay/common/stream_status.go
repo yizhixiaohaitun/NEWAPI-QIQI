@@ -29,9 +29,9 @@ type StreamErrorEntry struct {
 }
 
 type StreamStatus struct {
-	EndReason  StreamEndReason
-	EndError   error
-	endOnce    sync.Once
+	EndReason StreamEndReason
+	EndError  error
+	endMu     sync.RWMutex
 
 	mu         sync.Mutex
 	Errors     []StreamErrorEntry
@@ -46,10 +46,28 @@ func (s *StreamStatus) SetEndReason(reason StreamEndReason, err error) {
 	if s == nil {
 		return
 	}
-	s.endOnce.Do(func() {
+	s.endMu.Lock()
+	defer s.endMu.Unlock()
+	if s.EndReason == StreamEndReasonNone {
 		s.EndReason = reason
 		s.EndError = err
-	})
+	}
+}
+
+// PromoteDeadlineTimeout fixes the narrow race where canceling a timed-out
+// response body makes bufio.Scanner report an ordinary EOF before the deadline
+// branch records the timeout. Explicit protocol completion ([DONE]) and other
+// already-classified terminal errors remain authoritative.
+func (s *StreamStatus) PromoteDeadlineTimeout(err error) {
+	if s == nil {
+		return
+	}
+	s.endMu.Lock()
+	defer s.endMu.Unlock()
+	if s.EndReason == StreamEndReasonNone || s.EndReason == StreamEndReasonEOF {
+		s.EndReason = StreamEndReasonTimeout
+		s.EndError = err
+	}
 }
 
 func (s *StreamStatus) RecordError(msg string) {

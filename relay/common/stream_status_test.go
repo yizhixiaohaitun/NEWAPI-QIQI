@@ -20,6 +20,21 @@ func TestStreamStatus_SetEndReason_FirstWins(t *testing.T) {
 	assert.Nil(t, s.EndError)
 }
 
+func TestStreamStatus_PromoteDeadlineTimeoutOnlyOverridesEOF(t *testing.T) {
+	s := NewStreamStatus()
+	s.SetEndReason(StreamEndReasonEOF, nil)
+	expectedErr := fmt.Errorf("deadline exceeded")
+	s.PromoteDeadlineTimeout(expectedErr)
+	assert.Equal(t, StreamEndReasonTimeout, s.EndReason)
+	assert.ErrorIs(t, s.EndError, expectedErr)
+
+	done := NewStreamStatus()
+	done.SetEndReason(StreamEndReasonDone, nil)
+	done.PromoteDeadlineTimeout(expectedErr)
+	assert.Equal(t, StreamEndReasonDone, done.EndReason)
+	assert.NoError(t, done.EndError)
+}
+
 func TestStreamStatus_SetEndReason_WithError(t *testing.T) {
 	t.Parallel()
 	s := NewStreamStatus()

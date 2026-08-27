@@ -103,7 +103,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	contentType := safeContentType(resp.Header.Get("Content-Type"), responseFormat(info))
 	resp.Header = make(http.Header)
 	resp.Header.Set("Content-Type", contentType)
-	return openai.OpenaiTTSHandler(c, resp, info), nil
+	return openai.OpenaiTTSHandler(c, resp, info)
 }
 
 func safeContentType(value, format string) string {

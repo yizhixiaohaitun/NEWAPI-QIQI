@@ -353,10 +353,10 @@ func UpdateToken(c *gin.Context) {
 		}
 		if token.NonStreamUpstreamTimeout != nil {
 			cleanToken.NonStreamUpstreamTimeout = token.NonStreamUpstreamTimeout
-		} else if request.UpstreamTimeout != nil {
-			// Preserve behavior for legacy clients that update only the old field.
-			cleanToken.NonStreamUpstreamTimeout = common.GetPointer(token.UpstreamTimeout)
 		}
+		// If the dedicated field is omitted, preserve the stored value. A legacy
+		// NULL row continues to inherit UpstreamTimeout at request time; an
+		// already-independent value must not be overwritten by old clients.
 	}
 	err = cleanToken.Update()
 	if err != nil {

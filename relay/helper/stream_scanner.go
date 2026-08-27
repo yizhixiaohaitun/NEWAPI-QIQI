@@ -304,7 +304,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				logger.LogError(c, "scanner error: "+err.Error())
 				switch {
 				case info.UpstreamContext != nil && errors.Is(info.UpstreamContext.Err(), context.DeadlineExceeded):
-					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, context.DeadlineExceeded)
+					info.StreamStatus.PromoteDeadlineTimeout(context.DeadlineExceeded)
 				case c.Request.Context().Err() != nil:
 					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
 				default:
@@ -328,7 +328,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		// EndReason already set by the goroutine that triggered stopChan
 	case <-upstreamDone:
 		if errors.Is(info.UpstreamContext.Err(), context.DeadlineExceeded) {
-			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, context.DeadlineExceeded)
+			info.StreamStatus.PromoteDeadlineTimeout(context.DeadlineExceeded)
 		}
 	case <-c.Request.Context().Done():
 		// 客户端断开：立即 cleanup 关闭上游 resp.Body，解除 scanner 阻塞并让上游停止生成，
