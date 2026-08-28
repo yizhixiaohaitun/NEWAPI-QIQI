@@ -3,9 +3,11 @@ package service
 import (
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -152,6 +154,49 @@ func TestZeroReplyAutoRefundSkipsExplicitUpstreamRejection(t *testing.T) {
 	assert.Equal(t, 50, params.Quota)
 	assert.NotContains(t, params.Content, "已自动回退")
 	assert.Equal(t, int64(0), countRefundLogs(t))
+}
+
+func TestZeroReplyAutoRefundKeepsClaudeRefusalWithCacheUsageBilled(t *testing.T) {
+	ctx, relayInfo := setupZeroReplyRefundTest(t, true)
+	relayInfo.FinalRequestRelayFormat = types.RelayFormatClaude
+	relayInfo.ChannelId = 100
+	relayInfo.OriginModelName = "claude-sonnet"
+	relayInfo.UsingGroup = "default"
+	relayInfo.StartTime = time.Now()
+	relayInfo.PriceData = types.PriceData{
+		ModelRatio:         0.1,
+		CompletionRatio:    5,
+		CacheRatio:         0.1,
+		CacheCreationRatio: 1.25,
+		GroupRatioInfo:     types.GroupRatioInfo{GroupRatio: 1},
+	}
+	common.SetContextKey(ctx, constant.ContextKeyAdminRejectReason, "claude_stop_reason=refusal")
+
+	usage := &dto.Usage{
+		PromptTokens:     22,
+		CompletionTokens: 0,
+		UsageSemantic:    dto.BillingUsageSemanticAnthropic,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         1901,
+			CachedCreationTokens: 2909,
+		},
+	}
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+	require.Equal(t, 385, summary.Quota)
+
+	PostTextConsumeQuota(ctx, relayInfo, usage, nil)
+
+	assert.Equal(t, 1000-summary.Quota, getQuota(t, 1))
+	assert.Equal(t, 1000-summary.Quota, getTokenRemain(t, 10))
+	assert.Equal(t, int64(0), countRefundLogs(t))
+
+	var consumeLog model.Log
+	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeConsume).First(&consumeLog).Error)
+	assert.Equal(t, summary.Quota, consumeLog.Quota)
+	assert.Equal(t, 22, consumeLog.PromptTokens)
+	assert.Equal(t, 0, consumeLog.CompletionTokens)
+	assert.Contains(t, consumeLog.Other, `"reject_reason":"claude_stop_reason=refusal"`)
+	assert.NotContains(t, consumeLog.Other, "zero_reply_auto_refund")
 }
 
 func TestZeroReplyAutoRefundDisabledNoChange(t *testing.T) {

@@ -109,6 +109,38 @@ func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.
 	require.Equal(t, 118, summary.Quota)
 }
 
+func TestCalculateTextQuotaSummaryBillsClaudeCacheOnlyUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	relayInfo := &relaycommon.RelayInfo{
+		FinalRequestRelayFormat: types.RelayFormatClaude,
+		OriginModelName:         "claude-sonnet",
+		PriceData: types.PriceData{
+			ModelRatio:         1,
+			CompletionRatio:    5,
+			CacheRatio:         0.1,
+			CacheCreationRatio: 1.25,
+			GroupRatioInfo:     types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		UsageSemantic: dto.BillingUsageSemanticAnthropic,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         1901,
+			CachedCreationTokens: 2909,
+		},
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Zero(t, summary.TotalTokens)
+	require.True(t, hasBillableTextUsage(summary))
+	// 1901*0.1 + 2909*1.25 = 3826.35 => 3826 quota units.
+	require.Equal(t, 3826, summary.Quota)
+}
+
 func TestCalculateTextQuotaSummaryUsesAnthropicUsageSemanticFromUpstreamUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
