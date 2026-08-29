@@ -33,8 +33,18 @@ func RelaySeedanceAsset(c *gin.Context) {
 		Retry:       common.GetPointer(0),
 	}
 	retryLimit := common.RetryTimes
+	requestUpstreamCtx, cancelRequestUpstream := service.NewUpstreamRequestContext(c.Request.Context(), relayInfo.UpstreamTimeout)
+	defer cancelRequestUpstream()
 
 	for retryParam.GetRetry() <= retryLimit {
+		if requestErr := c.Request.Context().Err(); requestErr != nil {
+			taskErr = service.TaskErrorFromAPIError(service.NewClientClosedRequestError(requestErr))
+			break
+		}
+		if errors.Is(requestUpstreamCtx.Err(), context.DeadlineExceeded) {
+			taskErr = service.TaskErrorFromAPIError(service.NewUpstreamTimeoutError())
+			break
+		}
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			taskErr = service.TaskErrorWrapperLocal(channelErr.Err, "get_channel_failed", http.StatusServiceUnavailable)
@@ -53,11 +63,15 @@ func RelaySeedanceAsset(c *gin.Context) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
-		upstreamCtx, cancelUpstream := service.NewUpstreamRequestContext(c.Request.Context(), relayInfo.UpstreamTimeout)
+		upstreamCtx, cancelUpstream := context.WithCancel(requestUpstreamCtx)
 		relayInfo.UpstreamContext = upstreamCtx
 		result, taskErr = relay.RelaySeedanceAsset(c, relayInfo)
+		requestContextErr := c.Request.Context().Err()
+		upstreamContextErr := upstreamCtx.Err()
 		cancelUpstream()
-		if errors.Is(upstreamCtx.Err(), context.DeadlineExceeded) {
+		if requestContextErr != nil {
+			taskErr = service.TaskErrorFromAPIError(service.NewClientClosedRequestError(requestContextErr))
+		} else if errors.Is(upstreamContextErr, context.DeadlineExceeded) {
 			taskErr = service.TaskErrorFromAPIError(service.NewUpstreamTimeoutError())
 		}
 		if taskErr == nil {

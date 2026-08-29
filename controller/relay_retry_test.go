@@ -3,10 +3,13 @@ package controller
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -101,6 +104,104 @@ func TestUpstreamDeadlineRemains500AndDoesNotRetry(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, normalized.StatusCode)
 	assert.Equal(t, types.ErrorCodeUpstreamTimeout, normalized.GetErrorCode())
 	assert.False(t, shouldRetry(ctx, normalized, 3))
+
+	// Preserve the semantic even when another NEWAPI upstream returns this code
+	// without our local skip-retry flag.
+	upstreamReportedTimeout := types.NewErrorWithStatusCode(
+		fmt.Errorf("upstream service timed out"),
+		types.ErrorCodeUpstreamTimeout,
+		http.StatusInternalServerError,
+	)
+	assert.False(t, shouldRetry(ctx, upstreamReportedTimeout, 3))
+}
+
+func TestRelayRequestDeadlineSpansAllChannelAttempts(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		isStream    bool
+		relayFormat types.RelayFormat
+	}{
+		{name: "non-stream", relayFormat: types.RelayFormatOpenAI},
+		{name: "stream", isStream: true, relayFormat: types.RelayFormatOpenAI},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			upstreamCanceled := make(chan struct{}, 1)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				_ = r.Body.Close()
+				attempt := attempts.Add(1)
+				if attempt < 3 {
+					time.Sleep(400 * time.Millisecond)
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				<-r.Context().Done()
+				upstreamCanceled <- struct{}{}
+			}))
+			defer upstream.Close()
+			client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+			defer client.CloseIdleConnections()
+
+			nonStreamTimeout := 1
+			info := &relaycommon.RelayInfo{
+				IsStream:                 testCase.isStream,
+				UpstreamTimeout:          1,
+				NonStreamUpstreamTimeout: &nonStreamTimeout,
+			}
+			requestUpstreamCtx, cancelRequestUpstream := newRelayRequestUpstreamContext(context.Background(), info, testCase.relayFormat)
+			defer cancelRequestUpstream()
+
+			startedAt := time.Now()
+			var relayErr *types.NewAPIError
+			for attempt := 0; attempt < 3; attempt++ {
+				attemptCtx, cancelAttempt := context.WithCancel(requestUpstreamCtx)
+				req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, upstream.URL, strings.NewReader(`{}`))
+				require.NoError(t, err)
+				resp, err := client.Do(req)
+				cancelAttempt()
+				if err != nil {
+					relayErr = types.NewError(err, types.ErrorCodeDoRequestFailed)
+					break
+				}
+				resp.Body.Close()
+				relayErr = types.NewErrorWithStatusCode(
+					fmt.Errorf("retryable upstream response"),
+					types.ErrorCodeBadResponseStatusCode,
+					http.StatusInternalServerError,
+				)
+			}
+
+			elapsed := time.Since(startedAt)
+			normalized := normalizeRelayContextError(relayErr, nil, requestUpstreamCtx.Err())
+			require.NotNil(t, normalized)
+			assert.Equal(t, types.ErrorCodeUpstreamTimeout, normalized.GetErrorCode())
+			assert.False(t, shouldRetry(nil, normalized, 3))
+			assert.Equal(t, int32(3), attempts.Load())
+			assert.Less(t, elapsed, 1300*time.Millisecond, "the one-second token timeout must not reset per channel")
+			select {
+			case <-upstreamCanceled:
+			case <-time.After(time.Second):
+				t.Fatal("active upstream request context was not canceled at the total deadline")
+			}
+		})
+	}
+}
+
+func TestRetryableNonTimeoutChannelFailureStillRetries(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
+	retryable := types.NewErrorWithStatusCode(
+		fmt.Errorf("temporary upstream failure"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusInternalServerError,
+	)
+	assert.True(t, shouldRetry(ctx, retryable, 1))
+
+	taskRetryable := &dto.TaskError{Code: "temporary_failure", StatusCode: http.StatusInternalServerError}
+	assert.True(t, shouldRetryTaskRelay(ctx, 1, taskRetryable, 1))
+	taskTimeout := &dto.TaskError{Code: string(types.ErrorCodeUpstreamTimeout), StatusCode: http.StatusInternalServerError}
+	assert.False(t, shouldRetryTaskRelay(ctx, 1, taskTimeout, 3))
 }
 
 func TestRespondTaskErrorPreservesUserQuota429Message(t *testing.T) {

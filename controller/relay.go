@@ -198,9 +198,19 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.LastError = nil
 	retryLimit := common.RetryTimes
 
+	// The token timeout is a deadline for the whole downstream request, not for
+	// each selected channel. Keep it outside the retry loop so retries consume
+	// the remaining budget instead of resetting the full timeout.
+	requestUpstreamCtx, cancelRequestUpstream := newRelayRequestUpstreamContext(c.Request.Context(), relayInfo, relayFormat)
+	defer cancelRequestUpstream()
+
 	for retryParam.GetRetry() <= retryLimit {
 		if requestErr := c.Request.Context().Err(); requestErr != nil {
 			newAPIError = service.NewClientClosedRequestError(requestErr)
+			break
+		}
+		if errors.Is(requestUpstreamCtx.Err(), context.DeadlineExceeded) {
+			newAPIError = service.NewUpstreamTimeoutError()
 			break
 		}
 		relayInfo.RetryIndex = retryParam.GetRetry()
@@ -225,11 +235,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
-		// Buffered requests use the new dedicated cutoff. Existing stream and
-		// realtime requests retain the original token-level total-duration cutoff.
-		isStreamingTransport := relayInfo.IsStream || relayFormat == types.RelayFormatOpenAIRealtime
-		timeoutSeconds := service.TokenRequestTimeoutSeconds(relayInfo.UpstreamTimeout, relayInfo.NonStreamUpstreamTimeout, isStreamingTransport)
-		upstreamCtx, cancelUpstream := service.NewUpstreamRequestContext(c.Request.Context(), timeoutSeconds)
+		// Each channel attempt gets its own cancel handle, while inheriting the
+		// single request-wide deadline above. Idle stream cutoffs can therefore
+		// cancel the active real upstream without resetting the total budget.
+		upstreamCtx, cancelUpstream := context.WithCancel(requestUpstreamCtx)
 		relayInfo.UpstreamContext = upstreamCtx
 		c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(cancelUpstream))
 
@@ -288,6 +297,12 @@ func normalizeRelayContextError(relayErr *types.NewAPIError, requestContextErr, 
 		return service.NewUpstreamTimeoutError()
 	}
 	return relayErr
+}
+
+func newRelayRequestUpstreamContext(parent context.Context, relayInfo *relaycommon.RelayInfo, relayFormat types.RelayFormat) (context.Context, context.CancelFunc) {
+	isStreamingTransport := relayInfo.IsStream || relayFormat == types.RelayFormatOpenAIRealtime
+	timeoutSeconds := service.TokenRequestTimeoutSeconds(relayInfo.UpstreamTimeout, relayInfo.NonStreamUpstreamTimeout, isStreamingTransport)
+	return service.NewUpstreamRequestContext(parent, timeoutSeconds)
 }
 
 func retryLimitForRelayError(relayInfo *relaycommon.RelayInfo, currentLimit int) int {
@@ -375,7 +390,7 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if openaiErr == nil {
 		return false
 	}
-	if openaiErr.GetErrorCode() == types.ErrorCodeClientClosedRequest {
+	if openaiErr.GetErrorCode() == types.ErrorCodeClientClosedRequest || openaiErr.GetErrorCode() == types.ErrorCodeUpstreamTimeout {
 		return false
 	}
 	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
@@ -603,9 +618,18 @@ func RelayTask(c *gin.Context) {
 	}
 	retryLimit := common.RetryTimes
 
+	// Async task submission uses upstream_timeout as one request-wide budget,
+	// matching streaming/realtime semantics instead of granting it per channel.
+	requestUpstreamCtx, cancelRequestUpstream := service.NewUpstreamRequestContext(c.Request.Context(), relayInfo.UpstreamTimeout)
+	defer cancelRequestUpstream()
+
 	for retryParam.GetRetry() <= retryLimit {
 		if requestErr := c.Request.Context().Err(); requestErr != nil {
 			taskErr = service.TaskErrorFromAPIError(service.NewClientClosedRequestError(requestErr))
+			break
+		}
+		if errors.Is(requestUpstreamCtx.Err(), context.DeadlineExceeded) {
+			taskErr = service.TaskErrorFromAPIError(service.NewUpstreamTimeoutError())
 			break
 		}
 		var channel *model.Channel
@@ -640,7 +664,7 @@ func RelayTask(c *gin.Context) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
-		upstreamCtx, cancelUpstream := service.NewUpstreamRequestContext(c.Request.Context(), relayInfo.UpstreamTimeout)
+		upstreamCtx, cancelUpstream := context.WithCancel(requestUpstreamCtx)
 		relayInfo.UpstreamContext = upstreamCtx
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
 		requestContextErr := c.Request.Context().Err()
