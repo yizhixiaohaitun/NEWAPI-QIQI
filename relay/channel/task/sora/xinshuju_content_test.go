@@ -13,7 +13,9 @@ func TestNativeXinshujuContentIsPreserved(t *testing.T) {
 	body := `{"model":"seedance-2.0","content":[{"type":"text","text":"keep actions"},{"type":"video_url","video_url":{"url":"https://example.com/ref.mp4"},"role":"reference_video"},{"type":"audio_url","audio_url":{"url":"https://example.com/ref.mp3"},"role":"reference_audio"}],"generate_audio":true,"ratio":"16:9","duration":8,"watermark":false,"resolution":"480p"}`
 	context, info := newJSONTaskContextForModel(t, body, "47:seedance-2.0")
 	info.ChannelSetting.VideoUpstreamProtocol = dto.VideoUpstreamProtocolXinshujuContent
-	reader, err := (&TaskAdaptor{}).BuildRequestBody(context, info)
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+	reader, err := adaptor.BuildRequestBody(context, info)
 	require.NoError(t, err)
 	forwarded, err := io.ReadAll(reader)
 	require.NoError(t, err)

@@ -75,6 +75,40 @@ func TestValidateMultipartDirectNormalizesNestedVideoInput(t *testing.T) {
 	assert.Equal(t, "2K", storedReq.Input["resolution"])
 }
 
+func TestValidateMultipartDirectNormalizesNativeContentPrompt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := strings.NewReader(`{"model":"47:seedance-2.0","content":[{"type":"text","text":"keep actions"},{"type":"video_url","video_url":{"url":"https://example.com/ref.mp4"},"role":"reference_video"}]}`)
+	request := httptest.NewRequest(http.MethodPost, "/v1/videos", body)
+	request.Header.Set("Content-Type", "application/json")
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = request
+	info := &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}
+
+	taskErr := ValidateMultipartDirect(context, info)
+
+	require.Nil(t, taskErr)
+	storedReq, err := GetTaskRequest(context)
+	require.NoError(t, err)
+	assert.Equal(t, "keep actions", storedReq.Prompt)
+	require.Len(t, storedReq.Content, 2)
+	assert.Equal(t, "text", storedReq.Content[0]["type"])
+}
+
+func TestValidateMultipartDirectRejectsNativeContentWithoutText(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := strings.NewReader(`{"model":"47:seedance-2.0","content":[{"type":"video_url","video_url":{"url":"https://example.com/ref.mp4"},"role":"reference_video"}]}`)
+	request := httptest.NewRequest(http.MethodPost, "/v1/videos", body)
+	request.Header.Set("Content-Type", "application/json")
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = request
+	info := &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}
+
+	taskErr := ValidateMultipartDirect(context, info)
+
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_request", taskErr.Code)
+}
+
 func TestValidateMultipartDirectNormalizesImageField(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := strings.NewReader(`{"model":"wan2.7-i2v","prompt":"animate","image":" https://example.com/first.png "}`)

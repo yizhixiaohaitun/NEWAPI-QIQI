@@ -741,22 +741,23 @@ type TaskRelayInfo struct {
 }
 
 type TaskSubmitReq struct {
-	Prompt         string                 `json:"prompt"`
-	Model          string                 `json:"model,omitempty"`
-	Mode           string                 `json:"mode,omitempty"`
-	Image          string                 `json:"image,omitempty"`
-	Images         []string               `json:"images,omitempty"`
-	Size           string                 `json:"size,omitempty"`
-	Resolution     string                 `json:"resolution,omitempty"`
-	AspectRatio    string                 `json:"aspect_ratio,omitempty"`
-	FPS            int                    `json:"fps,omitempty"`
-	GenerateAudio  *bool                  `json:"generate_audio,omitempty"`
-	Watermark      *bool                  `json:"watermark,omitempty"`
-	Duration       int                    `json:"duration,omitempty"`
-	Seconds        string                 `json:"seconds,omitempty"`
-	InputReference any                    `json:"input_reference,omitempty"`
-	Input          map[string]interface{} `json:"input,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	Prompt         string                   `json:"prompt"`
+	Content        []map[string]interface{} `json:"content,omitempty"`
+	Model          string                   `json:"model,omitempty"`
+	Mode           string                   `json:"mode,omitempty"`
+	Image          string                   `json:"image,omitempty"`
+	Images         []string                 `json:"images,omitempty"`
+	Size           string                   `json:"size,omitempty"`
+	Resolution     string                   `json:"resolution,omitempty"`
+	AspectRatio    string                   `json:"aspect_ratio,omitempty"`
+	FPS            int                      `json:"fps,omitempty"`
+	GenerateAudio  *bool                    `json:"generate_audio,omitempty"`
+	Watermark      *bool                    `json:"watermark,omitempty"`
+	Duration       int                      `json:"duration,omitempty"`
+	Seconds        string                   `json:"seconds,omitempty"`
+	InputReference any                      `json:"input_reference,omitempty"`
+	Input          map[string]interface{}   `json:"input,omitempty"`
+	Metadata       map[string]interface{}   `json:"metadata,omitempty"`
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {
@@ -832,6 +833,20 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 				t.Duration, _ = strconv.Atoi(duration)
 			case json.Number:
 				t.Duration, _ = strconv.Atoi(duration.String())
+			}
+		}
+	}
+
+	// Native multimodal video requests carry their prompt in content[].
+	// Normalize the first non-empty text item so shared validation and billing
+	// treat this shape the same as the legacy top-level prompt field.
+	if strings.TrimSpace(t.Prompt) == "" {
+		for _, item := range t.Content {
+			itemType, _ := item["type"].(string)
+			text, _ := item["text"].(string)
+			if strings.EqualFold(strings.TrimSpace(itemType), "text") && strings.TrimSpace(text) != "" {
+				t.Prompt = text
+				break
 			}
 		}
 	}
