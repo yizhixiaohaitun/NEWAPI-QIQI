@@ -418,38 +418,49 @@ func usesXinshujuContentProtocol(info *relaycommon.RelayInfo) bool {
 // select a provider-specific wire format.
 func buildXinshujuContentBody(bodyMap map[string]interface{}, upstreamModel string) map[string]interface{} {
 	payload := map[string]interface{}{"model": upstreamModel}
-	content := make([]map[string]interface{}, 0, 5)
+	content := make([]interface{}, 0, 5)
 
-	if prompt, exists := seedanceBodyValue(bodyMap, "prompt"); exists {
-		content = append(content, map[string]interface{}{"type": "text", "text": prompt})
-	}
-	appendMedia := func(urls []string, mediaType, role string) {
-		for _, mediaURL := range urls {
-			content = append(content, map[string]interface{}{
-				"type":             mediaType + "_url",
-				mediaType + "_url": map[string]interface{}{"url": mediaURL},
-				"role":             role,
-			})
+	// Native Xinshuju clients may already send content[]. Preserve that array
+	// instead of rebuilding it from top-level aliases and silently dropping all
+	// text/video/audio references. Alias conversion is only needed for the
+	// public OpenAI-style prompt/images/videos/audios request shape.
+	if nativeContent, exists := seedanceBodyValue(bodyMap, "content"); exists {
+		if items, ok := nativeContent.([]interface{}); ok && len(items) > 0 {
+			content = append(content, items...)
 		}
 	}
-	appendMedia(
-		collectSeedanceMediaURLs(bodyMap,
-			[]string{"images", "image_urls", "reference_images", "image", "input_reference"},
-			[]string{"images", "image_urls", "reference_images", "image_references", "image", "input_reference"}),
-		"image", "reference_image",
-	)
-	appendMedia(
-		collectSeedanceMediaURLs(bodyMap,
-			[]string{"videos", "video_urls", "reference_videos"},
-			[]string{"videos", "video_urls", "reference_videos", "video_references"}),
-		"video", "reference_video",
-	)
-	appendMedia(
-		collectSeedanceMediaURLs(bodyMap,
-			[]string{"audios", "audio_urls", "reference_audios"},
-			[]string{"audios", "audio_urls", "reference_audios", "audio_references"}),
-		"audio", "reference_audio",
-	)
+	if len(content) == 0 {
+		if prompt, exists := seedanceBodyValue(bodyMap, "prompt"); exists {
+			content = append(content, map[string]interface{}{"type": "text", "text": prompt})
+		}
+		appendMedia := func(urls []string, mediaType, role string) {
+			for _, mediaURL := range urls {
+				content = append(content, map[string]interface{}{
+					"type":             mediaType + "_url",
+					mediaType + "_url": map[string]interface{}{"url": mediaURL},
+					"role":             role,
+				})
+			}
+		}
+		appendMedia(
+			collectSeedanceMediaURLs(bodyMap,
+				[]string{"images", "image_urls", "reference_images", "image", "input_reference"},
+				[]string{"images", "image_urls", "reference_images", "image_references", "image", "input_reference"}),
+			"image", "reference_image",
+		)
+		appendMedia(
+			collectSeedanceMediaURLs(bodyMap,
+				[]string{"videos", "video_urls", "reference_videos"},
+				[]string{"videos", "video_urls", "reference_videos", "video_references"}),
+			"video", "reference_video",
+		)
+		appendMedia(
+			collectSeedanceMediaURLs(bodyMap,
+				[]string{"audios", "audio_urls", "reference_audios"},
+				[]string{"audios", "audio_urls", "reference_audios", "audio_references"}),
+			"audio", "reference_audio",
+		)
+	}
 	payload["content"] = content
 
 	if value, exists := seedanceBodyValue(bodyMap, "generate_audio", "audio"); exists {
