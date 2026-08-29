@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/hmac"
 	"errors"
 	"fmt"
 	"net"
@@ -232,6 +233,31 @@ func TokenOrUserAuth() func(c *gin.Context) {
 		// Fall back to token auth (API clients)
 		TokenAuth()(c)
 	}
+}
+
+// VideoContentAuth accepts the normal dashboard/API authentication or the
+// per-task capability signature returned in a completed video's result URL.
+// The signature lets native <video> elements load the protected content
+// endpoint without exposing an API key in the URL.
+func VideoContentAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		taskID := c.Param("task_id")
+		signature := c.Query("sig")
+		if validVideoContentSignature(taskID, signature) {
+			c.Set("video_content_capability", true)
+			c.Next()
+			return
+		}
+		TokenOrUserAuth()(c)
+	}
+}
+
+func validVideoContentSignature(taskID, signature string) bool {
+	if taskID == "" || signature == "" {
+		return false
+	}
+	expected := common.GenerateHMAC("video-content:" + taskID)
+	return hmac.Equal([]byte(signature), []byte(expected))
 }
 
 // TokenAuthReadOnly 宽松版本的令牌认证中间件，用于只读查询接口。

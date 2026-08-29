@@ -12,9 +12,11 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func newJSONTaskContext(t *testing.T, body string) (*gin.Context, *relaycommon.RelayInfo) {
@@ -327,16 +329,24 @@ func TestMiniMaxH3ResolutionCreateAndQueryResponses(t *testing.T) {
 }
 
 func TestConvertToOpenAIVideoPreservesNestedQueryResponse(t *testing.T) {
+	originalServerAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://newapi.example"
+	t.Cleanup(func() { system_setting.ServerAddress = originalServerAddress })
 	adaptor := &TaskAdaptor{}
 	task := &model.Task{
 		TaskID: "task_public",
-		Data:   []byte(`{"success":true,"data":{"task_id":"upstream-123","status":"SUCCESS","progress":100,"fail_reason":"","data":{"outputs":[{"url":"https://cdn.example/video.mp4"}]}}}`),
+		Status: model.TaskStatusSuccess,
+		Data:   []byte(`{"success":true,"data":{"task_id":"upstream-123","status":"SUCCESS","progress":100,"fail_reason":"","content":[{"type":"video_url","video_url":{"url":"https://cdn.example/reference.mp4"}}],"data":{"outputs":[{"url":"https://cdn.example/expired.mp4"}]}}}`),
 	}
 
 	converted, err := adaptor.ConvertToOpenAIVideo(task)
 
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"success":true,"data":{"task_id":"task_public","status":"SUCCESS","progress":100,"fail_reason":"","data":{"outputs":[{"url":"https://cdn.example/video.mp4"}]}}}`, string(converted))
+	payload := gjson.ParseBytes(converted)
+	assert.Equal(t, "task_public", payload.Get("data.task_id").String())
+	assert.Equal(t, "https://cdn.example/reference.mp4", payload.Get("data.content.0.video_url.url").String())
+	expectedSignature := common.GenerateHMAC("video-content:task_public")
+	assert.Equal(t, "https://newapi.example/v1/videos/task_public/content?sig="+expectedSignature, payload.Get("data.data.outputs.0.url").String())
 }
 
 func TestParseTaskResultSupportsNestedCompletionAndFailure(t *testing.T) {

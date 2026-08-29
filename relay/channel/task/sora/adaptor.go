@@ -709,15 +709,62 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		if parsed.ID != "" {
 			data, _ = sjson.SetBytes(data, "data.id", task.TaskID)
 		}
-		return data, nil
+	} else {
+		var err error
+		if data, err = sjson.SetBytes(data, "id", task.TaskID); err != nil {
+			return nil, errors.Wrap(err, "set id failed")
+		}
+		if parsed.TaskID != "" {
+			data, _ = sjson.SetBytes(data, "task_id", task.TaskID)
+		}
 	}
 
-	var err error
-	if data, err = sjson.SetBytes(data, "id", task.TaskID); err != nil {
-		return nil, errors.Wrap(err, "set id failed")
-	}
-	if parsed.TaskID != "" {
-		data, _ = sjson.SetBytes(data, "task_id", task.TaskID)
+	if task.Status == model.TaskStatusSuccess {
+		stableURL := taskcommon.BuildProxyURL(task.TaskID)
+		data = rewriteVideoOutputURLs(data, stableURL)
 	}
 	return data, nil
+}
+
+func rewriteVideoOutputURLs(data []byte, stableURL string) []byte {
+	var payload any
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return data
+	}
+	payload = rewriteVideoOutputValue(payload, stableURL, false)
+	rewritten, err := common.Marshal(payload)
+	if err != nil {
+		return data
+	}
+	return rewritten
+}
+
+func rewriteVideoOutputValue(value any, stableURL string, outputContext bool) any {
+	switch typed := value.(type) {
+	case []any:
+		for index, item := range typed {
+			if outputContext {
+				if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+					typed[index] = stableURL
+					continue
+				}
+			}
+			typed[index] = rewriteVideoOutputValue(item, stableURL, outputContext)
+		}
+	case map[string]any:
+		for key, item := range typed {
+			childOutputContext := outputContext || key == "outputs"
+			if outputContext {
+				switch key {
+				case "url", "video_url", "file_url", "output_url", "download_url":
+					if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+						typed[key] = stableURL
+						continue
+					}
+				}
+			}
+			typed[key] = rewriteVideoOutputValue(item, stableURL, childOutputContext)
+		}
+	}
+	return value
 }

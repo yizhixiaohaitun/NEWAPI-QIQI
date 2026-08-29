@@ -48,8 +48,14 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetInt("id")
-	task, exists, err := model.GetByTaskId(userID, taskID)
+	var task *model.Task
+	var exists bool
+	var err error
+	if c.GetBool("video_content_capability") {
+		task, exists, err = model.GetByOnlyTaskId(taskID)
+	} else {
+		task, exists, err = model.GetByTaskId(c.GetInt("id"), taskID)
+	}
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to query task %s: %s", taskID, err.Error()))
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to query task")
@@ -93,12 +99,17 @@ func VideoProxy(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "", nil)
+	method := http.MethodGet
+	if c.Request.Method == http.MethodHead {
+		method = http.MethodHead
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "", nil)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to create request: %s", err.Error()))
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to create proxy request")
 		return
 	}
+	copyVideoRequestHeaders(req.Header, c.Request.Header)
 
 	// The protocol persisted at creation time wins over the mutable channel
 	// type. Legacy numeric platforms keep the historical channel-type dispatch.
@@ -181,23 +192,62 @@ func VideoProxy(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream returned status %d for %s", resp.StatusCode, videoURL))
+		if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			copyVideoResponseHeaders(c.Writer.Header(), resp.Header)
+			c.Status(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
 		videoProxyError(c, http.StatusBadGateway, "server_error",
 			fmt.Sprintf("Upstream service returned status %d", resp.StatusCode))
 		return
 	}
 
-	for key, values := range resp.Header {
-		for _, value := range values {
-			c.Writer.Header().Add(key, value)
+	if err = writeProxiedVideoResponse(c.Writer, resp, method); err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
+	}
+}
+
+func writeProxiedVideoResponse(writer http.ResponseWriter, resp *http.Response, method string) error {
+	copyVideoResponseHeaders(writer.Header(), resp.Header)
+	contentType := strings.ToLower(writer.Header().Get("Content-Type"))
+	if contentType == "" || strings.HasPrefix(contentType, "application/octet-stream") {
+		writer.Header().Set("Content-Type", "video/mp4")
+	}
+	if disposition := strings.ToLower(writer.Header().Get("Content-Disposition")); strings.HasPrefix(disposition, "attachment") {
+		writer.Header().Set("Content-Disposition", "inline")
+	}
+	writer.Header().Set("Cache-Control", "private, max-age=86400")
+	writer.WriteHeader(resp.StatusCode)
+	if method == http.MethodHead {
+		return nil
+	}
+	_, err := io.Copy(writer, resp.Body)
+	return err
+}
+
+func copyVideoRequestHeaders(dst, src http.Header) {
+	for _, key := range []string{"Range", "If-Range"} {
+		if value := src.Get(key); value != "" {
+			dst.Set(key, value)
 		}
 	}
+}
 
-	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
-	c.Writer.WriteHeader(resp.StatusCode)
-	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
+func copyVideoResponseHeaders(dst, src http.Header) {
+	for _, key := range []string{
+		"Accept-Ranges",
+		"Content-Disposition",
+		"Content-Length",
+		"Content-Range",
+		"Content-Type",
+		"ETag",
+		"Last-Modified",
+	} {
+		if value := src.Get(key); value != "" {
+			dst.Set(key, value)
+		}
 	}
 }
 

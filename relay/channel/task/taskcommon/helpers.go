@@ -3,8 +3,10 @@ package taskcommon
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -60,10 +62,21 @@ func DecodeLocalTaskID(id string) (string, error) {
 	return string(b), nil
 }
 
-// BuildProxyURL constructs the video proxy URL using the public task ID.
-// e.g., "https://your-server.com/v1/videos/task_xxxx/content"
+// BuildProxyURL constructs a signed video proxy URL using the public task ID.
+// e.g., "https://your-server.com/v1/videos/task_xxxx/content?sig=..."
 func BuildProxyURL(taskID string) string {
-	return fmt.Sprintf("%s/v1/videos/%s/content", system_setting.ServerAddress, taskID)
+	signature := common.GenerateHMAC("video-content:" + taskID)
+	return fmt.Sprintf("%s/v1/videos/%s/content?sig=%s", strings.TrimRight(system_setting.ServerAddress, "/"), taskID, signature)
+}
+
+// StableResultURL keeps OpenAI Videos results on NEWAPI's signed content
+// endpoint. Provider output URLs are often short-lived CDN links and
+// must not be exposed as the durable task result.
+func StableResultURL(platform constant.TaskPlatform, taskID, upstreamURL string) string {
+	if platform == constant.TaskPlatformOpenAIVideo || upstreamURL == "" {
+		return BuildProxyURL(taskID)
+	}
+	return upstreamURL
 }
 
 // Status-to-progress mapping constants for polling updates.
