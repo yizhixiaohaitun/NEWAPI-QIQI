@@ -196,6 +196,7 @@ export const channelFormSchema = z
       .enum([
         'channel_default',
         'openai_video',
+        'megaby_video',
         'xinshuju_content',
         'seedance_async',
         'seedance_discount',
@@ -384,6 +385,7 @@ export function transformChannelToFormDefaults(
     video_upstream_protocol: 'channel_default' as
       | 'channel_default'
       | 'openai_video'
+      | 'megaby_video'
       | 'xinshuju_content'
       | 'seedance_async'
       | 'seedance_discount',

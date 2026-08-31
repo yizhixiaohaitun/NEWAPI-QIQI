@@ -256,6 +256,10 @@ func getUpstreamModelUpdateMinCheckIntervalSeconds() int64 {
 }
 
 func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
+	return fetchChannelUpstreamModelIDsWithContext(context.Background(), channel)
+}
+
+func fetchChannelUpstreamModelIDsWithContext(ctx context.Context, channel *model.Channel) ([]string, error) {
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() != "" {
 		baseURL = channel.GetBaseURL()
@@ -322,7 +326,7 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 		return nil, err
 	}
 
-	body, err := GetResponseBody(http.MethodGet, url, channel, headers)
+	body, err := getResponseBodyWithContext(ctx, http.MethodGet, url, channel, headers)
 	if err != nil {
 		return nil, err
 	}

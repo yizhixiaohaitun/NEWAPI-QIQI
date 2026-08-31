@@ -9,6 +9,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUsesMegabyVideoProtocolIsNarrowlyScoped(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol VideoUpstreamProtocol
+		baseURL  string
+		want     bool
+	}{
+		{name: "explicit protocol supports proxy host", protocol: VideoUpstreamProtocolMegabyVideo, baseURL: "https://proxy.example.com", want: true},
+		{name: "legacy exact host with openai protocol", protocol: VideoUpstreamProtocolOpenAI, baseURL: "https://newapi.megabyai.cc/v1", want: true},
+		{name: "legacy exact host with channel default", protocol: VideoUpstreamProtocolDefault, baseURL: "https://newapi.megabyai.cc", want: true},
+		{name: "legacy exact host with empty protocol", baseURL: "https://newapi.megabyai.cc", want: true},
+		{name: "lookalike host rejected", protocol: VideoUpstreamProtocolOpenAI, baseURL: "https://newapi.megabyai.cc.evil.example", want: false},
+		{name: "subdomain rejected", protocol: VideoUpstreamProtocolOpenAI, baseURL: "https://video.newapi.megabyai.cc", want: false},
+		{name: "other provider rejected", protocol: VideoUpstreamProtocolOpenAI, baseURL: "https://video.example.com", want: false},
+		{name: "other explicit protocol wins", protocol: VideoUpstreamProtocolXinshujuContent, baseURL: "https://newapi.megabyai.cc", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, UsesMegabyVideoProtocol(tt.protocol, tt.baseURL))
+		})
+	}
+}
+
 func TestAdvancedCustomValidateResponsesToChatConverterPath(t *testing.T) {
 	valid := &AdvancedCustomConfig{
 		Routes: []AdvancedCustomRoute{

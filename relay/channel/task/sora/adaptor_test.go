@@ -280,6 +280,86 @@ func TestGenericOpenAIVideoDoesNotRewriteNestedOrReferenceAudio(t *testing.T) {
 	assert.NotContains(t, payload, "generate_audio")
 }
 
+func TestMegabyVideoProtocolCompatibility(t *testing.T) {
+	tests := []struct {
+		name, model, body, wantResolution string
+	}{
+		{"dot alias", "seedance-2.5", `{"model":"seedance-2.5","prompt":"x","aspect_ratio":"16:9","watermark":false,"audio":false}`, ""},
+		{"480p alias", "seedance-2-5-480p", `{"model":"seedance-2-5-480p","prompt":"x"}`, "480p"},
+		{"720p alias", "seedance-2-5-720p", `{"model":"seedance-2-5-720p","prompt":"x"}`, "720p"},
+		{"1080p alias", "seedance-2-5-1080p", `{"model":"seedance-2-5-1080p","prompt":"x"}`, "1080p"},
+		{"explicit resolution wins", "seedance-2-5-1080p", `{"model":"seedance-2-5-1080p","prompt":"x","resolution":"480p"}`, "480p"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			context, info := newJSONTaskContextForModel(t, test.body, test.model)
+			info.OriginModelName = test.model
+			info.ChannelSetting.VideoUpstreamProtocol = dto.VideoUpstreamProtocolMegabyVideo
+			adaptor := &TaskAdaptor{}
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+			reader, err := adaptor.BuildRequestBody(context, info)
+			require.NoError(t, err)
+			forwarded, err := io.ReadAll(reader)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(forwarded, &payload))
+			assert.Equal(t, "seedance-2-5", payload["model"])
+			if test.wantResolution == "" {
+				assert.NotContains(t, payload, "resolution")
+			} else {
+				assert.Equal(t, test.wantResolution, payload["resolution"])
+			}
+			assert.NotContains(t, payload, "aspect_ratio")
+			assert.NotContains(t, payload, "watermark")
+			if test.name == "dot alias" {
+				assert.Equal(t, false, payload["generate_audio"])
+				assert.NotContains(t, payload, "audio")
+			}
+		})
+	}
+}
+
+func TestMegabyVideoProtocolSelectionIsProviderScoped(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol dto.VideoUpstreamProtocol
+		baseURL  string
+		expected bool
+	}{
+		{"explicit protocol", dto.VideoUpstreamProtocolMegabyVideo, "https://proxy.example.com", true},
+		{"legacy exact host with generic protocol", dto.VideoUpstreamProtocolOpenAI, "https://newapi.megabyai.cc", true},
+		{"legacy exact host with channel default", dto.VideoUpstreamProtocolDefault, "https://newapi.megabyai.cc", true},
+		{"other Seedance provider", dto.VideoUpstreamProtocolOpenAI, "https://video.example.com", false},
+		{"lookalike host", dto.VideoUpstreamProtocolOpenAI, "https://newapi.megabyai.cc.evil.example", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelBaseUrl: test.baseURL,
+				ChannelSetting: dto.ChannelSettings{VideoUpstreamProtocol: test.protocol},
+			}}
+			assert.Equal(t, test.expected, usesMegabyVideoProtocol(info))
+		})
+	}
+}
+
+func TestMegabyVideoDoesNotStripFieldsFromGenericProtocol(t *testing.T) {
+	body := `{"model":"seedance-2-5-720p","prompt":"x","aspect_ratio":"16:9","watermark":true}`
+	context, info := newJSONTaskContextForModel(t, body, "seedance-2-5-720p")
+	info.OriginModelName = "seedance-2-5-720p"
+	info.ChannelSetting.VideoUpstreamProtocol = dto.VideoUpstreamProtocolOpenAI
+	info.ChannelBaseUrl = "https://video.example.com"
+	reader, err := (&TaskAdaptor{}).BuildRequestBody(context, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	assert.Equal(t, "seedance-2-5-720p", payload["model"])
+	assert.Equal(t, "16:9", payload["aspect_ratio"])
+	assert.Equal(t, true, payload["watermark"])
+}
+
 func TestXinshujuProtocolSelectionIsProviderScoped(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -749,7 +749,9 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	if taskErr == nil {
 		return false
 	}
-	if taskErr.Code == string(types.ErrorCodeClientClosedRequest) || taskErr.Code == string(types.ErrorCodeUpstreamTimeout) {
+	if taskErr.Code == string(types.ErrorCodeClientClosedRequest) ||
+		taskErr.Code == string(types.ErrorCodeUpstreamTimeout) ||
+		taskErr.Code == string(types.ErrorCodeModelPriceError) {
 		return false
 	}
 	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
@@ -777,10 +779,10 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 		}
 		return true
 	}
-	if taskErr.StatusCode == http.StatusBadRequest {
+	if taskErr.StatusCode == http.StatusBadRequest || taskErr.StatusCode == http.StatusUnprocessableEntity {
 		return false
 	}
-	if taskErr.StatusCode == 408 {
+	if taskErr.StatusCode == http.StatusRequestTimeout {
 		// azure处理超时不重试
 		return false
 	}

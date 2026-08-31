@@ -43,6 +43,7 @@ func TestExplicitVideoProtocolOverridesChannelTypeWithoutModelInference(t *testi
 		platform constant.TaskPlatform
 	}{
 		{"openai", dto.VideoUpstreamProtocolOpenAI, constant.TaskPlatformOpenAIVideo},
+		{"megaby video", dto.VideoUpstreamProtocolMegabyVideo, constant.TaskPlatformOpenAIVideo},
 		{"xinshuju content", dto.VideoUpstreamProtocolXinshujuContent, constant.TaskPlatformOpenAIVideo},
 		{"official", dto.VideoUpstreamProtocolSeedanceAsync, constant.TaskPlatformSeedance},
 		{"discount", dto.VideoUpstreamProtocolSeedanceDiscount, constant.TaskPlatformSeedanceDiscount},

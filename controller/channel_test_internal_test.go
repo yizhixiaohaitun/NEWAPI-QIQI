@@ -1,11 +1,13 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -105,6 +107,59 @@ func TestExtractRawProbeSignals(t *testing.T) {
 
 	_, missing := extractRawProbeSignals([]byte(`{"model":"gpt-4o"}`))
 	require.Nil(t, missing)
+}
+
+func TestSoraAutomaticChannelTestUsesSafeVideoProbe(t *testing.T) {
+	var requestedPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.Path
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, int64(0), r.ContentLength)
+		require.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"data":[{"id":"seedance-2-5"}]}`))
+		require.NoError(t, err)
+	}))
+	defer upstream.Close()
+
+	setting := `{"video_upstream_protocol":"megaby_video"}`
+	mapping := `{"public-seedance":"seedance-2-5-720p"}`
+	channel := &model.Channel{
+		Type:         constant.ChannelTypeSora,
+		Key:          "test-key",
+		BaseURL:      common.GetPointer(upstream.URL),
+		Setting:      &setting,
+		ModelMapping: &mapping,
+	}
+
+	result := testChannelWithOptions(context.Background(), channel, 0, "public-seedance", "", false, channelTestOptions{})
+
+	require.NoError(t, result.localErr)
+	require.Nil(t, result.newAPIError)
+	require.Equal(t, http.StatusOK, result.httpStatus)
+	require.Equal(t, types.RelayFormat(types.RelayFormatTask), result.protocol)
+	require.Equal(t, "seedance-2-5", result.mappedModel)
+	require.Equal(t, "/v1/models", requestedPath)
+}
+
+func TestMegabyChannelTestMappingIsProviderScoped(t *testing.T) {
+	genericSetting := `{"video_upstream_protocol":"openai_video"}`
+	megabySetting := `{"video_upstream_protocol":"megaby_video"}`
+	genericBaseURL := "https://video.example.com"
+	legacyMegabyBaseURL := "https://newapi.megabyai.cc"
+	generic := &model.Channel{Setting: &genericSetting, BaseURL: &genericBaseURL}
+	explicitMegaby := &model.Channel{Setting: &megabySetting, BaseURL: &genericBaseURL}
+	legacyMegaby := &model.Channel{Setting: &genericSetting, BaseURL: &legacyMegabyBaseURL}
+
+	require.Equal(t, "seedance-2-5-720p", mapChannelTestModel(generic, "seedance-2-5-720p"))
+	require.Equal(t, "seedance-2-5", mapChannelTestModel(explicitMegaby, "seedance-2-5-720p"))
+	require.Equal(t, "seedance-2-5", mapChannelTestModel(legacyMegaby, "seedance-2-5-720p"))
+}
+
+func TestNormalizeSoraAutomaticChannelTestNeverUsesChatCompletions(t *testing.T) {
+	channel := &model.Channel{Type: constant.ChannelTypeSora}
+	require.Equal(t, "openai-video", normalizeChannelTestEndpoint(channel, "seedance-2-5", ""))
+	require.Equal(t, "openai", normalizeChannelTestEndpoint(channel, "seedance-2-5", "openai"), "an explicit operator choice remains explicit")
 }
 
 func TestResolveChannelTestUserIDUsesRequestUser(t *testing.T) {

@@ -426,6 +426,38 @@ func collectSeedanceMediaURLs(bodyMap map[string]interface{}, rootKeys, nestedKe
 	return urls
 }
 
+func usesMegabyVideoProtocol(info *relaycommon.RelayInfo) bool {
+	return dto.UsesMegabyVideoProtocol(info.ChannelSetting.VideoUpstreamProtocol, info.ChannelBaseUrl)
+}
+
+func normalizeMegabyVideoBody(bodyMap map[string]interface{}, info *relaycommon.RelayInfo) {
+	requestedModel := strings.TrimSpace(info.UpstreamModelName)
+	if requestedModel == "" {
+		requestedModel, _ = bodyMap["model"].(string)
+		requestedModel = strings.TrimSpace(requestedModel)
+	}
+
+	resolution := ""
+	switch strings.ToLower(requestedModel) {
+	case "seedance-2.5", "seedance-2-5":
+		bodyMap["model"] = "seedance-2-5"
+	case "seedance-2-5-480p":
+		bodyMap["model"], resolution = "seedance-2-5", "480p"
+	case "seedance-2-5-720p":
+		bodyMap["model"], resolution = "seedance-2-5", "720p"
+	case "seedance-2-5-1080p":
+		bodyMap["model"], resolution = "seedance-2-5", "1080p"
+	default:
+		bodyMap["model"] = info.UpstreamModelName
+	}
+	if explicit, ok := bodyMap["resolution"].(string); resolution != "" && (!ok || strings.TrimSpace(explicit) == "") {
+		bodyMap["resolution"] = resolution
+	}
+	delete(bodyMap, "aspect_ratio")
+	delete(bodyMap, "watermark")
+	normalizeTopLevelAudioAlias(bodyMap)
+}
+
 func usesXinshujuContentProtocol(info *relaycommon.RelayInfo) bool {
 	if info.ChannelSetting.VideoUpstreamProtocol == dto.VideoUpstreamProtocolXinshujuContent {
 		return true
@@ -548,6 +580,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			bodyMap["model"] = info.UpstreamModelName
 			if usesXinshujuContentProtocol(info) {
 				bodyMap = buildXinshujuContentBody(bodyMap, info.UpstreamModelName)
+			} else if usesMegabyVideoProtocol(info) {
+				normalizeMegabyVideoBody(bodyMap, info)
 			} else {
 				normalizeTopLevelAudioAlias(bodyMap)
 			}

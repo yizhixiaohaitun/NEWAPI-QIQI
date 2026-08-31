@@ -15,6 +15,7 @@ type VideoUpstreamProtocol string
 const (
 	VideoUpstreamProtocolDefault          VideoUpstreamProtocol = "channel_default"
 	VideoUpstreamProtocolOpenAI           VideoUpstreamProtocol = "openai_video"
+	VideoUpstreamProtocolMegabyVideo      VideoUpstreamProtocol = "megaby_video"
 	VideoUpstreamProtocolXinshujuContent  VideoUpstreamProtocol = "xinshuju_content"
 	VideoUpstreamProtocolSeedanceAsync    VideoUpstreamProtocol = "seedance_async"
 	VideoUpstreamProtocolSeedanceDiscount VideoUpstreamProtocol = "seedance_discount"
@@ -22,11 +23,28 @@ const (
 
 func (p VideoUpstreamProtocol) Valid() bool {
 	switch p {
-	case "", VideoUpstreamProtocolDefault, VideoUpstreamProtocolOpenAI, VideoUpstreamProtocolXinshujuContent, VideoUpstreamProtocolSeedanceAsync, VideoUpstreamProtocolSeedanceDiscount:
+	case "", VideoUpstreamProtocolDefault, VideoUpstreamProtocolOpenAI, VideoUpstreamProtocolMegabyVideo, VideoUpstreamProtocolXinshujuContent, VideoUpstreamProtocolSeedanceAsync, VideoUpstreamProtocolSeedanceDiscount:
 		return true
 	default:
 		return false
 	}
+}
+
+// UsesMegabyVideoProtocol scopes Megaby-specific request compatibility to an
+// explicit channel protocol. The exact production hostname is retained as a
+// narrow migration path for existing Sora/OpenAI Video channel configurations.
+func UsesMegabyVideoProtocol(protocol VideoUpstreamProtocol, baseURL string) bool {
+	if protocol == VideoUpstreamProtocolMegabyVideo {
+		return true
+	}
+	if protocol != "" && protocol != VideoUpstreamProtocolDefault && protocol != VideoUpstreamProtocolOpenAI {
+		return false
+	}
+	upstreamURL, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(upstreamURL.Hostname(), "newapi.megabyai.cc")
 }
 
 type ChannelSettings struct {

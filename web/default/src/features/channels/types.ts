@@ -89,6 +89,7 @@ export interface ChannelSettings {
   video_upstream_protocol?:
     | 'channel_default'
     | 'openai_video'
+    | 'megaby_video'
     | 'xinshuju_content'
     | 'seedance_async'
     | 'seedance_discount'

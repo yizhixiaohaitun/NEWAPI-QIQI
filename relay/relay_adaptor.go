@@ -149,7 +149,7 @@ func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
 	if c.Request != nil && isPublicVideoCompatibilityPath(c.Request.URL.Path) {
 		if setting, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting); ok {
 			switch setting.VideoUpstreamProtocol {
-			case dto.VideoUpstreamProtocolOpenAI, dto.VideoUpstreamProtocolXinshujuContent:
+			case dto.VideoUpstreamProtocolOpenAI, dto.VideoUpstreamProtocolMegabyVideo, dto.VideoUpstreamProtocolXinshujuContent:
 				return constant.TaskPlatformOpenAIVideo
 			case dto.VideoUpstreamProtocolSeedanceAsync:
 				return constant.TaskPlatformSeedance

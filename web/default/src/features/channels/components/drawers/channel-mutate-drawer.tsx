@@ -4171,6 +4171,7 @@ export function ChannelMutateDrawer({
                                         <SelectGroup>
                                           <SelectItem value='channel_default'>{t('Channel default')}</SelectItem>
                                           <SelectItem value='openai_video'>{t('OpenAI Videos / Sora')}</SelectItem>
+                                          <SelectItem value='megaby_video'>{t('Megaby Seedance 2.5 Videos')}</SelectItem>
                                           <SelectItem value='xinshuju_content'>
                                             {t(
                                               'Xinshuju Videos (multimodal content)'

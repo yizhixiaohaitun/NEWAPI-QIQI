@@ -238,6 +238,27 @@ func TestRespondTaskErrorRewritesGenericUpstream429Message(t *testing.T) {
 	assert.NotContains(t, recorder.Body.String(), "raw upstream rate limit message")
 }
 
+func TestTaskRelayRetriesOnlyTransientStatuses(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{}`))
+
+	assert.False(t, shouldRetryTaskRelay(ctx, 1, &dto.TaskError{
+		Code:       "extra_forbidden",
+		Message:    "aspect_ratio is not permitted",
+		StatusCode: http.StatusUnprocessableEntity,
+	}, 2), "422 request errors must not be retried or disguised as exhausted rate limits")
+	assert.True(t, shouldRetryTaskRelay(ctx, 1, &dto.TaskError{
+		Code:       "rate_limit_exceeded",
+		Message:    "too many requests",
+		StatusCode: http.StatusTooManyRequests,
+	}, 2), "real upstream 429 remains retryable")
+	assert.False(t, shouldRetryTaskRelay(ctx, 1, &dto.TaskError{
+		Code:       string(types.ErrorCodeModelPriceError),
+		Message:    "upstream price missing",
+		StatusCode: http.StatusBadGateway,
+	}, 2), "upstream price configuration errors must keep their attribution instead of being retried away")
+}
+
 func TestRetryLimitForEarlyResponsesStreamError(t *testing.T) {
 	setting := operation_setting.GetQiqiSetting()
 	original := *setting

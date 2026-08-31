@@ -2548,6 +2548,7 @@ const EditChannelModal = (props) => {
                     optionList={[
                       { value: 'channel_default', label: t('跟随渠道类型（兼容旧行为）') },
                       { value: 'openai_video', label: t('OpenAI Videos / Sora') },
+                      { value: 'megaby_video', label: t('Megaby Seedance 2.5 视频') },
                       { value: 'seedance_async', label: t('Seedance 官方异步协议') },
                       { value: 'seedance_discount', label: t('Seedance 第三方折扣协议') },
                     ]}

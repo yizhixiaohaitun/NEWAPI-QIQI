@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -19,8 +20,94 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
+
+var (
+	upstreamBearerPattern = regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+\-/=]+`)
+	upstreamKeyPattern    = regexp.MustCompile(`(?i)\bsk-[a-z0-9._~+\-/=]{8,}`)
+)
+
+type taskUpstreamErrorEnvelope struct {
+	Code              any    `json:"code"`
+	Message           string `json:"message"`
+	RequestID         string `json:"request_id"`
+	UpstreamRequestID string `json:"upstream_request_id"`
+}
+
+func sanitizeTaskUpstreamText(text string) string {
+	text = upstreamBearerPattern.ReplaceAllString(text, "Bearer ***")
+	text = upstreamKeyPattern.ReplaceAllString(text, "sk-***")
+	return common.MaskSensitiveInfo(text)
+}
+
+func taskUpstreamRequestIDSuffix(requestID string) string {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return ""
+	}
+	return " (upstream request id: " + sanitizeTaskUpstreamText(requestID) + ")"
+}
+
+func buildTaskUpstreamError(code, upstreamMessage, requestID string, upstreamStatus, gatewayStatus int) *dto.TaskError {
+	upstreamMessage = sanitizeTaskUpstreamText(strings.TrimSpace(upstreamMessage))
+	message := fmt.Sprintf("上游渠道返回错误（HTTP %d）：%s", upstreamStatus, upstreamMessage)
+	if code == string(types.ErrorCodeModelPriceError) {
+		message = fmt.Sprintf("上游渠道返回价格配置错误/缓存未同步（HTTP %d，code=model_price_error）：%s", upstreamStatus, upstreamMessage)
+	}
+	return service.TaskErrorWrapper(errors.New(message+taskUpstreamRequestIDSuffix(requestID)), code, gatewayStatus)
+}
+
+func taskUpstreamError(resp *http.Response, responseBody []byte) *dto.TaskError {
+	upstreamStatus := http.StatusBadGateway
+	contentType := ""
+	requestID := ""
+	if resp != nil {
+		upstreamStatus = resp.StatusCode
+		contentType = strings.TrimSpace(resp.Header.Get("Content-Type"))
+		for _, key := range []string{common.UpstreamRequestIdKey, common.RequestIdKey, "X-Request-Id"} {
+			if requestID = strings.TrimSpace(resp.Header.Get(key)); requestID != "" {
+				break
+			}
+		}
+	}
+	gatewayStatus := upstreamStatus
+	if upstreamStatus >= http.StatusInternalServerError {
+		gatewayStatus = http.StatusBadGateway
+	}
+	var taskEnvelope taskUpstreamErrorEnvelope
+	if common.Unmarshal(responseBody, &taskEnvelope) == nil {
+		if requestID == "" {
+			requestID = strings.TrimSpace(taskEnvelope.UpstreamRequestID)
+			if requestID == "" {
+				requestID = strings.TrimSpace(taskEnvelope.RequestID)
+			}
+		}
+		code := strings.TrimSpace(fmt.Sprint(taskEnvelope.Code))
+		if code != "" && code != "<nil>" && strings.TrimSpace(taskEnvelope.Message) != "" {
+			return buildTaskUpstreamError(code, taskEnvelope.Message, requestID, upstreamStatus, gatewayStatus)
+		}
+	}
+
+	var envelope dto.GeneralErrorResponse
+	if common.Unmarshal(responseBody, &envelope) == nil {
+		if upstream := envelope.TryToOpenAIError(); upstream != nil {
+			code := strings.TrimSpace(fmt.Sprint(upstream.Code))
+			if code == "<nil>" || code == "" {
+				code = "fail_to_fetch_task"
+			}
+			return buildTaskUpstreamError(code, upstream.Message, requestID, upstreamStatus, gatewayStatus)
+		}
+	}
+
+	summary := sanitizeTaskUpstreamText(summarizeTaskUpstreamError(contentType, responseBody))
+	return service.TaskErrorWrapper(
+		fmt.Errorf("上游渠道返回错误（HTTP %d） content-type=%q summary=%q%s", upstreamStatus, contentType, summary, taskUpstreamRequestIDSuffix(requestID)),
+		"fail_to_fetch_task",
+		gatewayStatus,
+	)
+}
 
 func summarizeTaskUpstreamError(contentType string, responseBody []byte) string {
 	contentType = strings.TrimSpace(contentType)
@@ -191,7 +278,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	info.OriginModelName = modelName
 	priceData, err := helper.ModelPriceHelperPerCall(c, info)
 	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+		return nil, service.TaskErrorWrapperLocal(err, "model_price_error", http.StatusBadRequest)
 	}
 	info.PriceData = priceData
 
@@ -233,13 +320,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
-		contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
-		summary := summarizeTaskUpstreamError(contentType, responseBody)
-		return nil, service.TaskErrorWrapper(
-			fmt.Errorf("upstream status=%d content-type=%q summary=%q", resp.StatusCode, contentType, summary),
-			"fail_to_fetch_task",
-			resp.StatusCode,
-		)
+		return nil, taskUpstreamError(resp, responseBody)
 	}
 
 	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）

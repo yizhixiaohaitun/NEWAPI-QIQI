@@ -72,6 +72,9 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 	if normalized != "" {
 		return normalized
 	}
+	if channel != nil && channel.Type == constant.ChannelTypeSora {
+		return string(constant.EndpointTypeOpenAIVideo)
+	}
 	if strings.HasSuffix(modelName, ratio_setting.CompactModelSuffix) {
 		return string(constant.EndpointTypeOpenAIResponseCompact)
 	}
@@ -79,6 +82,48 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 		return string(constant.EndpointTypeOpenAIResponse)
 	}
 	return normalized
+}
+
+func mapChannelTestModel(channel *model.Channel, modelName string) string {
+	mapped := strings.TrimSpace(modelName)
+	mapping := map[string]string{}
+	if channel != nil && common.UnmarshalJsonStr(channel.GetModelMapping(), &mapping) == nil {
+		visited := map[string]struct{}{mapped: {}}
+		for range 16 {
+			next := strings.TrimSpace(mapping[mapped])
+			if next == "" || next == mapped {
+				break
+			}
+			if _, exists := visited[next]; exists {
+				break
+			}
+			visited[next] = struct{}{}
+			mapped = next
+		}
+	}
+	if channel != nil && dto.UsesMegabyVideoProtocol(channel.GetSetting().VideoUpstreamProtocol, channel.GetBaseURL()) {
+		switch strings.ToLower(mapped) {
+		case "seedance-2.5", "seedance-2-5", "seedance-2-5-480p", "seedance-2-5-720p", "seedance-2-5-1080p":
+			mapped = "seedance-2-5"
+		}
+	}
+	return mapped
+}
+
+func probeOpenAIVideoChannel(ctx context.Context, channel *model.Channel, modelName string) testResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	models, err := fetchChannelUpstreamModelIDsWithContext(ctx, channel)
+	if err != nil {
+		return testResult{localErr: fmt.Errorf("safe video channel probe failed: %w", err), newAPIError: types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusBadGateway)}
+	}
+	mappedModel := mapChannelTestModel(channel, modelName)
+	if !lo.Contains(models, mappedModel) {
+		err = fmt.Errorf("safe video channel probe succeeded, but upstream /v1/models does not list mapped model %q", mappedModel)
+		return testResult{localErr: err, newAPIError: types.NewOpenAIError(err, types.ErrorCodeModelNotFound, http.StatusBadGateway), mappedModel: mappedModel}
+	}
+	return testResult{httpStatus: http.StatusOK, protocol: types.RelayFormatTask, mappedModel: mappedModel}
 }
 
 func resolveChannelTestUserID(c *gin.Context) (int, error) {
@@ -143,6 +188,9 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 	}
 
 	endpointType = normalizeChannelTestEndpoint(channel, testModel, endpointType)
+	if endpointType == string(constant.EndpointTypeOpenAIVideo) {
+		return probeOpenAIVideoChannel(ctx, channel, testModel)
+	}
 
 	requestPath := "/v1/chat/completions"
 
