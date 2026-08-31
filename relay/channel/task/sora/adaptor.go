@@ -291,6 +291,38 @@ func buildMiniMaxH3Body(bodyMap map[string]interface{}, req relaycommon.TaskSubm
 	return common.Marshal(payload)
 }
 
+func normalizeTopLevelAudioAlias(bodyMap map[string]interface{}) {
+	audio, exists := bodyMap["audio"]
+	if !exists {
+		return
+	}
+
+	var generateAudio bool
+	switch value := audio.(type) {
+	case bool:
+		generateAudio = value
+	case string:
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "true":
+			generateAudio = true
+		case "false":
+			generateAudio = false
+		default:
+			return
+		}
+	default:
+		return
+	}
+
+	// The canonical field always wins when both forms are present. Removing the
+	// boolean-like alias prevents providers that use audio for a media reference
+	// from rejecting the request before they can read generate_audio.
+	if _, explicit := bodyMap["generate_audio"]; !explicit {
+		bodyMap["generate_audio"] = generateAudio
+	}
+	delete(bodyMap, "audio")
+}
+
 func buildMiniMaxH3ResolutionBody(bodyMap map[string]interface{}, req relaycommon.TaskSubmitReq, upstreamModel string) ([]byte, error) {
 	// This provider family accepts the OpenAI videos endpoint but not the
 	// legacy MiniMax-H3 input envelope. Preserve top-level vendor parameters,
@@ -516,6 +548,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			bodyMap["model"] = info.UpstreamModelName
 			if usesXinshujuContentProtocol(info) {
 				bodyMap = buildXinshujuContentBody(bodyMap, info.UpstreamModelName)
+			} else {
+				normalizeTopLevelAudioAlias(bodyMap)
 			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				info.TaskRequestSnapshot = append(json.RawMessage(nil), newBody...)

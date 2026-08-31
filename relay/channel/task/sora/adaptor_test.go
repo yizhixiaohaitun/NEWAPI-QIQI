@@ -192,6 +192,94 @@ func TestGenericOpenAIVideoProtocolDoesNotUseXinshujuFormatForSeedanceModel(t *t
 	assert.NotContains(t, payload, "content")
 }
 
+func TestGenericOpenAIVideoNormalizesTopLevelBooleanAudio(t *testing.T) {
+	tests := []struct {
+		name     string
+		audio    string
+		expected bool
+	}{
+		{name: "boolean false", audio: "false", expected: false},
+		{name: "boolean true", audio: "true", expected: true},
+		{name: "string false", audio: `"false"`, expected: false},
+		{name: "string true", audio: `"true"`, expected: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := `{"model":"seedance-2-5","prompt":"a lighthouse","audio":` + test.audio + `}`
+			context, info := newJSONTaskContextForModel(t, body, "seedance-2-5")
+			info.ChannelSetting.VideoUpstreamProtocol = dto.VideoUpstreamProtocolOpenAI
+			adaptor := &TaskAdaptor{}
+
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+			reader, err := adaptor.BuildRequestBody(context, info)
+			require.NoError(t, err)
+			forwarded, err := io.ReadAll(reader)
+			require.NoError(t, err)
+
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(forwarded, &payload))
+			assert.Equal(t, test.expected, payload["generate_audio"])
+			assert.NotContains(t, payload, "audio")
+			assert.JSONEq(t, string(forwarded), string(info.TaskRequestSnapshot))
+		})
+	}
+}
+
+func TestGenericOpenAIVideoPreservesAudioReference(t *testing.T) {
+	body := `{"model":"seedance-2-5","prompt":"a lighthouse","audio":"https://example.com/reference.mp3"}`
+	context, info := newJSONTaskContextForModel(t, body, "seedance-2-5")
+	info.ChannelSetting.VideoUpstreamProtocol = dto.VideoUpstreamProtocolOpenAI
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+	reader, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	assert.Equal(t, "https://example.com/reference.mp3", payload["audio"])
+	assert.NotContains(t, payload, "generate_audio")
+}
+
+func TestGenericOpenAIVideoExplicitGenerateAudioTakesPrecedence(t *testing.T) {
+	body := `{"model":"seedance-2-5","prompt":"a lighthouse","audio":false,"generate_audio":true}`
+	context, info := newJSONTaskContextForModel(t, body, "seedance-2-5")
+	info.ChannelSetting.VideoUpstreamProtocol = dto.VideoUpstreamProtocolOpenAI
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+	reader, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	assert.Equal(t, true, payload["generate_audio"])
+	assert.NotContains(t, payload, "audio")
+}
+
+func TestGenericOpenAIVideoDoesNotRewriteNestedOrReferenceAudio(t *testing.T) {
+	body := `{"model":"sora-2","prompt":"a lighthouse","audio":"https://example.com/reference.mp3","input":{"audio":false}}`
+	context, info := newJSONTaskContextForModel(t, body, "sora-2")
+	info.ChannelSetting.VideoUpstreamProtocol = dto.VideoUpstreamProtocolOpenAI
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(context, info))
+	reader, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	assert.Equal(t, "https://example.com/reference.mp3", payload["audio"])
+	assert.Equal(t, false, payload["input"].(map[string]any)["audio"])
+	assert.NotContains(t, payload, "generate_audio")
+}
+
 func TestXinshujuProtocolSelectionIsProviderScoped(t *testing.T) {
 	tests := []struct {
 		name     string
