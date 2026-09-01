@@ -413,6 +413,30 @@ export const useLogsData = () => {
           value: other.text_output,
         });
       }
+      const regularInputTokens = Number(logs[i].prompt_tokens || 0);
+      const completionTokens = Number(logs[i].completion_tokens || 0);
+      const cacheReadTokens = Number(other?.cache_tokens || 0);
+      const cacheWrite5m = Number(other?.cache_creation_tokens_5m || 0);
+      const cacheWrite1h = Number(other?.cache_creation_tokens_1h || 0);
+      const cacheWriteTokens =
+        cacheWrite5m > 0 || cacheWrite1h > 0
+          ? cacheWrite5m + cacheWrite1h
+          : Number(other?.cache_write_tokens || other?.cache_creation_tokens || 0);
+      const inputTokensTotal = Number.isFinite(Number(other?.input_tokens_total))
+        ? Number(other.input_tokens_total)
+        : other?.usage_semantic === 'anthropic' || other?.claude
+          ? regularInputTokens + cacheReadTokens + cacheWriteTokens
+          : regularInputTokens;
+      if (
+        inputTokensTotal > 0 ||
+        completionTokens > 0 ||
+        cacheReadTokens > 0 ||
+        cacheWriteTokens > 0
+      ) {
+        expandDataLocal.push({ key: t('总输入 Tokens'), value: inputTokensTotal });
+        expandDataLocal.push({ key: t('普通输入 Tokens'), value: regularInputTokens });
+        expandDataLocal.push({ key: t('输出 Tokens'), value: completionTokens });
+      }
       if (other?.cache_tokens > 0) {
         expandDataLocal.push({
           key: t('缓存 Tokens'),

@@ -745,6 +745,14 @@ export const getLogsColumns = ({
         const cacheSummary = getPromptCacheSummary(other);
         const hasCacheRead = (cacheSummary?.cacheReadTokens || 0) > 0;
         const hasCacheWrite = (cacheSummary?.cacheWriteTokens || 0) > 0;
+        const regularInputTokens = toTokenNumber(text);
+        const inputTokensTotal = Number.isFinite(Number(other?.input_tokens_total))
+          ? Number(other.input_tokens_total)
+          : other?.usage_semantic === 'anthropic' || other?.claude
+            ? regularInputTokens +
+              (cacheSummary?.cacheReadTokens || 0) +
+              (cacheSummary?.cacheWriteTokens || 0)
+            : regularInputTokens;
         let cacheText = '';
         if (hasCacheRead && hasCacheWrite) {
           cacheText = `${t('缓存读')} ${formatTokenCount(cacheSummary.cacheReadTokens)} · ${t('写')} ${formatTokenCount(cacheSummary.cacheWriteTokens)}`;
@@ -766,7 +774,19 @@ export const getLogsColumns = ({
               lineHeight: 1.2,
             }}
           >
-            <span>{text}</span>
+            <span>{inputTokensTotal.toLocaleString()}</span>
+            {(hasCacheRead || hasCacheWrite) && (
+              <span
+                style={{
+                  marginTop: 2,
+                  fontSize: 11,
+                  color: 'var(--semi-color-text-2)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {t('普通输入')} {regularInputTokens.toLocaleString()}
+              </span>
+            )}
             {cacheText ? (
               <span
                 style={{
@@ -790,12 +810,11 @@ export const getLogsColumns = ({
       title: t('输出'),
       dataIndex: 'completion_tokens',
       render: (text, record, index) => {
-        return parseInt(text) > 0 &&
-          (record.type === 0 ||
-            record.type === 2 ||
-            record.type === 5 ||
-            record.type === 6) ? (
-          <>{<span> {text} </span>}</>
+        return record.type === 0 ||
+          record.type === 2 ||
+          record.type === 5 ||
+          record.type === 6 ? (
+          <>{<span> {toTokenNumber(text)} </span>}</>
         ) : (
           <></>
         );

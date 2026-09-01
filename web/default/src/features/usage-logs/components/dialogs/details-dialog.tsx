@@ -393,13 +393,33 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
   const cacheWrite = other.cache_creation_tokens || 0
   const cacheWrite5m = other.cache_creation_tokens_5m || 0
   const cacheWrite1h = other.cache_creation_tokens_1h || 0
-  const hasTokens = promptTokens > 0 || completionTokens > 0
+  const normalizedCacheWrite =
+    cacheWrite5m > 0 || cacheWrite1h > 0
+      ? cacheWrite5m + cacheWrite1h
+      : other.cache_write_tokens || cacheWrite
+  const inputTokensTotal =
+    other.input_tokens_total ??
+    (other.usage_semantic === 'anthropic' || other.claude
+      ? promptTokens + cacheRead + normalizedCacheWrite
+      : promptTokens)
+  const hasTokens =
+    inputTokensTotal > 0 ||
+    completionTokens > 0 ||
+    cacheRead > 0 ||
+    normalizedCacheWrite > 0
 
   if (!hasTokens) return null
 
   const rows: Array<{ label: string; value: string }> = []
 
-  rows.push({ label: t('Input Tokens'), value: promptTokens.toLocaleString() })
+  rows.push({
+    label: t('Total Input Tokens'),
+    value: inputTokensTotal.toLocaleString(),
+  })
+  rows.push({
+    label: t('Regular Input Tokens'),
+    value: promptTokens.toLocaleString(),
+  })
   rows.push({
     label: t('Output Tokens'),
     value: completionTokens.toLocaleString(),

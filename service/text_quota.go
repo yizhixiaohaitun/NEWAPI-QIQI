@@ -72,6 +72,13 @@ func cacheWriteTokensTotal(summary textQuotaSummary) int {
 // prompt_tokens/total_tokens. Claude can return a cache-only response (including
 // an explicit refusal), and those cache reads/writes are still billable even
 // when input_tokens and output_tokens are both zero.
+func inputTokensTotalForLog(usage *dto.Usage) (int, bool) {
+	if usage == nil || usage.UsageSource == "" || usage.InputTokens <= 0 {
+		return 0, false
+	}
+	return usage.InputTokens, true
+}
+
 func hasBillableTextUsage(summary textQuotaSummary) bool {
 	return summary.TotalTokens > 0 ||
 		summary.CacheTokens > 0 ||
@@ -488,12 +495,11 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		// to cache_creation_tokens.
 		other["cache_write_tokens"] = cacheWriteTokens
 	}
-	if relayInfo.GetFinalRequestRelayFormat() != types.RelayFormatClaude && billingUsage != nil && billingUsage.UsageSource != "" && billingUsage.InputTokens > 0 {
-		// input_tokens_total: explicit normalized total input used by the usage log UI.
-		// Only write this field when upstream/current conversion has already provided a
-		// reliable total input value and tagged the usage source. Do not infer it from
-		// prompt/cache fields here, otherwise old upstream payloads may be double-counted.
-		other["input_tokens_total"] = billingUsage.InputTokens
+	if inputTokensTotal, ok := inputTokensTotalForLog(billingUsage); ok {
+		// input_tokens_total is audit-only UI data. Settlement still uses the distinct
+		// prompt/cache fields above, preserving Anthropic cache prices without folding
+		// cache tokens into ordinary PromptTokens.
+		other["input_tokens_total"] = inputTokensTotal
 	}
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)

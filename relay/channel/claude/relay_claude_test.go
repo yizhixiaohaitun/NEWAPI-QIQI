@@ -1,11 +1,18 @@
 package claude
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service/relayconvert"
+	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -303,6 +310,107 @@ func TestBuildOpenAIStyleUsageFromClaudeUsagePreservesCacheCreationRemainder(t *
 			}
 		})
 	}
+}
+
+func newClaudeRefusalUsageTestContext(t *testing.T) (*gin.Context, *relaycommon.RelayInfo) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	info := &relaycommon.RelayInfo{
+		RelayFormat:             types.RelayFormatClaude,
+		FinalRequestRelayFormat: types.RelayFormatClaude,
+		OriginModelName:         "claude-3-5-sonnet",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "claude-3-5-sonnet",
+		},
+	}
+	info.SetEstimatePromptTokens(321)
+	return ctx, info
+}
+
+func TestClaudeCacheOnlyRefusalEstimatesOnlyMissingOutput(t *testing.T) {
+	ctx, info := newClaudeRefusalUsageTestContext(t)
+	maybeMarkClaudeRefusal(ctx, "refusal")
+	claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         1901,
+			CachedCreationTokens: 2909,
+		},
+	}}
+
+	require.True(t, maybeEstimateMissingClaudeRefusalUsage(ctx, info, claudeInfo, "I cannot help with that request."))
+	require.Zero(t, claudeInfo.Usage.PromptTokens)
+	require.Positive(t, claudeInfo.Usage.CompletionTokens)
+	require.Equal(t, 1901, claudeInfo.Usage.PromptTokensDetails.CachedTokens)
+	require.Equal(t, 2909, claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens)
+	require.True(t, claudeInfo.Usage.BillingUsage.Estimated)
+	require.Zero(t, claudeInfo.Usage.BillingUsage.ClaudeUsage.InputTokens)
+	require.Equal(t, 1901, claudeInfo.Usage.BillingUsage.ClaudeUsage.CacheReadInputTokens)
+	require.Equal(t, 2909, claudeInfo.Usage.BillingUsage.ClaudeUsage.CacheCreationInputTokens)
+	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens))
+}
+
+func TestClaudeRefusalRealUsageIsNotOverwritten(t *testing.T) {
+	ctx, info := newClaudeRefusalUsageTestContext(t)
+	maybeMarkClaudeRefusal(ctx, "refusal")
+	claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{
+		PromptTokens:     17,
+		CompletionTokens: 3,
+		TotalTokens:      20,
+	}}
+
+	require.False(t, maybeEstimateMissingClaudeRefusalUsage(ctx, info, claudeInfo, "refused"))
+	require.Equal(t, 17, claudeInfo.Usage.PromptTokens)
+	require.Equal(t, 3, claudeInfo.Usage.CompletionTokens)
+	require.False(t, common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens))
+}
+
+func TestClaudeNonRefusalAndMissingExplanationDoNotEstimate(t *testing.T) {
+	ctx, info := newClaudeRefusalUsageTestContext(t)
+	claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
+
+	require.False(t, maybeEstimateMissingClaudeRefusalUsage(ctx, info, claudeInfo, "protocol error"))
+	maybeMarkClaudeRefusal(ctx, "refusal")
+	require.False(t, maybeEstimateMissingClaudeRefusalUsage(ctx, info, claudeInfo, ""))
+	require.Zero(t, claudeInfo.Usage.TotalTokens)
+}
+
+func TestHandleClaudeResponseDataUsesRefusalStopExplanation(t *testing.T) {
+	ctx, info := newClaudeRefusalUsageTestContext(t)
+	claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
+	response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header)}
+	data := []byte(`{"id":"msg_refusal","type":"message","role":"assistant","model":"claude-3-5-sonnet","stop_reason":"refusal","stop_details":{"type":"refusal","explanation":"I cannot help with that request."},"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":1901,"cache_creation_input_tokens":2909}}`)
+
+	require.Nil(t, HandleClaudeResponseData(ctx, info, claudeInfo, response, data))
+	require.Zero(t, claudeInfo.Usage.PromptTokens)
+	require.Positive(t, claudeInfo.Usage.CompletionTokens)
+	require.Equal(t, 1901, claudeInfo.Usage.PromptTokensDetails.CachedTokens)
+	require.Equal(t, 2909, claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens)
+}
+
+func TestHandleStreamResponseDataCollectsRefusalExplanation(t *testing.T) {
+	ctx, info := newClaudeRefusalUsageTestContext(t)
+	claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
+	data := `{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"type":"refusal","explanation":"I cannot help with that request."}},"usage":{"output_tokens":0}}`
+
+	require.Nil(t, HandleStreamResponseData(ctx, info, claudeInfo, data))
+	require.Equal(t, "claude_stop_reason=refusal", common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason))
+	require.Equal(t, "I cannot help with that request.", claudeInfo.ResponseText.String())
+}
+
+func TestHandleStreamFinalResponseUsesSameRefusalFallback(t *testing.T) {
+	ctx, info := newClaudeRefusalUsageTestContext(t)
+	maybeMarkClaudeRefusal(ctx, "refusal")
+	claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{
+		PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 1901},
+	}}
+	claudeInfo.ResponseText.WriteString("I cannot help with that request.")
+
+	HandleStreamFinalResponse(ctx, info, claudeInfo)
+
+	require.Zero(t, claudeInfo.Usage.PromptTokens)
+	require.Positive(t, claudeInfo.Usage.CompletionTokens)
+	require.Equal(t, 1901, claudeInfo.Usage.PromptTokensDetails.CachedTokens)
 }
 
 func TestBuildOpenAIStyleUsageFromClaudeUsageDefaultsAggregateCacheCreationTo5m(t *testing.T) {
