@@ -36,8 +36,9 @@ import {
   LOG_TYPE_ALL_VALUE,
   LOG_TYPE_ENUM,
 } from '../constants'
+import type { UsageLog } from '../data/schema'
 import { useColumnsByCategory } from '../lib/columns'
-import { parseLogOther } from '../lib/format'
+import { parseUsageLogOther } from '../lib/format'
 import { fetchLogsByCategory } from '../lib/utils'
 import type { LogCategory, TaskLog } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
@@ -237,9 +238,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
         let tintClass =
           isCommon && logType != null ? (logTypeRowTint[logType] ?? '') : ''
         if (isCommon && isAdmin) {
-          const other = parseLogOther(
-            ((row.original as Record<string, unknown>).other as string) ?? ''
-          )
+          const other = parseUsageLogOther(row.original as unknown as UsageLog)
           if (other?.admin_info?.quota_saturation) {
             tintClass = quotaSaturationRowTint
           }

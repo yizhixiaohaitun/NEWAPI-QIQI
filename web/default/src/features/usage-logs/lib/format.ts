@@ -26,6 +26,9 @@ import {
 
 import type { UsageLog } from '../data/schema'
 import type { LogOtherData } from '../types'
+import { parseLogOther, parseUsageLogOther } from './parse-log-other'
+
+export { parseLogOther, parseUsageLogOther }
 
 export { normalizeTierLabel }
 
@@ -93,20 +96,6 @@ export function isViolationFeeLog(other: LogOtherData | null): boolean {
 }
 
 /**
- * Parse the 'other' field from JSON string to object
- */
-export function parseLogOther(other: string): LogOtherData | null {
-  if (!other) return null
-  try {
-    return JSON.parse(other) as LogOtherData
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to parse log other field:', error)
-    return null
-  }
-}
-
-/**
  * Get time color based on duration (in seconds)
  */
 export function getTimeColor(
@@ -158,7 +147,7 @@ export function formatModelName(log: UsageLog): {
   isMapped: boolean
   actualModel?: string
 } {
-  const other = parseLogOther(log.other)
+  const other = parseUsageLogOther(log)
   const isMapped = !!(
     other?.is_model_mapped &&
     other?.upstream_model_name &&

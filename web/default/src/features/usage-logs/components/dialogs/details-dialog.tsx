@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -31,7 +32,6 @@ import {
   Info,
   LogIn,
 } from 'lucide-react'
-import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -47,7 +47,7 @@ import { cn } from '@/lib/utils'
 
 import type { UsageLog } from '../../data/schema'
 import {
-  parseLogOther,
+  parseUsageLogOther,
   getParamOverrideActionLabel,
   parseAuditLine,
   decodeBillingExprB64,
@@ -58,6 +58,7 @@ import {
   getResponseTimeColor,
   renderAuditContent,
 } from '../../lib/format'
+import { getTokenUsageSummary } from '../../lib/token-usage'
 import {
   getLogTypeConfig,
   isPerCallBilling,
@@ -179,7 +180,9 @@ function getUsageBillingPathLabel(
   }
 }
 
-function isUsageBillingPathLocal(adminInfo: LogOtherData['admin_info']): boolean {
+function isUsageBillingPathLocal(
+  adminInfo: LogOtherData['admin_info']
+): boolean {
   if (adminInfo?.usage_billing_path) {
     return adminInfo.usage_billing_path === USAGE_BILLING_PATH.LOCAL
   }
@@ -387,37 +390,30 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
   const { t } = useTranslation()
   const { log, other } = props
 
-  const promptTokens = log.prompt_tokens || 0
-  const completionTokens = log.completion_tokens || 0
-  const cacheRead = other.cache_tokens || 0
-  const cacheWrite = other.cache_creation_tokens || 0
-  const cacheWrite5m = other.cache_creation_tokens_5m || 0
-  const cacheWrite1h = other.cache_creation_tokens_1h || 0
-  const normalizedCacheWrite =
-    cacheWrite5m > 0 || cacheWrite1h > 0
-      ? cacheWrite5m + cacheWrite1h
-      : other.cache_write_tokens || cacheWrite
-  const inputTokensTotal =
-    other.input_tokens_total ??
-    (other.usage_semantic === 'anthropic' || other.claude
-      ? promptTokens + cacheRead + normalizedCacheWrite
-      : promptTokens)
-  const hasTokens =
-    inputTokensTotal > 0 ||
-    completionTokens > 0 ||
-    cacheRead > 0 ||
-    normalizedCacheWrite > 0
+  const usage = getTokenUsageSummary(
+    log.prompt_tokens,
+    log.completion_tokens,
+    other
+  )
+  if (!usage.hasTokens) return null
 
-  if (!hasTokens) return null
-
+  const {
+    promptTokens,
+    completionTokens,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
+    cacheWrite5mTokens: cacheWrite5m,
+    cacheWrite1hTokens: cacheWrite1h,
+    totalInputTokens,
+  } = usage
   const rows: Array<{ label: string; value: string }> = []
 
   rows.push({
-    label: t('Total Input Tokens'),
-    value: inputTokensTotal.toLocaleString(),
+    label: `${t('Total')} ${t('Input Tokens')}`,
+    value: totalInputTokens.toLocaleString(),
   })
   rows.push({
-    label: t('Regular Input Tokens'),
+    label: `${t('Standard')} ${t('Input Tokens')}`,
     value: promptTokens.toLocaleString(),
   })
   rows.push({
@@ -480,7 +476,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const { t } = useTranslation()
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const details = props.log.content ?? ''
-  const other = parseLogOther(props.log.other)
+  const other = parseUsageLogOther(props.log)
   const typeConfig = getLogTypeConfig(props.log.type)
 
   const isViolation = isViolationFeeLog(other)
