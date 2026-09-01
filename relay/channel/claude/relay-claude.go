@@ -32,6 +32,71 @@ func maybeMarkClaudeRefusal(c *gin.Context, stopReason string) {
 	}
 }
 
+func claudeRefusalResponseText(response *dto.ClaudeResponse) string {
+	if response == nil {
+		return ""
+	}
+	var text strings.Builder
+	for _, content := range response.Content {
+		if content.Text != nil {
+			text.WriteString(*content.Text)
+		}
+		if content.Thinking != nil {
+			text.WriteString(*content.Thinking)
+		}
+	}
+	if text.Len() == 0 {
+		text.WriteString(response.Completion)
+	}
+	if text.Len() == 0 && response.StopDetails != nil {
+		text.WriteString(response.StopDetails.Explanation)
+	}
+	return text.String()
+}
+
+func maybeEstimateMissingClaudeRefusalUsage(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, responseText string) bool {
+	if c == nil || info == nil || claudeInfo == nil ||
+		common.GetContextKeyString(c, constant.ContextKeyAdminRejectReason) != "claude_stop_reason=refusal" ||
+		strings.TrimSpace(responseText) == "" {
+		return false
+	}
+	if claudeInfo.Usage == nil {
+		claudeInfo.Usage = &dto.Usage{}
+	}
+
+	hasReportedInput := claudeInfo.Usage.PromptTokens > 0 ||
+		claudeInfo.Usage.PromptTokensDetails.CachedTokens > 0 ||
+		claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens > 0 ||
+		claudeInfo.Usage.ClaudeCacheCreation5mTokens > 0 ||
+		claudeInfo.Usage.ClaudeCacheCreation1hTokens > 0
+	if claudeInfo.Usage.CompletionTokens > 0 && hasReportedInput {
+		return false
+	}
+
+	estimated := service.ResponseText2Usage(c, responseText, info.UpstreamModelName, info.GetEstimatePromptTokens())
+	changed := false
+	if claudeInfo.Usage.CompletionTokens == 0 && estimated.CompletionTokens > 0 {
+		claudeInfo.Usage.CompletionTokens = estimated.CompletionTokens
+		changed = true
+	}
+	if !hasReportedInput && estimated.PromptTokens > 0 {
+		claudeInfo.Usage.PromptTokens = estimated.PromptTokens
+		changed = true
+	}
+	if !changed {
+		return false
+	}
+
+	claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
+	claudeInfo.Usage.UsageSemantic = dto.BillingUsageSemanticAnthropic
+	billingUsage := dto.NewClaudeMessagesBillingUsage(buildMessageDeltaPatchUsage(nil, claudeInfo))
+	if billingUsage != nil {
+		billingUsage.Estimated = true
+		claudeInfo.Usage.BillingUsage = billingUsage
+	}
+	return true
+}
+
 func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCompletionsStreamResponse {
 	return relayconvert.StreamResponseClaude2OpenAI(claudeResponse)
 }
@@ -99,6 +164,13 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	if claudeResponse.Delta != nil && claudeResponse.Delta.StopReason != nil {
 		maybeMarkClaudeRefusal(c, *claudeResponse.Delta.StopReason)
 	}
+	stopDetails := claudeResponse.StopDetails
+	if stopDetails == nil && claudeResponse.Delta != nil {
+		stopDetails = claudeResponse.Delta.StopDetails
+	}
+	if stopDetails != nil && strings.TrimSpace(stopDetails.Explanation) != "" {
+		claudeInfo.ResponseText.WriteString(stopDetails.Explanation)
+	}
 	if info.RelayFormat == types.RelayFormatClaude {
 		FormatClaudeResponseInfo(&claudeResponse, nil, claudeInfo)
 
@@ -131,6 +203,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 }
 
 func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo) {
+	maybeEstimateMissingClaudeRefusalUsage(c, info, claudeInfo, claudeInfo.ResponseText.String())
 	if claudeInfo.Usage.PromptTokens == 0 {
 		//上游出错
 	}
@@ -144,7 +217,11 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 			(!claudeInfo.Done && fallback.CompletionTokens > claudeInfo.Usage.CompletionTokens) {
 			claudeInfo.Usage.CompletionTokens = fallback.CompletionTokens
 		}
-		if claudeInfo.Usage.PromptTokens == 0 {
+		hasReportedInput := claudeInfo.Usage.PromptTokensDetails.CachedTokens > 0 ||
+			claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens > 0 ||
+			claudeInfo.Usage.ClaudeCacheCreation5mTokens > 0 ||
+			claudeInfo.Usage.ClaudeCacheCreation1hTokens > 0
+		if claudeInfo.Usage.PromptTokens == 0 && !hasReportedInput {
 			claudeInfo.Usage.PromptTokens = fallback.PromptTokens
 		}
 		claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
@@ -224,6 +301,7 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		claudeInfo.Usage.ClaudeCacheCreation5mTokens = claudeResponse.Usage.GetCacheCreation5mTokens()
 		claudeInfo.Usage.ClaudeCacheCreation1hTokens = claudeResponse.Usage.GetCacheCreation1hTokens()
 	}
+	maybeEstimateMissingClaudeRefusalUsage(c, info, claudeInfo, claudeRefusalResponseText(&claudeResponse))
 	var responseData []byte
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:

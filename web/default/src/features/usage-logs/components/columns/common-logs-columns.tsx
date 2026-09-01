@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
 import { GitBranch, KeyRound, Sparkles } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { GroupBadge } from '@/components/group-badge'
@@ -46,10 +46,12 @@ import {
   formatModelName,
   getTieredBillingSummary,
   hasAnyCacheTokens,
-  parseLogOther,
+  parseUsageLogOther,
   isViolationFeeLog,
   renderAuditContent,
 } from '../../lib/format'
+import { shouldMountUsageLogDetails } from '../../lib/parse-log-other'
+import { getTokenUsageSummary } from '../../lib/token-usage'
 import {
   isDisplayableLogType,
   isTimingLogType,
@@ -289,8 +291,10 @@ function buildTypeDetailSegments(
   return segments
 }
 
-export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
-  const { t } = useTranslation()
+function createCommonLogsColumns(
+  isAdmin: boolean,
+  t: (key: string, opts?: Record<string, unknown>) => string
+): ColumnDef<UsageLog>[] {
   const columns: ColumnDef<UsageLog>[] = [
     {
       accessorKey: 'created_at',
@@ -338,7 +342,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
 
           if (!isDisplayableLogType(log.type)) return null
 
-          const other = parseLogOther(log.other)
+          const other = parseUsageLogOther(log)
           const affinity = other?.admin_info?.channel_affinity
           const rawUseChannel = other?.admin_info?.use_channel ?? []
           const useChannel = Array.isArray(rawUseChannel)
@@ -552,7 +556,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       const tokenName = log.token_name
       if (!tokenName) return null
 
-      const other = parseLogOther(log.other)
+      const other = parseUsageLogOther(log)
       const displayName = sensitiveVisible ? tokenName : '••••'
       let group = log.group
       if (!group) group = other?.group || ''
@@ -632,7 +636,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         if (!isTimingLogType(log.type)) return null
 
         const useTime = row.getValue('use_time') as number
-        const other = parseLogOther(log.other)
+        const other = parseUsageLogOther(log)
         const tokensPerSecond =
           useTime > 0 && log.completion_tokens > 0
             ? log.completion_tokens / useTime
@@ -656,28 +660,36 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const log = row.original
         if (!isDisplayableLogType(log.type)) return null
 
-        const other = parseLogOther(log.other)
+        const other = parseUsageLogOther(log)
 
-        const promptTokens = log.prompt_tokens || 0
-        const completionTokens = log.completion_tokens || 0
-        if (promptTokens === 0 && completionTokens === 0) {
+        const usage = getTokenUsageSummary(
+          log.prompt_tokens,
+          log.completion_tokens,
+          other
+        )
+        if (!usage.hasTokens) {
           return <span className='text-muted-foreground text-xs'>-</span>
         }
 
-        const cacheReadTokens = other?.cache_tokens || 0
-        const cacheWrite5m = other?.cache_creation_tokens_5m || 0
-        const cacheWrite1h = other?.cache_creation_tokens_1h || 0
-        const hasSplitCache = cacheWrite5m > 0 || cacheWrite1h > 0
-        const cacheWriteTokens = hasSplitCache
-          ? cacheWrite5m + cacheWrite1h
-          : other?.cache_creation_tokens || 0
+        const {
+          promptTokens,
+          completionTokens,
+          cacheReadTokens,
+          cacheWriteTokens,
+          totalInputTokens,
+        } = usage
 
         return (
           <div className='flex flex-col gap-0.5'>
             <span className='font-mono text-xs font-medium tabular-nums'>
-              {promptTokens.toLocaleString()} /{' '}
+              {totalInputTokens.toLocaleString()} /{' '}
               {completionTokens.toLocaleString()}
             </span>
+            {totalInputTokens !== promptTokens && (
+              <span className='text-muted-foreground/60 text-[11px]'>
+                {t('Standard')} {promptTokens.toLocaleString()}
+              </span>
+            )}
             {(cacheReadTokens > 0 || cacheWriteTokens > 0) && (
               <div className='flex items-center gap-1 text-[11px]'>
                 {cacheReadTokens > 0 && (
@@ -705,7 +717,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         if (!isDisplayableLogType(log.type)) return null
 
         const quota = row.getValue('quota') as number
-        const other = parseLogOther(log.other)
+        const other = parseUsageLogOther(log)
         const isSubscription = other?.billing_source === 'subscription'
 
         if (isSubscription) {
@@ -757,7 +769,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         if (!isTimingLogType(log.type)) return null
 
         const useTime = row.getValue('use_time') as number
-        const other = parseLogOther(log.other)
+        const other = parseUsageLogOther(log)
 
         return (
           <TimingMetricsCell
@@ -776,7 +788,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       cell: function DetailsCell({ row }) {
         const [dialogOpen, setDialogOpen] = useState(false)
         const log = row.original
-        const other = parseLogOther(log.other)
+        const other = parseUsageLogOther(log)
 
         const segments = buildDetailSegments(log, other, t, isAdmin)
         const primary = segments[0]
@@ -822,12 +834,14 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             >
               {detailsPreview}
             </button>
-            <DetailsDialog
-              log={log}
-              isAdmin={isAdmin}
-              open={dialogOpen}
-              onOpenChange={setDialogOpen}
-            />
+            {shouldMountUsageLogDetails(dialogOpen) && (
+              <DetailsDialog
+                log={log}
+                isAdmin={isAdmin}
+                open
+                onOpenChange={setDialogOpen}
+              />
+            )}
           </>
         )
       },
@@ -842,7 +856,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       header: t('Reference'),
       cell: ({ row }) => {
         const log = row.original
-        const other = parseLogOther(log.other)
+        const other = parseUsageLogOther(log)
         const events = other?.admin_info?.compatibility_events
 
         if (!Array.isArray(events) || events.length === 0) {
@@ -868,4 +882,9 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
   }
 
   return columns
+}
+
+export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
+  const { t } = useTranslation()
+  return useMemo(() => createCommonLogsColumns(isAdmin, t), [isAdmin, t])
 }

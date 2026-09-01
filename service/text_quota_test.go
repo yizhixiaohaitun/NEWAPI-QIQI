@@ -141,6 +141,40 @@ func TestCalculateTextQuotaSummaryBillsClaudeCacheOnlyUsage(t *testing.T) {
 	require.Equal(t, 3826, summary.Quota)
 }
 
+func TestClaudeCacheOnlyRefusalTotalInputAuditDoesNotChangeBilling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	relayInfo := &relaycommon.RelayInfo{
+		FinalRequestRelayFormat: types.RelayFormatClaude,
+		OriginModelName:         "claude-3-5-sonnet",
+		PriceData: types.PriceData{
+			ModelRatio:           1,
+			CompletionRatio:      2,
+			CacheRatio:           0.1,
+			CacheCreationRatio:   1.25,
+			CacheCreation5mRatio: 1.25,
+			GroupRatioInfo:       types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{BillingUsage: dto.NewClaudeMessagesBillingUsage(&dto.ClaudeUsage{
+		CacheReadInputTokens:     1901,
+		CacheCreationInputTokens: 2909,
+		OutputTokens:             7,
+	})}
+	billingUsage := effectiveBillingUsage(usage)
+	summary := calculateTextQuotaSummary(ctx, relayInfo, billingUsage)
+
+	require.Zero(t, summary.PromptTokens)
+	require.Equal(t, 1901, summary.CacheTokens)
+	require.Equal(t, 2909, summary.CacheCreationTokens)
+	require.Equal(t, 7, summary.CompletionTokens)
+	require.Equal(t, 3840, summary.Quota)
+	totalInput, ok := inputTokensTotalForLog(billingUsage)
+	require.True(t, ok)
+	require.Equal(t, 4810, totalInput)
+}
+
 func TestCalculateTextQuotaSummaryUsesAnthropicUsageSemanticFromUpstreamUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
