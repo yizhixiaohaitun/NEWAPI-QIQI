@@ -84,6 +84,12 @@ func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCo
 	} else if claudeResponse.Type == "message_delta" {
 		if claudeResponse.Delta != nil && claudeResponse.Delta.StopReason != nil {
 			finishReason := StopReasonClaudeToOpenAI(*claudeResponse.Delta.StopReason)
+			if *claudeResponse.Delta.StopReason == "refusal" {
+				if details := claudeResponse.Delta.StopDetails; details != nil && details.Explanation != "" {
+					// Preserve the upstream explanation as a refusal, not generated content.
+					choice.Delta.Refusal = common.GetPointer(details.Explanation)
+				}
+			}
 			if finishReason != "null" {
 				choice.FinishReason = &finishReason
 			}
