@@ -79,8 +79,8 @@ func TestStreamResponseClaude2OpenAIRefusalSSE(t *testing.T) {
 			if delta["refusal"] != "无法提供该请求的内容。" || choice["finish_reason"] != "content_filter" {
 				t.Errorf("lost refusal explanation or finish reason: %#v", choice)
 			}
-			if _, exists := delta["content"]; exists {
-				t.Errorf("refusal must not be emitted as generated content: %#v", delta)
+			if delta["content"] != "[请求被拒绝]（网关提示）\n上游拒绝原因：无法提供该请求的内容。" {
+				t.Errorf("missing labelled gateway notice: %#v", delta)
 			}
 		}
 	}
@@ -140,5 +140,55 @@ func TestStreamResponseClaude2OpenAINoInventedRefusal(t *testing.T) {
 				t.Fatalf("incorrect finish: %#v", choice)
 			}
 		})
+	}
+}
+
+func TestRefusalNoticeState(t *testing.T) {
+	for _, prior := range []string{
+		`{"type":"content_block_delta","delta":{"type":"text_delta","text":"already visible"}}`,
+		`{"type":"content_block_start","content_block":{"type":"text","text":"already visible"}}`,
+		`{"type":"message_start","message":{"content":[{"type":"text","text":"already visible"}]}}`,
+	} {
+		info := &ClaudeResponseInfo{}
+		var event dto.ClaudeResponse
+		if err := json.Unmarshal([]byte(prior), &event); err != nil {
+			t.Fatal(err)
+		}
+		FormatClaudeResponseInfo(&event, nil, info)
+		var refusal dto.ClaudeResponse
+		if err := json.Unmarshal([]byte(`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"explanation":"reason"}}}`), &refusal); err != nil {
+			t.Fatal(err)
+		}
+		chunk := StreamResponseClaude2OpenAI(&refusal)
+		FormatClaudeResponseInfo(&refusal, chunk, info)
+		if chunk.Choices[0].Delta.Content != nil {
+			t.Fatal("duplicate notice after visible text")
+		}
+		if chunk.Choices[0].Delta.Refusal == nil {
+			t.Fatal("lost semantic refusal")
+		}
+	}
+	for _, data := range []string{
+		`{"type":"message_delta","delta":{"stop_reason":"refusal"}}`,
+		`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"explanation":"   "}}}`,
+	} {
+		info := &ClaudeResponseInfo{}
+		var event dto.ClaudeResponse
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatal(err)
+		}
+		chunk := StreamResponseClaude2OpenAI(&event)
+		FormatClaudeResponseInfo(&event, chunk, info)
+		if chunk.Choices[0].Delta.GetContentString() != "[请求被拒绝]（网关提示）\n上游未提供拒绝原因。" || chunk.Choices[0].Delta.Refusal != nil {
+			t.Fatal("invented reason or missing status")
+		}
+		repeated := StreamResponseClaude2OpenAI(&event)
+		FormatClaudeResponseInfo(&event, repeated, info)
+		if repeated.Choices[0].Delta.Content != nil {
+			t.Fatal("repeated compatibility notice")
+		}
+		if info.ResponseText.Len() != 0 {
+			t.Fatal("notice leaked into token estimation")
+		}
 	}
 }
