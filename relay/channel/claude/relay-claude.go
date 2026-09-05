@@ -186,6 +186,25 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
 			}
 		}
+		// Native consumers may themselves convert Claude to content-only OpenAI.
+		// Insert a complete text block before message_delta, without changing the
+		// original refusal event/usage or feeding gateway text into token estimates.
+		if claudeInfo.MessageStarted && claudeInfo.OpenContentBlocks == 0 {
+			if notice := claudeInfo.TakeRefusalNotice(&claudeResponse); notice != "" {
+				index := common.GetPointer(claudeInfo.NextContentBlockIndex)
+				for _, event := range []dto.ClaudeResponse{
+					{Type: "content_block_start", Index: index, ContentBlock: &dto.ClaudeMediaMessage{Type: "text", Text: common.GetPointer("")}},
+					{Type: "content_block_delta", Index: index, Delta: &dto.ClaudeMediaMessage{Type: "text_delta", Text: common.GetPointer(notice)}},
+					{Type: "content_block_stop", Index: index},
+				} {
+					encoded, marshalErr := common.Marshal(event)
+					if marshalErr != nil {
+						return types.NewError(marshalErr, types.ErrorCodeBadResponseBody)
+					}
+					helper.ClaudeChunkData(c, event, string(encoded))
+				}
+			}
+		}
 		helper.ClaudeChunkData(c, claudeResponse, data)
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		response := StreamResponseClaude2OpenAI(&claudeResponse)

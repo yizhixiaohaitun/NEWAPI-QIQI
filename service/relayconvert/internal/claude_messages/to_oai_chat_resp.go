@@ -19,6 +19,29 @@ type ClaudeResponseInfo struct {
 	ResponseText strings.Builder
 	Usage        *dto.Usage
 	Done         bool
+
+	// Display state is separate from ResponseText, which is used for usage estimates.
+	HasBodyText           bool
+	RefusalNoticeSent     bool
+	MessageStarted        bool
+	NextContentBlockIndex int
+	OpenContentBlocks     int
+}
+
+// TakeRefusalNotice supplies a labelled gateway status for content-only clients.
+// It must never be appended to ResponseText or counted as upstream generation.
+func (info *ClaudeResponseInfo) TakeRefusalNotice(response *dto.ClaudeResponse) string {
+	if info == nil || info.HasBodyText || info.RefusalNoticeSent || response == nil ||
+		response.Type != "message_delta" || response.Delta == nil ||
+		response.Delta.StopReason == nil || *response.Delta.StopReason != "refusal" {
+		return ""
+	}
+	info.RefusalNoticeSent = true
+	notice := "[请求被拒绝]（网关提示）"
+	if details := response.Delta.StopDetails; details != nil && strings.TrimSpace(details.Explanation) != "" {
+		return notice + "\n上游拒绝原因：" + details.Explanation
+	}
+	return notice + "\n上游未提供拒绝原因。"
 }
 
 func StopReasonClaudeToOpenAI(reason string) string {
@@ -84,6 +107,12 @@ func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCo
 	} else if claudeResponse.Type == "message_delta" {
 		if claudeResponse.Delta != nil && claudeResponse.Delta.StopReason != nil {
 			finishReason := StopReasonClaudeToOpenAI(*claudeResponse.Delta.StopReason)
+			if *claudeResponse.Delta.StopReason == "refusal" {
+				if details := claudeResponse.Delta.StopDetails; details != nil && strings.TrimSpace(details.Explanation) != "" {
+					// Preserve the upstream explanation as a refusal, not generated content.
+					choice.Delta.Refusal = common.GetPointer(details.Explanation)
+				}
+			}
 			if finishReason != "null" {
 				choice.FinishReason = &finishReason
 			}
@@ -337,7 +366,13 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 		claudeInfo.Usage = &dto.Usage{}
 	}
 	if claudeResponse.Type == "message_start" {
+		claudeInfo.MessageStarted = true
 		if claudeResponse.Message != nil {
+			for _, block := range claudeResponse.Message.ParseMediaContent() {
+				if block.Type == "text" && block.GetText() != "" {
+					claudeInfo.HasBodyText = true
+				}
+			}
 			claudeInfo.ResponseId = claudeResponse.Message.Id
 			claudeInfo.Model = claudeResponse.Message.Model
 		}
@@ -355,6 +390,7 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 	} else if claudeResponse.Type == "content_block_delta" {
 		if claudeResponse.Delta != nil {
 			if claudeResponse.Delta.Text != nil {
+				claudeInfo.HasBodyText = claudeInfo.HasBodyText || *claudeResponse.Delta.Text != ""
 				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Text)
 			}
 			if claudeResponse.Delta.Thinking != nil {
@@ -388,10 +424,27 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 
 		claudeInfo.Done = true
 	} else if claudeResponse.Type == "content_block_start" {
+		claudeInfo.OpenContentBlocks++
+		if next := claudeResponse.GetIndex() + 1; next > claudeInfo.NextContentBlockIndex {
+			claudeInfo.NextContentBlockIndex = next
+		}
+		if block := claudeResponse.ContentBlock; block != nil && block.Type == "text" && block.GetText() != "" {
+			claudeInfo.HasBodyText = true
+		}
+	} else if claudeResponse.Type == "content_block_stop" {
+		if claudeInfo.OpenContentBlocks > 0 {
+			claudeInfo.OpenContentBlocks--
+		}
+		return false
 	} else {
 		return false
 	}
 	if oaiResponse != nil {
+		if len(oaiResponse.Choices) > 0 {
+			if notice := claudeInfo.TakeRefusalNotice(claudeResponse); notice != "" {
+				oaiResponse.Choices[0].Delta.SetContentString(notice)
+			}
+		}
 		oaiResponse.Id = claudeInfo.ResponseId
 		oaiResponse.Created = claudeInfo.Created
 		oaiResponse.Model = claudeInfo.Model
