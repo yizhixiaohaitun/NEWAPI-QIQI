@@ -18,9 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const visibleRefusalReason = "无法提供该请求的内容。"
+const visibleRefusalReason = "Policy refusal:\nNo reverse engineering."
 const visibleRefusalStart = `{"type":"message_start","message":{"id":"msg_refusal","type":"message","role":"assistant","model":"claude-3-5-sonnet","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":64285,"cache_creation":{"ephemeral_1h_input_tokens":64285}}}}`
-const visibleRefusalDelta = `{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"type":"refusal","category":"reasoning_extraction","explanation":"无法提供该请求的内容。"}},"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":64285,"cache_creation":{"ephemeral_1h_input_tokens":64285}}}`
+const visibleRefusalDelta = `{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"type":"refusal","category":"reasoning_extraction","explanation":"Policy refusal:\nNo reverse engineering."}},"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":64285,"cache_creation":{"ephemeral_1h_input_tokens":64285}}}`
 
 func visibleSSEData(s string) []string {
 	var data []string
@@ -40,8 +40,8 @@ func TestClaudeRefusalVisibleReplay(t *testing.T) {
 		name, delta, want string
 		blocks            []string
 	}{
-		{name: "reason", delta: visibleRefusalDelta, want: "[请求被拒绝]（网关提示）\n上游拒绝原因：" + visibleRefusalReason},
-		{name: "missing", delta: strings.Replace(visibleRefusalDelta, visibleRefusalReason, "", 1), want: "[请求被拒绝]（网关提示）\n上游未提供拒绝原因。"},
+		{name: "reason", delta: visibleRefusalDelta, want: visibleRefusalReason},
+		{name: "missing", delta: strings.Replace(visibleRefusalDelta, `Policy refusal:\nNo reverse engineering.`, "", 1), want: ""},
 		{name: "ordinary", delta: `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":0,"output_tokens":4,"cache_creation_input_tokens":64285,"cache_creation":{"ephemeral_1h_input_tokens":64285}}}`, want: "正常文本", blocks: []string{
 			`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
 			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"正常文本"}}`,
@@ -49,7 +49,7 @@ func TestClaudeRefusalVisibleReplay(t *testing.T) {
 		{name: "existing", delta: visibleRefusalDelta, want: "已有拒绝正文", blocks: []string{
 			`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"已有拒绝正文"}}`,
 			`{"type":"content_block_stop","index":0}`}},
-		{name: "thinking", delta: visibleRefusalDelta, want: "[请求被拒绝]（网关提示）\n上游拒绝原因：" + visibleRefusalReason, blocks: []string{
+		{name: "thinking", delta: visibleRefusalDelta, want: visibleRefusalReason, blocks: []string{
 			`{"type":"content_block_start","index":2,"content_block":{"type":"thinking","thinking":""}}`,
 			`{"type":"content_block_delta","index":2,"delta":{"type":"thinking_delta","thinking":"thinking"}}`,
 			`{"type":"content_block_stop","index":2}`}},
@@ -156,8 +156,11 @@ func TestClaudeRefusalVisibleReplay(t *testing.T) {
 				}
 				require.True(t, foundFinish)
 				require.Equal(t, tc.want, text.String())
-				if native && (tc.name == "reason" || tc.name == "missing") {
+				if native && tc.name == "reason" {
 					require.Equal(t, []string{"message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"}, eventTypes)
+				}
+				if native && tc.name == "missing" {
+					require.Equal(t, []string{"message_start", "message_delta", "message_stop"}, eventTypes)
 				}
 				if dir := os.Getenv("REFUSAL_REPLAY_DIR"); dir != "" {
 					require.NoError(t, os.MkdirAll(dir, 0755))

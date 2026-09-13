@@ -28,7 +28,7 @@ type ClaudeResponseInfo struct {
 	OpenContentBlocks     int
 }
 
-// TakeRefusalNotice supplies a labelled gateway status for content-only clients.
+// TakeRefusalNotice exposes the upstream refusal explanation to content-only clients.
 // It must never be appended to ResponseText or counted as upstream generation.
 func (info *ClaudeResponseInfo) TakeRefusalNotice(response *dto.ClaudeResponse) string {
 	if info == nil || info.HasBodyText || info.RefusalNoticeSent || response == nil ||
@@ -36,12 +36,12 @@ func (info *ClaudeResponseInfo) TakeRefusalNotice(response *dto.ClaudeResponse) 
 		response.Delta.StopReason == nil || *response.Delta.StopReason != "refusal" {
 		return ""
 	}
-	info.RefusalNoticeSent = true
-	notice := "[请求被拒绝]（网关提示）"
-	if details := response.Delta.StopDetails; details != nil && strings.TrimSpace(details.Explanation) != "" {
-		return notice + "\n上游拒绝原因：" + details.Explanation
+	details := response.Delta.StopDetails
+	if details == nil || details.Explanation == "" {
+		return ""
 	}
-	return notice + "\n上游未提供拒绝原因。"
+	info.RefusalNoticeSent = true
+	return details.Explanation
 }
 
 func StopReasonClaudeToOpenAI(reason string) string {
@@ -108,7 +108,7 @@ func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCo
 		if claudeResponse.Delta != nil && claudeResponse.Delta.StopReason != nil {
 			finishReason := StopReasonClaudeToOpenAI(*claudeResponse.Delta.StopReason)
 			if *claudeResponse.Delta.StopReason == "refusal" {
-				if details := claudeResponse.Delta.StopDetails; details != nil && strings.TrimSpace(details.Explanation) != "" {
+				if details := claudeResponse.Delta.StopDetails; details != nil && details.Explanation != "" {
 					// Preserve the upstream explanation as a refusal, not generated content.
 					choice.Delta.Refusal = common.GetPointer(details.Explanation)
 				}
