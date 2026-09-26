@@ -177,12 +177,16 @@ type RelayInfo struct {
 	IsClaudeBetaQuery                     bool // /v1/messages?beta=true
 	IsChannelTest                         bool // channel test request
 	RetryIndex                            int
-	LastError                             *types.NewAPIError
-	RuntimeHeadersOverride                map[string]interface{}
-	UseRuntimeHeadersOverride             bool
-	ParamOverrideAudit                    []string
-	DeferStreamHeadersUntilResponse       bool
-	ResponsesStreamErrorBeforeCommit      bool
+	// Festival discount is captured on first pricing, including before an upstream retry.
+	FestivalDiscountCaptured         bool
+	FestivalDiscountEnabled          bool
+	FestivalDiscountFactor           float64
+	LastError                        *types.NewAPIError
+	RuntimeHeadersOverride           map[string]interface{}
+	UseRuntimeHeadersOverride        bool
+	ParamOverrideAudit               []string
+	DeferStreamHeadersUntilResponse  bool
+	ResponsesStreamErrorBeforeCommit bool
 
 	// PurityResponseObserver receives anonymous structural evidence extracted from
 	// the raw upstream response before protocol normalization.

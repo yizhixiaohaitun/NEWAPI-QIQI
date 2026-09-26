@@ -131,6 +131,8 @@ const createGroupSchema = (t: Translate) =>
       predicateMessage: 'Expected a JSON array of group identifiers',
     }),
     DefaultUseAutoGroup: z.boolean(),
+    FestivalDiscountEnabled: z.boolean(),
+    FestivalDiscountFactor: z.number().finite().gt(0).max(1),
     GroupSpecialUsableGroup: createJsonStringField(t),
   })
 
@@ -205,6 +207,8 @@ export function RatioSettingsCard({
     GroupGroupRatio: normalizeJsonString(groupDefaults.GroupGroupRatio),
     AutoGroups: normalizeJsonString(groupDefaults.AutoGroups),
     DefaultUseAutoGroup: groupDefaults.DefaultUseAutoGroup,
+    FestivalDiscountEnabled: groupDefaults.FestivalDiscountEnabled,
+    FestivalDiscountFactor: groupDefaults.FestivalDiscountFactor,
     GroupSpecialUsableGroup: normalizeJsonString(
       groupDefaults.GroupSpecialUsableGroup
     ),
@@ -291,6 +295,8 @@ export function RatioSettingsCard({
       GroupGroupRatio: normalizeJsonString(groupDefaults.GroupGroupRatio),
       AutoGroups: normalizeJsonString(groupDefaults.AutoGroups),
       DefaultUseAutoGroup: groupDefaults.DefaultUseAutoGroup,
+      FestivalDiscountEnabled: groupDefaults.FestivalDiscountEnabled,
+      FestivalDiscountFactor: groupDefaults.FestivalDiscountFactor,
       GroupSpecialUsableGroup: normalizeJsonString(
         groupDefaults.GroupSpecialUsableGroup
       ),
@@ -361,6 +367,8 @@ export function RatioSettingsCard({
         GroupGroupRatio: normalizeJsonString(values.GroupGroupRatio),
         AutoGroups: normalizeJsonString(values.AutoGroups),
         DefaultUseAutoGroup: values.DefaultUseAutoGroup,
+        FestivalDiscountEnabled: values.FestivalDiscountEnabled,
+        FestivalDiscountFactor: values.FestivalDiscountFactor,
         GroupSpecialUsableGroup: normalizeJsonString(
           values.GroupSpecialUsableGroup
         ),
@@ -368,6 +376,9 @@ export function RatioSettingsCard({
 
       // Map form field names to API keys (most are 1:1, except GroupSpecialUsableGroup)
       const apiKeyMap: Record<string, string> = {
+        FestivalDiscountEnabled:
+          'group_ratio_setting.festival_discount_enabled',
+        FestivalDiscountFactor: 'group_ratio_setting.festival_discount_factor',
         GroupSpecialUsableGroup:
           'group_ratio_setting.group_special_usable_group',
       }
@@ -377,6 +388,14 @@ export function RatioSettingsCard({
       ).filter(
         (key) => normalized[key] !== groupNormalizedDefaults.current[key]
       )
+
+      // A failed factor save must never enable an old discount. Turning the
+      // activity off takes precedence over other changes.
+      const priority = (key: keyof typeof normalized): number => {
+        if (key !== 'FestivalDiscountEnabled') return 0
+        return normalized.FestivalDiscountEnabled ? 1 : -1
+      }
+      updates.sort((a, b) => priority(a) - priority(b))
 
       for (const key of updates) {
         const apiKey = apiKeyMap[key] || key

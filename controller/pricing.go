@@ -54,6 +54,7 @@ func filterPricingByModelsExcludingHiddenMappedTargets(pricing []model.Pricing, 
 
 func GetPricing(c *gin.Context) {
 	pricing := model.GetPricing()
+	festivalDiscountEnabled, festivalDiscountFactor := ratio_setting.GetFestivalDiscount()
 	userId, exists := c.Get("id")
 	usableGroup := map[string]string{}
 	groupRatio := map[string]float64{}
@@ -83,16 +84,23 @@ func GetPricing(c *gin.Context) {
 			delete(groupRatio, group)
 		}
 	}
+	if festivalDiscountEnabled {
+		for group, ratio := range groupRatio {
+			groupRatio[group] = ratio * festivalDiscountFactor
+		}
+	}
 
 	c.JSON(200, gin.H{
-		"success":            true,
-		"data":               pricing,
-		"vendors":            model.GetVendors(),
-		"group_ratio":        groupRatio,
-		"usable_group":       usableGroup,
-		"supported_endpoint": model.GetSupportedEndpointMap(),
-		"auto_groups":        service.GetUserAutoGroup(group),
-		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
+		"success":                   true,
+		"data":                      pricing,
+		"vendors":                   model.GetVendors(),
+		"group_ratio":               groupRatio,
+		"usable_group":              usableGroup,
+		"supported_endpoint":        model.GetSupportedEndpointMap(),
+		"auto_groups":               service.GetUserAutoGroup(group),
+		"festival_discount_enabled": festivalDiscountEnabled,
+		"festival_discount_factor":  festivalDiscountFactor,
+		"pricing_version":           "a42d372ccf0b5dd13ecf71203521f9d2",
 	})
 }
 

@@ -292,12 +292,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 
 	// 6. 将 OtherRatios 应用到基础额度（饱和转换，防止溢出成负数）
+	quotaWithRatios := float64(info.PriceData.Quota) * info.PriceData.ConsumptionDiscountMultiplier()
 	if !common.StringsContains(constant.TaskPricePatches, modelName) {
-		quotaWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
-		quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
-		info.PriceData.Quota = quota
-		noteTaskQuotaClamp(info, clamp)
+		quotaWithRatios = info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
 	}
+	quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
+	info.PriceData.Quota = quota
+	noteTaskQuotaClamp(info, clamp)
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
 	if info.Billing == nil && !info.PriceData.FreeModel {

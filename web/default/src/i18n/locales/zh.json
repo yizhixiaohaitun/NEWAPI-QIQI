@@ -1,10 +1,10 @@
 {
   "translation": {
-    "Hide mapped upstream target names": "隐藏映射后的上游目标名称",
-    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "在面向用户的模型列表中隐藏模型映射右侧的上游目标名称，并保留左侧的客户端别名。默认关闭。",
     "360": "360",
     "1000": "1000",
     "10000": "10000",
+    "Hide mapped upstream target names": "隐藏映射后的上游目标名称",
+    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "在面向用户的模型列表中隐藏模型映射右侧的上游目标名称，并保留左侧的客户端别名。默认关闭。",
     "Channel purity": "渠道纯净度",
     "Confirmed anomalies": "已确认异常",
     "Alerts and suspect comparisons that need review": "需要核查的告警和可疑对比",
@@ -5680,6 +5680,14 @@
     "Robust interval": "稳健区间",
     "Outside": "区间外",
     "Inside": "区间内",
-    "No valid paired token data is available for this window.": "本窗口没有有效的配对 Token 数据。"
+    "No valid paired token data is available for this window.": "本窗口没有有效的配对 Token 数据。",
+    "Festival consumption discount": "节日统一消耗折扣",
+    "Applies once to every group after its normal or special billing ratio. 0.8 means 20% off. It does not change top-up ratios.": "在普通分组倍率或特殊倍率之后统一乘一次。0.8 表示八折，不影响充值倍率。",
+    "Enable festival discount": "启用节日折扣",
+    "Turn off to restore original consumption prices immediately.": "关闭并保存后，新请求恢复原消耗价格；进行中的请求保留原折扣。",
+    "Discount factor": "折扣系数",
+    "Final consumption = original consumption × factor": "最终消耗 = 原消耗 × 系数",
+    "Applies once after the group billing ratio; disabling restores original prices.": "在分组计费倍率之后统一乘一次；关闭后新请求恢复原价。",
+    "Use 0.8 for 20% off. This does not change group or top-up ratios.": "0.8 表示八折，不修改分组倍率或充值倍率。"
   }
 }

@@ -3,6 +3,10 @@ package ratio_setting
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
+	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -31,6 +35,8 @@ type GroupRatioSetting struct {
 	GroupRatio              *types.RWMap[string, float64]            `json:"group_ratio"`
 	GroupGroupRatio         *types.RWMap[string, map[string]float64] `json:"group_group_ratio"`
 	GroupSpecialUsableGroup *types.RWMap[string, map[string]string]  `json:"group_special_usable_group"`
+	FestivalDiscountEnabled bool                                     `json:"festival_discount_enabled"`
+	FestivalDiscountFactor  float64                                  `json:"festival_discount_factor"`
 }
 
 var groupRatioSetting GroupRatioSetting
@@ -46,6 +52,8 @@ func init() {
 		GroupSpecialUsableGroup: groupSpecialUsableGroup,
 		GroupRatio:              groupRatioMap,
 		GroupGroupRatio:         groupGroupRatioMap,
+		FestivalDiscountEnabled: false,
+		FestivalDiscountFactor:  1,
 	}
 
 	config.GlobalConfig.Register("group_ratio_setting", &groupRatioSetting)
@@ -83,6 +91,27 @@ func GetGroupRatio(name string) float64 {
 		return 1
 	}
 	return ratio
+}
+
+// GetFestivalDiscount returns the independent, global consumption discount.
+// Disabled configurations always resolve to factor 1 and therefore preserve legacy billing.
+func ValidateFestivalDiscountFactor(value string) error {
+	factor, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil || math.IsNaN(factor) || math.IsInf(factor, 0) || factor <= 0 || factor > 1 {
+		return fmt.Errorf("festival discount factor must be a finite number greater than 0 and at most 1")
+	}
+	return nil
+}
+
+func GetFestivalDiscount() (enabled bool, factor float64) {
+	config.GlobalConfig.ReadWithLock("group_ratio_setting", func(value interface{}) {
+		setting := value.(*GroupRatioSetting)
+		enabled, factor = setting.FestivalDiscountEnabled, setting.FestivalDiscountFactor
+	})
+	if !enabled || math.IsNaN(factor) || math.IsInf(factor, 0) || factor <= 0 || factor > 1 {
+		return false, 1
+	}
+	return true, factor
 }
 
 func GetGroupGroupRatio(userGroup, usingGroup string) (float64, bool) {

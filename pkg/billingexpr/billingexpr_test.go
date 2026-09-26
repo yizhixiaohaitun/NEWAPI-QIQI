@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -12,6 +13,21 @@ import (
 // ---------------------------------------------------------------------------
 
 const claudeExpr = `p <= 200000 ? tier("standard", p * 1.5 + c * 7.5) : tier("long_context", p * 3.0 + c * 11.25)`
+
+func TestFestivalDiscountSnapshotAppliedDuringTieredSettlement(t *testing.T) {
+	expr := `tier("base", p * 2)`
+	snap := &billingexpr.BillingSnapshot{
+		ExprString:                expr,
+		ExprHash:                  billingexpr.ExprHashString(expr),
+		GroupRatio:                0.5,
+		ConsumptionDiscountFactor: 0.8,
+		QuotaPerUnit:              500000,
+		ExprVersion:               1,
+	}
+	result, err := billingexpr.ComputeTieredQuota(snap, billingexpr.TokenParams{P: 1000})
+	require.NoError(t, err)
+	require.Equal(t, 400, result.ActualQuotaAfterGroup)
+}
 
 func TestClaude_StandardTier(t *testing.T) {
 	cost, trace, err := billingexpr.RunExpr(claudeExpr, billingexpr.TokenParams{P: 100000, C: 5000})

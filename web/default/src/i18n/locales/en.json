@@ -1,10 +1,10 @@
 {
   "translation": {
-    "Hide mapped upstream target names": "Hide mapped upstream target names",
-    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",
+    "Hide mapped upstream target names": "Hide mapped upstream target names",
+    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.",
     "Channel purity": "Channel purity",
     "Confirmed anomalies": "Confirmed anomalies",
     "Alerts and suspect comparisons that need review": "Alerts and suspect comparisons that need review",
@@ -5474,6 +5474,14 @@
     "Robust interval": "Robust interval",
     "Outside": "Outside",
     "Inside": "Inside",
-    "No valid paired token data is available for this window.": "No valid paired token data is available for this window."
+    "No valid paired token data is available for this window.": "No valid paired token data is available for this window.",
+    "Festival consumption discount": "Festival consumption discount",
+    "Applies once to every group after its normal or special billing ratio. 0.8 means 20% off. It does not change top-up ratios.": "Applies once to every group after its normal or special billing ratio. 0.8 means 20% off. It does not change top-up ratios.",
+    "Enable festival discount": "Enable festival discount",
+    "Turn off to restore original consumption prices immediately.": "Turn off to restore original consumption prices immediately.",
+    "Discount factor": "Discount factor",
+    "Final consumption = original consumption × factor": "Final consumption = original consumption × factor",
+    "Applies once after the group billing ratio; disabling restores original prices.": "Applies once after the group billing ratio; disabling restores original prices.",
+    "Use 0.8 for 20% off. This does not change group or top-up ratios.": "Use 0.8 for 20% off. This does not change group or top-up ratios."
   }
 }

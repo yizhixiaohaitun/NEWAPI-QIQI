@@ -1,10 +1,10 @@
 {
   "translation": {
-    "Hide mapped upstream target names": "Скрывать имена сопоставленных вышестоящих моделей",
-    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "Скрывать в пользовательских списках имена вышестоящих целей справа в сопоставлении, сохраняя видимыми клиентские псевдонимы слева. По умолчанию выключено.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",
+    "Hide mapped upstream target names": "Скрывать имена сопоставленных вышестоящих моделей",
+    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "Скрывать в пользовательских списках имена вышестоящих целей справа в сопоставлении, сохраняя видимыми клиентские псевдонимы слева. По умолчанию выключено.",
     "Channel purity": "Channel purity",
     "Start purity scan": "Start purity scan",
     "Open channel purity": "Open channel purity",
@@ -2063,7 +2063,7 @@
     "footer.columns.related.links.oneApi": "Один API",
     "footer.columns.related.title": "Связанные проекты",
     "footer.defaultCopyright": "Все права защищены.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Все права защищены. Разработано участниками проекта.",
+    "footer.newapi.projectAttributionSuffix": "Все права защищены. Разработано участниками проекта.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Для каналов, добавленных после 10 мая 2025 г., не нужно удалять \".\" из имён моделей при развёртывании",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Для частных развертываний, формат: https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "Принудительно возвращать синтаксически корректный JSON",
@@ -5243,6 +5243,14 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "Azure Responses resource affinity protection": "Защита привязки ресурсов Azure Responses",
-    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "Запросы с previous_response_id или item_reference преимущественно направляются к ресурсу Azure, создавшему это состояние, что предотвращает ошибку 400 из-за другого ресурса Azure OpenAI. Если исходный ресурс недоступен, запрос безопасно завершается с ошибкой, а не случайно перенаправляется на другой ресурс."
+    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "Запросы с previous_response_id или item_reference преимущественно направляются к ресурсу Azure, создавшему это состояние, что предотвращает ошибку 400 из-за другого ресурса Azure OpenAI. Если исходный ресурс недоступен, запрос безопасно завершается с ошибкой, а не случайно перенаправляется на другой ресурс.",
+    "Festival consumption discount": "Праздничная скидка на потребление",
+    "Applies once to every group after its normal or special billing ratio. 0.8 means 20% off. It does not change top-up ratios.": "Применяется один раз после обычного или специального коэффициента группы. 0.8 означает скидку 20 %. Коэффициенты пополнения не меняются.",
+    "Enable festival discount": "Включить праздничную скидку",
+    "Turn off to restore original consumption prices immediately.": "После отключения и сохранения новые запросы оплачиваются по обычной цене. Текущие запросы сохраняют свою скидку.",
+    "Discount factor": "Коэффициент скидки",
+    "Final consumption = original consumption × factor": "Итоговое потребление = исходное потребление × коэффициент",
+    "Applies once after the group billing ratio; disabling restores original prices.": "Применяется один раз после коэффициента тарификации группы; отключение возвращает обычную цену для новых запросов.",
+    "Use 0.8 for 20% off. This does not change group or top-up ratios.": "Укажите 0.8 для скидки 20 %. Коэффициенты групп и пополнения не меняются."
   }
 }

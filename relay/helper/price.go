@@ -69,14 +69,25 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 	return groupRatioInfo
 }
 
+// requestFestivalDiscount captures the activity at the first pricing attempt;
+// retries and follow-up pricing on the same relay request cannot observe a newer activity.
+func requestFestivalDiscount(info *relaycommon.RelayInfo) (bool, float64) {
+	if !info.FestivalDiscountCaptured {
+		info.FestivalDiscountEnabled, info.FestivalDiscountFactor = ratio_setting.GetFestivalDiscount()
+		info.FestivalDiscountCaptured = true
+	}
+	return info.FestivalDiscountEnabled, info.FestivalDiscountFactor
+}
+
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
 	groupRatioInfo := HandleGroupRatio(c, info)
+	festivalDiscountEnabled, festivalDiscountFactor := requestFestivalDiscount(info)
 
 	// Check if this model uses tiered_expr billing
 	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {
-		return modelPriceHelperTiered(c, info, promptTokens, meta, groupRatioInfo)
+		return modelPriceHelperTiered(c, info, promptTokens, meta, groupRatioInfo, festivalDiscountEnabled, festivalDiscountFactor)
 	}
 
 	var preConsumedQuota int
@@ -116,7 +127,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		imageRatio, _ = ratio_setting.GetImageRatio(info.OriginModelName)
 		audioRatio = ratio_setting.GetAudioRatio(info.OriginModelName)
 		audioCompletionRatio = ratio_setting.GetAudioCompletionRatio(info.OriginModelName)
-		ratio := modelRatio * groupRatioInfo.GroupRatio
+		ratio := modelRatio * groupRatioInfo.GroupRatio * festivalDiscountFactor
 		quota, err := common.QuotaFromFloatStrict(float64(preConsumedTokens) * ratio)
 		if err != nil {
 			return types.PriceData{}, err
@@ -148,20 +159,22 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	}
 
 	priceData := types.PriceData{
-		FreeModel:            freeModel,
-		ModelPrice:           modelPrice,
-		ModelRatio:           modelRatio,
-		CompletionRatio:      completionRatio,
-		GroupRatioInfo:       groupRatioInfo,
-		UsePrice:             usePrice,
-		CacheRatio:           cacheRatio,
-		ImageRatio:           imageRatio,
-		AudioRatio:           audioRatio,
-		AudioCompletionRatio: audioCompletionRatio,
-		CacheCreationRatio:   cacheCreationRatio,
-		CacheCreation5mRatio: cacheCreationRatio5m,
-		CacheCreation1hRatio: cacheCreationRatio1h,
-		QuotaToPreConsume:    preConsumedQuota,
+		FreeModel:               freeModel,
+		FestivalDiscountEnabled: festivalDiscountEnabled,
+		FestivalDiscountFactor:  festivalDiscountFactor,
+		ModelPrice:              modelPrice,
+		ModelRatio:              modelRatio,
+		CompletionRatio:         completionRatio,
+		GroupRatioInfo:          groupRatioInfo,
+		UsePrice:                usePrice,
+		CacheRatio:              cacheRatio,
+		ImageRatio:              imageRatio,
+		AudioRatio:              audioRatio,
+		AudioCompletionRatio:    audioCompletionRatio,
+		CacheCreationRatio:      cacheCreationRatio,
+		CacheCreation5mRatio:    cacheCreationRatio5m,
+		CacheCreation1hRatio:    cacheCreationRatio1h,
+		QuotaToPreConsume:       preConsumedQuota,
 	}
 	if usePrice {
 		for name, ratio := range meta.BillingRatios {
@@ -185,6 +198,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 // ModelPriceHelperPerCall 按次/按量计费的 PriceHelper (MJ、Task)
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
+	festivalDiscountEnabled, festivalDiscountFactor := requestFestivalDiscount(info)
 
 	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
 	usePrice := success
@@ -241,12 +255,14 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 	}
 
 	priceData := types.PriceData{
-		FreeModel:      freeModel,
-		ModelPrice:     modelPrice,
-		ModelRatio:     modelRatio,
-		UsePrice:       usePrice,
-		Quota:          quota,
-		GroupRatioInfo: groupRatioInfo,
+		FreeModel:               freeModel,
+		FestivalDiscountEnabled: festivalDiscountEnabled,
+		FestivalDiscountFactor:  festivalDiscountFactor,
+		ModelPrice:              modelPrice,
+		ModelRatio:              modelRatio,
+		UsePrice:                usePrice,
+		Quota:                   quota,
+		GroupRatioInfo:          groupRatioInfo,
 	}
 	return priceData, nil
 }
@@ -265,7 +281,7 @@ func HasModelBillingConfig(modelName string) bool {
 	return ok && strings.TrimSpace(expr) != ""
 }
 
-func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo types.GroupRatioInfo) (types.PriceData, error) {
+func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo types.GroupRatioInfo, festivalDiscountEnabled bool, festivalDiscountFactor float64) (types.PriceData, error) {
 	exprStr, ok := billing_setting.GetBillingExpr(info.OriginModelName)
 	if !ok {
 		return types.PriceData{}, fmt.Errorf("model %s is configured as tiered_expr but has no billing expression", info.OriginModelName)
@@ -292,7 +308,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 
 	// Expression coefficients are $/1M tokens prices; convert to quota the same way per-call billing does.
 	quotaBeforeGroup := rawCost / 1_000_000 * common.QuotaPerUnit
-	preConsumedQuota, err := billingexpr.QuotaRoundStrict(quotaBeforeGroup * groupRatioInfo.GroupRatio)
+	preConsumedQuota, err := billingexpr.QuotaRoundStrict(quotaBeforeGroup * groupRatioInfo.GroupRatio * festivalDiscountFactor)
 	if err != nil {
 		return types.PriceData{}, err
 	}
@@ -312,6 +328,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 		ExprString:                exprStr,
 		ExprHash:                  exprHash,
 		GroupRatio:                groupRatioInfo.GroupRatio,
+		ConsumptionDiscountFactor: festivalDiscountFactor,
 		EstimatedPromptTokens:     promptTokens,
 		EstimatedCompletionTokens: estimatedCompletionTokens,
 		EstimatedQuotaBeforeGroup: quotaBeforeGroup,
@@ -324,9 +341,11 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 	info.BillingRequestInput = &requestInput
 
 	priceData := types.PriceData{
-		FreeModel:         freeModel,
-		GroupRatioInfo:    groupRatioInfo,
-		QuotaToPreConsume: preConsumedQuota,
+		FreeModel:               freeModel,
+		FestivalDiscountEnabled: festivalDiscountEnabled,
+		FestivalDiscountFactor:  festivalDiscountFactor,
+		GroupRatioInfo:          groupRatioInfo,
+		QuotaToPreConsume:       preConsumedQuota,
 	}
 
 	logger.LogDebug(c, "model_price_helper_tiered result: model=%s preConsume=%d quotaBeforeGroup=%.2f groupRatio=%.2f tier=%s", info.OriginModelName, preConsumedQuota, quotaBeforeGroup, groupRatioInfo.GroupRatio, trace.MatchedTier)

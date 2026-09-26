@@ -142,6 +142,42 @@ func TestModelPriceHelperTieredPreConsumeMaxTokensFallback(t *testing.T) {
 	}
 }
 
+func TestFestivalDiscountAppliesAfterSpecialGroupRatioAndUsesSnapshot(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	saved := map[string]string{}
+	require.NoError(t, config.GlobalConfig.SaveToDB(func(key, value string) error {
+		saved[key] = value
+		return nil
+	}))
+	t.Cleanup(func() { require.NoError(t, config.GlobalConfig.LoadFromDB(saved)) })
+
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"group_ratio_setting.group_ratio":               `{"premium":0.9}`,
+		"group_ratio_setting.group_group_ratio":         `{"vip":{"premium":0.5}}`,
+		"group_ratio_setting.festival_discount_enabled": "true",
+		"group_ratio_setting.festival_discount_factor":  "0.8",
+		"ModelPrice": `{"festival-test":2}`,
+	}))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"festival-test":2}`))
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	info := &relaycommon.RelayInfo{OriginModelName: "festival-test", UserGroup: "vip", UsingGroup: "premium"}
+	priceData, err := ModelPriceHelper(ctx, info, 100, &types.TokenCountMeta{})
+	require.NoError(t, err)
+	require.True(t, priceData.GroupRatioInfo.HasSpecialRatio)
+	require.Equal(t, 0.5, priceData.GroupRatioInfo.GroupRatio)
+	require.Equal(t, 400000, priceData.QuotaToPreConsume)
+	require.Equal(t, 0.8, priceData.ConsumptionDiscountMultiplier())
+
+	// A request keeps its captured factor even when the global activity is disabled later.
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"group_ratio_setting.festival_discount_enabled": "false",
+		"group_ratio_setting.festival_discount_factor":  "1",
+	}))
+	require.Equal(t, 0.8, info.PriceData.ConsumptionDiscountMultiplier())
+}
+
 func TestModelPriceHelperTieredRejectsPreConsumeOverflow(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

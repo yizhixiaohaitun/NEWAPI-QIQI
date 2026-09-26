@@ -3686,6 +3686,12 @@
     "默认折叠侧边栏": "Réduire la barre latérale par défaut",
     "默认测试模型": "Modèle de test par défaut",
     "默认用户消息": "Bonjour",
-    "默认补全倍率": "Taux de complétion par défaut"
+    "默认补全倍率": "Taux de complétion par défaut",
+    "折扣系数必须大于0且不超过1": "Le coefficient de remise doit être supérieur à 0 et inférieur ou égal à 1",
+    "节日统一消耗折扣": "Remise de consommation pour les fêtes",
+    "在普通分组倍率或特殊倍率之后统一乘一次。0.8 表示八折；关闭后立即恢复原消耗价格，不影响充值倍率。": "Appliquée une seule fois après le coefficient normal ou spécial du groupe. 0.8 correspond à une remise de 20 %. Les coefficients de recharge restent inchangés. Après désactivation et enregistrement, les nouvelles requêtes retrouvent le tarif normal. Les requêtes en cours conservent leur remise.",
+    "启用节日折扣": "Activer la remise pour les fêtes",
+    "折扣系数": "Coefficient de remise",
+    "最终消耗 = 原消耗 × 系数": "Consommation finale = consommation initiale × coefficient"
   }
 }

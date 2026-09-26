@@ -1,10 +1,10 @@
 {
   "translation": {
-    "Hide mapped upstream target names": "Ẩn tên đích thượng nguồn đã ánh xạ",
-    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "Ẩn tên đích thượng nguồn ở bên phải Ánh xạ mô hình khỏi danh sách hiển thị cho người dùng, đồng thời giữ bí danh phía máy khách ở bên trái hiển thị. Mặc định tắt.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",
+    "Hide mapped upstream target names": "Ẩn tên đích thượng nguồn đã ánh xạ",
+    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "Ẩn tên đích thượng nguồn ở bên phải Ánh xạ mô hình khỏi danh sách hiển thị cho người dùng, đồng thời giữ bí danh phía máy khách ở bên trái hiển thị. Mặc định tắt.",
     "Channel purity": "Channel purity",
     "Start purity scan": "Start purity scan",
     "Open channel purity": "Open channel purity",
@@ -2063,7 +2063,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Các Dự Án Liên Quan",
     "footer.defaultCopyright": "Bản quyền được bảo lưu.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
+    "footer.newapi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Đối với các kênh được thêm sau ngày 10 tháng 5 năm 2025, không cần loại bỏ \".\" khỏi tên mô hình trong quá trình triển khai",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Đối với các triển khai riêng tư, định dạng: https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "Buộc phản hồi JSON hợp lệ về cú pháp",
@@ -5243,6 +5243,14 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "Azure Responses resource affinity protection": "Bảo vệ liên kết tài nguyên Azure Responses",
-    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "Ưu tiên cố định các yêu cầu có previous_response_id hoặc item_reference vào tài nguyên Azure đã tạo trạng thái đó, tránh lỗi 400 do sử dụng một tài nguyên Azure OpenAI khác. Nếu tài nguyên ban đầu không khả dụng, yêu cầu sẽ thất bại an toàn thay vì chuyển ngẫu nhiên sang tài nguyên khác."
+    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "Ưu tiên cố định các yêu cầu có previous_response_id hoặc item_reference vào tài nguyên Azure đã tạo trạng thái đó, tránh lỗi 400 do sử dụng một tài nguyên Azure OpenAI khác. Nếu tài nguyên ban đầu không khả dụng, yêu cầu sẽ thất bại an toàn thay vì chuyển ngẫu nhiên sang tài nguyên khác.",
+    "Festival consumption discount": "Giảm giá tiêu thụ dịp lễ",
+    "Applies once to every group after its normal or special billing ratio. 0.8 means 20% off. It does not change top-up ratios.": "Áp dụng một lần sau hệ số thông thường hoặc đặc biệt của nhóm. 0.8 nghĩa là giảm 20%. Không thay đổi hệ số nạp tiền.",
+    "Enable festival discount": "Bật giảm giá dịp lễ",
+    "Turn off to restore original consumption prices immediately.": "Sau khi tắt và lưu, yêu cầu mới trở về giá gốc. Yêu cầu đang xử lý giữ nguyên mức giảm giá.",
+    "Discount factor": "Hệ số giảm giá",
+    "Final consumption = original consumption × factor": "Tiêu thụ cuối cùng = tiêu thụ gốc × hệ số",
+    "Applies once after the group billing ratio; disabling restores original prices.": "Áp dụng một lần sau hệ số tính phí của nhóm; tắt sẽ khôi phục giá gốc cho yêu cầu mới.",
+    "Use 0.8 for 20% off. This does not change group or top-up ratios.": "Dùng 0.8 để giảm 20%. Không thay đổi hệ số nhóm hoặc nạp tiền."
   }
 }

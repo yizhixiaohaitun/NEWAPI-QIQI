@@ -1,10 +1,10 @@
 {
   "translation": {
-    "Hide mapped upstream target names": "マッピング先のアップストリーム名を非表示",
-    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "ユーザー向けモデル一覧ではモデルマッピング右側のアップストリーム名を非表示にし、左側のクライアント別名は表示したままにします。デフォルトは無効です。",
     "360": "360",
     "1000": "1000",
     "10000": "10000",
+    "Hide mapped upstream target names": "マッピング先のアップストリーム名を非表示",
+    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "ユーザー向けモデル一覧ではモデルマッピング右側のアップストリーム名を非表示にし、左側のクライアント別名は表示したままにします。デフォルトは無効です。",
     "Channel purity": "Channel purity",
     "Start purity scan": "Start purity scan",
     "Open channel purity": "Open channel purity",
@@ -2063,7 +2063,7 @@
     "footer.columns.related.links.oneApi": "1つのAPI",
     "footer.columns.related.title": "関連プロジェクト",
     "footer.defaultCopyright": "すべての権利を留保します。",
-    "footer.new\u0061pi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
+    "footer.newapi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "2025 年 5 月 10 日以降に追加されたチャネルの場合、デプロイ時にモデル名から「.」を削除する必要はありません",
     "For private deployments, format: https://fastgpt.run/api/openapi": "プライベートデプロイメントの場合、形式: https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "構文的に有効な JSON 応答を強制",
@@ -5243,6 +5243,14 @@
     "Zhipu V4": "Zhipu V 4",
     "Zoom": "ズーム",
     "Azure Responses resource affinity protection": "Azure Responses リソースアフィニティ保護",
-    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "previous_response_id または item_reference を含むリクエストを、その状態を作成した Azure リソースに優先的に固定し、別の Azure OpenAI リソースによる 400 エラーを防ぎます。元のリソースが利用できない場合は、ランダムに別のリソースへ切り替えず、安全に失敗させます。"
+    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "previous_response_id または item_reference を含むリクエストを、その状態を作成した Azure リソースに優先的に固定し、別の Azure OpenAI リソースによる 400 エラーを防ぎます。元のリソースが利用できない場合は、ランダムに別のリソースへ切り替えず、安全に失敗させます。",
+    "Festival consumption discount": "祝日の一括利用割引",
+    "Applies once to every group after its normal or special billing ratio. 0.8 means 20% off. It does not change top-up ratios.": "通常または特別なグループ倍率の後に一度だけ適用します。0.8 は20%割引です。チャージ倍率は変更しません。",
+    "Enable festival discount": "祝日割引を有効にする",
+    "Turn off to restore original consumption prices immediately.": "無効にして保存すると、新しいリクエストは通常料金に戻ります。処理中のリクエストの割引は維持されます。",
+    "Discount factor": "割引係数",
+    "Final consumption = original consumption × factor": "最終利用額 = 元の利用額 × 係数",
+    "Applies once after the group billing ratio; disabling restores original prices.": "グループの課金倍率の後に一度だけ適用します。無効にすると新しいリクエストは通常料金に戻ります。",
+    "Use 0.8 for 20% off. This does not change group or top-up ratios.": "0.8 は20%割引です。グループ倍率とチャージ倍率は変更しません。"
   }
 }

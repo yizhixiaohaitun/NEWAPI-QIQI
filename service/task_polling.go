@@ -646,7 +646,9 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
 		return
 	}
-	// 1. 优先让 adaptor 决定最终额度
+	// 1. 优先让 adaptor 决定最终额度。接口返回的是最终应扣额度，
+	// 而不是未打折的基础价格；这里再次乘活动系数会导致双重折扣。
+	// 当前生产 adaptor 继承 BaseBilling，返回 0；非零分支保留给未来实现。
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
 		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
 		return

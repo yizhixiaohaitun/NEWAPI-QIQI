@@ -47,6 +47,10 @@ const getGroupDefaults = (settings: BillingSettings) => ({
   GroupGroupRatio: settings.GroupGroupRatio,
   AutoGroups: settings.AutoGroups,
   DefaultUseAutoGroup: settings.DefaultUseAutoGroup,
+  FestivalDiscountEnabled:
+    settings['group_ratio_setting.festival_discount_enabled'],
+  FestivalDiscountFactor:
+    settings['group_ratio_setting.festival_discount_factor'],
   GroupSpecialUsableGroup:
     settings['group_ratio_setting.group_special_usable_group'],
 })

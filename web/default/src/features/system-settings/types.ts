@@ -224,6 +224,8 @@ export type ModelSettings = {
   GroupGroupRatio: string
   AutoGroups: string
   DefaultUseAutoGroup: boolean
+  'group_ratio_setting.festival_discount_enabled': boolean
+  'group_ratio_setting.festival_discount_factor': number
   'group_ratio_setting.group_special_usable_group': string
   RetryTimes: number
   ChannelDisableThreshold: string
@@ -278,6 +280,8 @@ export type BillingSettings = {
   GroupGroupRatio: string
   AutoGroups: string
   DefaultUseAutoGroup: boolean
+  'group_ratio_setting.festival_discount_enabled': boolean
+  'group_ratio_setting.festival_discount_factor': number
   'group_ratio_setting.group_special_usable_group': string
   PayAddress: string
   EpayId: string

@@ -187,8 +187,8 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			}
 		}
 		// Native consumers may themselves convert Claude to content-only OpenAI.
-		// Insert a complete text block before message_delta, without changing the
-		// original refusal event/usage or feeding gateway text into token estimates.
+		// Insert the unmodified upstream explanation before message_delta, without
+		// changing the original refusal event/usage or duplicating it in estimates.
 		if claudeInfo.MessageStarted && claudeInfo.OpenContentBlocks == 0 {
 			if notice := claudeInfo.TakeRefusalNotice(&claudeResponse); notice != "" {
 				index := common.GetPointer(claudeInfo.NextContentBlockIndex)

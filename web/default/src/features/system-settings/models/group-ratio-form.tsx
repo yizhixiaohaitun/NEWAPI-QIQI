@@ -42,6 +42,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
 import {
   Sheet,
   SheetContent,
@@ -69,6 +70,8 @@ type GroupFormValues = {
   GroupGroupRatio: string
   AutoGroups: string
   DefaultUseAutoGroup: boolean
+  FestivalDiscountEnabled: boolean
+  FestivalDiscountFactor: number
   GroupSpecialUsableGroup: string
 }
 
@@ -163,6 +166,70 @@ export const GroupRatioForm = memo(function GroupRatioForm({
         </SettingsPageActionsPortal>
         {editMode === 'visual' ? (
           <div className='space-y-6'>
+            <div className='rounded-lg border p-4'>
+              <div className='mb-4'>
+                <h3 className='text-sm font-semibold'>
+                  {t('Festival consumption discount')}
+                </h3>
+                <p className='text-muted-foreground mt-1 text-sm'>
+                  {t(
+                    'Applies once to every group after its normal or special billing ratio. 0.8 means 20% off. It does not change top-up ratios.'
+                  )}
+                </p>
+              </div>
+              <div className='grid gap-4 sm:grid-cols-[1fr_160px]'>
+                <FormField
+                  control={form.control}
+                  name='FestivalDiscountEnabled'
+                  render={({ field }) => (
+                    <SettingsSwitchItem>
+                      <SettingsSwitchContent>
+                        <FormLabel>{t('Enable festival discount')}</FormLabel>
+                        <FormDescription>
+                          {t(
+                            'Turn off to restore original consumption prices immediately.'
+                          )}
+                        </FormDescription>
+                      </SettingsSwitchContent>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </SettingsSwitchItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='FestivalDiscountFactor'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Discount factor')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          type='number'
+                          min='0'
+                          max='1'
+                          step='any'
+                          value={
+                            Number.isFinite(field.value) ? field.value : ''
+                          }
+                          onChange={(event) =>
+                            field.onChange(event.target.valueAsNumber)
+                          }
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t('Final consumption = original consumption × factor')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
+
             <GroupRatioVisualEditor
               groupRatio={form.watch('GroupRatio')}
               topupGroupRatio={form.watch('TopupGroupRatio')}
@@ -208,6 +275,55 @@ export const GroupRatioForm = memo(function GroupRatioForm({
           </div>
         ) : (
           <SettingsForm onSubmit={form.handleSubmit(onSave)}>
+            <FormField
+              control={form.control}
+              name='FestivalDiscountEnabled'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Enable festival discount')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Applies once after the group billing ratio; disabling restores original prices.'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </SettingsSwitchItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='FestivalDiscountFactor'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Discount factor')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min='0'
+                      max='1'
+                      step='any'
+                      value={Number.isFinite(field.value) ? field.value : ''}
+                      onChange={(event) =>
+                        field.onChange(event.target.valueAsNumber)
+                      }
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Use 0.8 for 20% off. This does not change group or top-up ratios.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <FormField
               control={form.control}
               name='GroupRatio'
@@ -404,7 +520,9 @@ function GroupPricingGuide({ open, onOpenChange }: GroupPricingGuideProps) {
 
         <div className={sideDrawerFormClassName('gap-5')}>
           <section className='space-y-2'>
-            <h3 className='text-sm font-semibold'>{t('The two roles of a group')}</h3>
+            <h3 className='text-sm font-semibold'>
+              {t('The two roles of a group')}
+            </h3>
             <div className='text-muted-foreground space-y-2 text-sm leading-6'>
               <p>
                 {t(
@@ -416,7 +534,9 @@ function GroupPricingGuide({ open, onOpenChange }: GroupPricingGuideProps) {
                   {t('Token group')}
                 </span>
                 {': '}
-                {t('decides which channels are used and which base ratio applies.')}
+                {t(
+                  'decides which channels are used and which base ratio applies.'
+                )}
               </p>
               <p>
                 <span className='text-foreground font-medium'>
@@ -431,7 +551,9 @@ function GroupPricingGuide({ open, onOpenChange }: GroupPricingGuideProps) {
           </section>
 
           <section className='space-y-2'>
-            <h3 className='text-sm font-semibold'>{t('How a call is priced')}</h3>
+            <h3 className='text-sm font-semibold'>
+              {t('How a call is priced')}
+            </h3>
             <ol className='text-muted-foreground list-decimal space-y-2 pl-5 text-sm leading-6'>
               <li>
                 <span className='text-foreground font-medium'>
@@ -453,7 +575,9 @@ function GroupPricingGuide({ open, onOpenChange }: GroupPricingGuideProps) {
                 <span className='text-foreground font-medium'>
                   {t('Charge.')}
                 </span>{' '}
-                {t('Cost = model price × that one ratio. Nothing else from the group settings enters the formula.')}
+                {t(
+                  'Applies once to every group after its normal or special billing ratio. 0.8 means 20% off. It does not change top-up ratios.'
+                )}
               </li>
             </ol>
             <p className='text-muted-foreground text-sm leading-6'>
@@ -466,7 +590,9 @@ function GroupPricingGuide({ open, onOpenChange }: GroupPricingGuideProps) {
           <section className='space-y-3'>
             <h3 className='text-sm font-semibold'>{t('Worked example')}</h3>
             <p className='text-muted-foreground text-sm leading-6'>
-              {t('The admin configured three groups and one special ratio rule:')}
+              {t(
+                'The admin configured three groups and one special ratio rule:'
+              )}
             </p>
 
             <div className='overflow-hidden rounded-lg border'>
@@ -529,7 +655,9 @@ function GroupPricingGuide({ open, onOpenChange }: GroupPricingGuideProps) {
                 </div>
                 <div className='space-y-2 p-3'>
                   <GuideStepRow chip='1'>
-                    {t('Billing group = premium (the token has a group, so use it)')}
+                    {t(
+                      'Billing group = premium (the token has a group, so use it)'
+                    )}
                   </GuideStepRow>
                   <GuideStepRow chip='2'>
                     {t(
@@ -550,7 +678,9 @@ function GroupPricingGuide({ open, onOpenChange }: GroupPricingGuideProps) {
                 </div>
                 <div className='space-y-2 p-3'>
                   <GuideStepRow chip='1'>
-                    {t('Billing group = default (the token has a group, so use it)')}
+                    {t(
+                      'Billing group = default (the token has a group, so use it)'
+                    )}
                   </GuideStepRow>
                   <GuideStepRow chip='2'>
                     {t(

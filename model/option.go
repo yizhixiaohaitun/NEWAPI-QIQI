@@ -625,7 +625,11 @@ func handleConfigUpdate(key, value string) bool {
 	configMap := map[string]string{
 		configKey: value,
 	}
-	config.UpdateConfigFromMap(cfg, configMap)
+	if configName == "group_ratio_setting" && (configKey == "festival_discount_enabled" || configKey == "festival_discount_factor") {
+		_ = config.GlobalConfig.UpdateRegisteredConfig(configName, configMap)
+	} else {
+		config.UpdateConfigFromMap(cfg, configMap)
+	}
 
 	// 特定配置的后处理
 	if configName == "performance_setting" {

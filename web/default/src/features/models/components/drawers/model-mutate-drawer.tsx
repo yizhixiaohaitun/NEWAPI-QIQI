@@ -198,6 +198,8 @@ export function ModelMutateDrawer({
       GroupGroupRatio: '',
       AutoGroups: '',
       DefaultUseAutoGroup: false,
+      'group_ratio_setting.festival_discount_enabled': false,
+      'group_ratio_setting.festival_discount_factor': 1,
       CreateCacheRatio: '',
       'group_ratio_setting.group_special_usable_group': '{}',
       'grok.violation_deduction_enabled': false,

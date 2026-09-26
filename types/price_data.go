@@ -14,22 +14,24 @@ type GroupRatioInfo struct {
 }
 
 type PriceData struct {
-	FreeModel            bool
-	ModelPrice           float64
-	ModelRatio           float64
-	CompletionRatio      float64
-	CacheRatio           float64
-	CacheCreationRatio   float64
-	CacheCreation5mRatio float64
-	CacheCreation1hRatio float64
-	ImageRatio           float64
-	AudioRatio           float64
-	AudioCompletionRatio float64
-	otherRatios          map[string]float64
-	UsePrice             bool
-	Quota                int // 按次计费的最终额度（MJ / Task）
-	QuotaToPreConsume    int // 按量计费的预消耗额度
-	GroupRatioInfo       GroupRatioInfo
+	FreeModel               bool
+	FestivalDiscountEnabled bool
+	FestivalDiscountFactor  float64
+	ModelPrice              float64
+	ModelRatio              float64
+	CompletionRatio         float64
+	CacheRatio              float64
+	CacheCreationRatio      float64
+	CacheCreation5mRatio    float64
+	CacheCreation1hRatio    float64
+	ImageRatio              float64
+	AudioRatio              float64
+	AudioCompletionRatio    float64
+	otherRatios             map[string]float64
+	UsePrice                bool
+	Quota                   int // 按次计费的最终额度（MJ / Task）
+	QuotaToPreConsume       int // 按量计费的预消耗额度
+	GroupRatioInfo          GroupRatioInfo
 }
 
 func (p *PriceData) AddOtherRatio(key string, ratio float64) {
@@ -72,7 +74,7 @@ func (p *PriceData) OtherRatios() map[string]float64 {
 }
 
 func (p *PriceData) OtherRatioMultiplier() float64 {
-	multiplier := 1.0
+	multiplier := p.ConsumptionDiscountMultiplier()
 	for _, ratio := range p.otherRatios {
 		if isValidOtherRatio(ratio) && ratio != 1.0 {
 			multiplier *= ratio
@@ -86,6 +88,7 @@ func (p *PriceData) ApplyOtherRatiosToFloat(value float64) float64 {
 }
 
 func (p *PriceData) ApplyOtherRatiosToDecimal(value decimal.Decimal) decimal.Decimal {
+	value = value.Mul(decimal.NewFromFloat(p.ConsumptionDiscountMultiplier()))
 	for _, ratio := range p.otherRatios {
 		if isValidOtherRatio(ratio) && ratio != 1.0 {
 			value = value.Mul(decimal.NewFromFloat(ratio))
@@ -95,12 +98,20 @@ func (p *PriceData) ApplyOtherRatiosToDecimal(value decimal.Decimal) decimal.Dec
 }
 
 func (p *PriceData) RemoveOtherRatiosFromFloat(value float64) float64 {
+	value /= p.ConsumptionDiscountMultiplier()
 	for _, ratio := range p.otherRatios {
 		if isValidOtherRatio(ratio) && ratio != 1.0 {
 			value /= ratio
 		}
 	}
 	return value
+}
+
+func (p *PriceData) ConsumptionDiscountMultiplier() float64 {
+	if p.FestivalDiscountEnabled && p.FestivalDiscountFactor > 0 && p.FestivalDiscountFactor <= 1 && !math.IsNaN(p.FestivalDiscountFactor) && !math.IsInf(p.FestivalDiscountFactor, 0) {
+		return p.FestivalDiscountFactor
+	}
+	return 1
 }
 
 func isValidOtherRatio(ratio float64) bool {

@@ -38,6 +38,21 @@ func (cm *ConfigManager) Get(name string) interface{} {
 	return cm.configs[name]
 }
 
+// ReadWithLock reads registered configuration while excluding concurrent option reloads.
+// The callback must not retain the config pointer or call another ConfigManager method.
+func (cm *ConfigManager) ReadWithLock(name string, read func(interface{})) {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	read(cm.configs[name])
+}
+
+// UpdateRegisteredConfig applies an individual option under the same lock as LoadFromDB.
+func (cm *ConfigManager) UpdateRegisteredConfig(name string, values map[string]string) error {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	return updateConfigFromMap(cm.configs[name], values)
+}
+
 // LoadFromDB 从数据库加载配置
 func (cm *ConfigManager) LoadFromDB(options map[string]string) error {
 	cm.mutex.Lock()

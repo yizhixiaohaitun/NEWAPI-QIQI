@@ -1,10 +1,10 @@
 {
   "translation": {
-    "Hide mapped upstream target names": "Masquer les noms des cibles amont mappées",
-    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "Masquer dans les listes visibles par les utilisateurs les noms des cibles amont situés à droite du mappage, tout en conservant les alias clients de gauche. Désactivé par défaut.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",
+    "Hide mapped upstream target names": "Masquer les noms des cibles amont mappées",
+    "Hide upstream target names on the right side of Model Mapping from user-facing model lists and keep the client aliases on the left visible. Disabled by default.": "Masquer dans les listes visibles par les utilisateurs les noms des cibles amont situés à droite du mappage, tout en conservant les alias clients de gauche. Désactivé par défaut.",
     "Channel purity": "Channel purity",
     "Start purity scan": "Start purity scan",
     "Open channel purity": "Open channel purity",
@@ -2063,7 +2063,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Projets liés",
     "footer.defaultCopyright": "Tous droits réservés.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
+    "footer.newapi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Pour les canaux ajoutés après le 10 mai 2025, pas besoin de supprimer \".\" des noms de modèles lors du déploiement",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Pour les déploiements privés, format : https://fastgpt.run/api/openapi",
     "Force a syntactically valid JSON response": "Imposer une réponse JSON syntaxiquement valide",
@@ -5243,6 +5243,14 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "Azure Responses resource affinity protection": "Protection de l’affinité des ressources Azure Responses",
-    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "Associe en priorité les requêtes contenant previous_response_id ou item_reference à la ressource Azure qui a créé cet état, afin d’éviter les erreurs 400 causées par une autre ressource Azure OpenAI. Si la ressource d’origine est indisponible, la requête échoue de manière sûre au lieu de basculer aléatoirement vers une autre ressource."
+    "Prioritizes routing requests with previous_response_id or item_reference back to the Azure resource that created that state, preventing 400 errors caused by a different Azure OpenAI resource. If the original resource is unavailable, the request fails safely instead of being routed randomly across resources.": "Associe en priorité les requêtes contenant previous_response_id ou item_reference à la ressource Azure qui a créé cet état, afin d’éviter les erreurs 400 causées par une autre ressource Azure OpenAI. Si la ressource d’origine est indisponible, la requête échoue de manière sûre au lieu de basculer aléatoirement vers une autre ressource.",
+    "Festival consumption discount": "Remise de consommation pour les fêtes",
+    "Applies once to every group after its normal or special billing ratio. 0.8 means 20% off. It does not change top-up ratios.": "Appliquée une seule fois après le coefficient normal ou spécial du groupe. 0.8 correspond à une remise de 20 %. Les coefficients de recharge restent inchangés.",
+    "Enable festival discount": "Activer la remise pour les fêtes",
+    "Turn off to restore original consumption prices immediately.": "Après désactivation et enregistrement, les nouvelles requêtes retrouvent le tarif normal. Les requêtes en cours conservent leur remise.",
+    "Discount factor": "Coefficient de remise",
+    "Final consumption = original consumption × factor": "Consommation finale = consommation initiale × coefficient",
+    "Applies once after the group billing ratio; disabling restores original prices.": "Appliquée une seule fois après le coefficient de facturation du groupe ; la désactivation rétablit le tarif normal pour les nouvelles requêtes.",
+    "Use 0.8 for 20% off. This does not change group or top-up ratios.": "Utilisez 0.8 pour une remise de 20 %. Les coefficients de groupe et de recharge restent inchangés."
   }
 }

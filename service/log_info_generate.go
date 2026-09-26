@@ -163,6 +163,10 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other map[string]interf
 	if relayInfo.UserSetting.BillingPreference != "" {
 		other["billing_preference"] = relayInfo.UserSetting.BillingPreference
 	}
+	if relayInfo.PriceData.FestivalDiscountEnabled {
+		other["festival_discount_enabled"] = true
+		other["festival_discount_factor"] = relayInfo.PriceData.FestivalDiscountFactor
+	}
 	if relayInfo.BillingSource == "subscription" {
 		if relayInfo.SubscriptionId != 0 {
 			other["subscription_id"] = relayInfo.SubscriptionId
@@ -296,6 +300,10 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.Price
 	other["group_ratio"] = priceData.GroupRatioInfo.GroupRatio
 	if priceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
+	}
+	if priceData.FestivalDiscountEnabled {
+		other["festival_discount_enabled"] = true
+		other["festival_discount_factor"] = priceData.FestivalDiscountFactor
 	}
 	appendRequestPath(nil, relayInfo, other)
 	return other

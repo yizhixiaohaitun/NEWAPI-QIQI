@@ -4220,6 +4220,12 @@
     "默认折叠侧边栏": "Mặc định thu gọn thanh bên",
     "默认测试模型": "Mô hình kiểm tra mặc định",
     "默认用户消息": "Xin chào",
-    "默认补全倍率": "Tỷ lệ hoàn thành mặc định"
+    "默认补全倍率": "Tỷ lệ hoàn thành mặc định",
+    "折扣系数必须大于0且不超过1": "Hệ số giảm giá phải lớn hơn 0 và không vượt quá 1",
+    "节日统一消耗折扣": "Giảm giá tiêu thụ dịp lễ",
+    "在普通分组倍率或特殊倍率之后统一乘一次。0.8 表示八折；关闭后立即恢复原消耗价格，不影响充值倍率。": "Áp dụng một lần sau hệ số thông thường hoặc đặc biệt của nhóm. 0.8 nghĩa là giảm 20%. Không thay đổi hệ số nạp tiền. Sau khi tắt và lưu, yêu cầu mới trở về giá gốc. Yêu cầu đang xử lý giữ nguyên mức giảm giá.",
+    "启用节日折扣": "Bật giảm giá dịp lễ",
+    "折扣系数": "Hệ số giảm giá",
+    "最终消耗 = 原消耗 × 系数": "Tiêu thụ cuối cùng = tiêu thụ gốc × hệ số"
   }
 }

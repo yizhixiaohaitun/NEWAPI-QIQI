@@ -83,6 +83,17 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
   - 生产 compose 文件是 `/opt/new-api/docker-compose.prod.yml`
   - 端口冲突、模板 compose 误用、健康检查和嵌套 git 仓库处理经验
 
+### 功能入口：节日统一消耗折扣
+
+- **管理配置与存储**：`setting/ratio_setting/group_ratio.go` 注册 `group_ratio_setting.festival_discount_enabled`（默认关闭）和 `group_ratio_setting.festival_discount_factor`（默认 1）；`controller/option.go` 在写入前验证有限值且 `0 < factor <= 1`。
+- **管理前端**：default 分组定价入口 `/system-settings/billing/group-pricing`，表单 `web/default/src/features/system-settings/models/group-ratio-form.tsx`，保存 `web/default/src/features/system-settings/models/ratio-settings-card.tsx`；classic 入口 `web/classic/src/pages/Setting/Ratio/GroupRatioSettings.jsx`。两套前端的可视化/JSON 模式均保留折扣控件；保存开启时先写系数、最后开活动，关闭时先关活动，避免系数保存失败却启用旧值。classic 从配置字符串还原布尔值与数字。
+- **计费快照与覆盖**：`relay/helper/price.go` 在请求计价时冻结活动开关/系数到 `types.PriceData`，分层表达式另存于 `billingexpr.BillingSnapshot`；同步 token、固定价格、音频/实时及任务预扣均在原分组/特殊倍率后乘一次。
+- **异步结算与退款**：`model.TaskBillingContext` 持久化任务提交时系数，`service/task_billing.go` 的 token 重算、差额结算和退款复用该快照，不读取活动新值。
+- **展示与审计**：`controller/pricing.go` 返回已折扣的用户分组倍率；`service/log_info_generate.go` 与 `service/task_billing.go` 写入 `festival_discount_enabled/factor`，充值倍率不参与。
+- **重试与并发读写**：`relay/common/relay_info.go` 保存首次计价快照，`relay/helper/price.go` 在同步和任务重新计价时复用；`setting/config/config.go` 的锁保护活动配置读取及单字段更新（`model/option.go`），避免同一字段并发读写；两次 option 请求不是跨字段事务，开启/关闭的安全写入顺序由前端保证。
+- **异步边界**：`controller/relay.go` 标记新任务 `BillingSnapshotCaptured`，`service/task_billing.go` 对新任务持久化的零模型/分组倍率不回退当前值，旧任务无此标记时保留历史查找；`service/task_polling.go` 的 adaptor 非零返回值是最终额度，现有生产 adaptor 均返回零，不在此分支二次打折。
+- **回归入口**：`setting/ratio_setting/festival_discount_test.go`、`relay/helper/price_test.go`、`relay/helper/festival_retry_test.go`、`service/festival_discount_test.go`、`service/task_billing_test.go`、`pkg/billingexpr/billingexpr_test.go`；聚焦运行 `go test ./setting/ratio_setting ./types ./pkg/billingexpr ./relay/helper ./service ./controller ./relay`。
+
 ### 🎯 核心概念
 
 #### 路径为王 (Path is King)

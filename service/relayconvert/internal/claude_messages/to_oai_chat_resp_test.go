@@ -15,7 +15,7 @@ const refusalSSE = `event: message_start
 data: {"type":"message_start","message":{"id":"msg_refusal","type":"message","role":"assistant","model":"claude-test","content":[],"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":64285,"cache_creation":{"ephemeral_1h_input_tokens":64285}}}}
 
 event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"type":"refusal","category":"reasoning_extraction","explanation":"无法提供该请求的内容。"}},"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":64285,"cache_creation":{"ephemeral_1h_input_tokens":64285}}}
+data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"type":"refusal","category":"reasoning_extraction","explanation":"Policy refusal:\nNo reverse engineering."}},"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":64285,"cache_creation":{"ephemeral_1h_input_tokens":64285}}}
 
 event: message_stop
 data: {"type":"message_stop"}
@@ -76,11 +76,12 @@ func TestStreamResponseClaude2OpenAIRefusalSSE(t *testing.T) {
 				t.Fatalf("unexpected start: %#v", delta)
 			}
 		} else {
-			if delta["refusal"] != "无法提供该请求的内容。" || choice["finish_reason"] != "content_filter" {
+			const explanation = "Policy refusal:\nNo reverse engineering."
+			if delta["refusal"] != explanation || choice["finish_reason"] != "content_filter" {
 				t.Errorf("lost refusal explanation or finish reason: %#v", choice)
 			}
-			if delta["content"] != "[请求被拒绝]（网关提示）\n上游拒绝原因：无法提供该请求的内容。" {
-				t.Errorf("missing labelled gateway notice: %#v", delta)
+			if delta["content"] != explanation {
+				t.Errorf("changed upstream refusal explanation: %#v", delta)
 			}
 		}
 	}
@@ -170,7 +171,7 @@ func TestRefusalNoticeState(t *testing.T) {
 	}
 	for _, data := range []string{
 		`{"type":"message_delta","delta":{"stop_reason":"refusal"}}`,
-		`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"explanation":"   "}}}`,
+		`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"explanation":""}}}`,
 	} {
 		info := &ClaudeResponseInfo{}
 		var event dto.ClaudeResponse
@@ -179,16 +180,31 @@ func TestRefusalNoticeState(t *testing.T) {
 		}
 		chunk := StreamResponseClaude2OpenAI(&event)
 		FormatClaudeResponseInfo(&event, chunk, info)
-		if chunk.Choices[0].Delta.GetContentString() != "[请求被拒绝]（网关提示）\n上游未提供拒绝原因。" || chunk.Choices[0].Delta.Refusal != nil {
-			t.Fatal("invented reason or missing status")
-		}
-		repeated := StreamResponseClaude2OpenAI(&event)
-		FormatClaudeResponseInfo(&event, repeated, info)
-		if repeated.Choices[0].Delta.Content != nil {
-			t.Fatal("repeated compatibility notice")
+		if chunk.Choices[0].Delta.Content != nil || chunk.Choices[0].Delta.Refusal != nil {
+			t.Fatal("invented refusal text")
 		}
 		if info.ResponseText.Len() != 0 {
-			t.Fatal("notice leaked into token estimation")
+			t.Fatal("missing explanation changed token estimation")
 		}
+	}
+
+	info := &ClaudeResponseInfo{}
+	var event dto.ClaudeResponse
+	const data = `{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"explanation":"line one\nline two"}}}`
+	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		t.Fatal(err)
+	}
+	first := StreamResponseClaude2OpenAI(&event)
+	FormatClaudeResponseInfo(&event, first, info)
+	if first.Choices[0].Delta.GetContentString() != "line one\nline two" {
+		t.Fatal("changed multiline explanation")
+	}
+	repeated := StreamResponseClaude2OpenAI(&event)
+	FormatClaudeResponseInfo(&event, repeated, info)
+	if repeated.Choices[0].Delta.Content != nil {
+		t.Fatal("repeated refusal explanation")
+	}
+	if info.ResponseText.Len() != 0 {
+		t.Fatal("display text leaked into token estimation")
 	}
 }
