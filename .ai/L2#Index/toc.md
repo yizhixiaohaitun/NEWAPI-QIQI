@@ -94,6 +94,14 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - **异步边界**：`controller/relay.go` 标记新任务 `BillingSnapshotCaptured`，`service/task_billing.go` 对新任务持久化的零模型/分组倍率不回退当前值，旧任务无此标记时保留历史查找；`service/task_polling.go` 的 adaptor 非零返回值是最终额度，现有生产 adaptor 均返回零，不在此分支二次打折。
 - **回归入口**：`setting/ratio_setting/festival_discount_test.go`、`relay/helper/price_test.go`、`relay/helper/festival_retry_test.go`、`service/festival_discount_test.go`、`service/task_billing_test.go`、`pkg/billingexpr/billingexpr_test.go`；聚焦运行 `go test ./setting/ratio_setting ./types ./pkg/billingexpr ./relay/helper ./service ./controller ./relay`。
 
+### Relay 对外错误隐私边界
+
+- `middleware/distributor.go`：首次渠道选择失败或无渠道时，对外仅返回模型和请求 ID；分组、选中分组及底层错误只写后台日志。
+- `controller/relay.go#getChannel`：重试渠道选择采用同样边界，保留原错误码和跳过重试语义。
+- `middleware/auth.go#TokenAuth`：分组权限和弃用错误不返回具体分组名，后台日志保留定位信息。
+- `i18n/locales/{en,zh-CN,zh-TW}.yaml`：渠道错误翻译不得包含分组或底层错误占位符。
+- 回归入口：`middleware/distributor_privacy_test.go`、`controller/relay_group_privacy_test.go`；覆盖无渠道和数据库失败、三种首次分发语言，以及客户端隐藏分组而后台日志保留分组。
+
 ### 🎯 核心概念
 
 #### 路径为王 (Path is King)

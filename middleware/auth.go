@@ -448,13 +448,15 @@ func TokenAuth() func(c *gin.Context) {
 		if tokenGroup != "" {
 			// check common.UserUsableGroups[userGroup]
 			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
-				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
+				logger.LogError(c, fmt.Sprintf("Token group access denied: user_group=%q token_group=%q", userGroup, tokenGroup))
+				abortWithOpenAiMessage(c, http.StatusForbidden, "无权访问请求的分组")
 				return
 			}
 			// check group in common.GroupRatio
 			if !ratio_setting.ContainsGroupRatio(tokenGroup) {
 				if tokenGroup != "auto" {
-					abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("分组 %s 已被弃用", tokenGroup))
+					logger.LogError(c, fmt.Sprintf("Token group retired: token_group=%q", tokenGroup))
+					abortWithOpenAiMessage(c, http.StatusForbidden, "请求的分组已被弃用")
 					return
 				}
 			}
