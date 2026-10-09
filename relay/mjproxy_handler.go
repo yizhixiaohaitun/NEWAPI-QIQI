@@ -163,11 +163,24 @@ func coverMidjourneyTaskDto(c *gin.Context, originTask *model.Midjourney) (midjo
 	}
 	midjourneyTask.Status = originTask.Status
 	midjourneyTask.FailReason = originTask.FailReason
-	if message, ok := types.PublicGroupErrorMessage(originTask.FailReason); ok {
+	midjourneyTask.Description = originTask.Description
+	groupFailure := false
+	if message, matched := types.PublicGroupErrorMessage(originTask.FailReason); matched {
 		midjourneyTask.FailReason = message
+		groupFailure = true
+	}
+	if message, matched := types.PublicGroupErrorMessage(originTask.Description); matched {
+		midjourneyTask.Description = message
+		groupFailure = true
+	}
+	if groupFailure {
+		// Failed MJ submissions store provider diagnostics in several fields.
+		// Keep the persisted task intact and clear them only from the public DTO.
+		midjourneyTask.MjId = ""
+		midjourneyTask.ImageUrl = ""
+		midjourneyTask.VideoUrl = ""
 	}
 	midjourneyTask.Action = originTask.Action
-	midjourneyTask.Description = originTask.Description
 	midjourneyTask.Prompt = originTask.Prompt
 	if originTask.Buttons != "" {
 		var buttons []dto.ActionButton
@@ -655,6 +668,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		newBody := strings.Replace(string(responseBody), `"code":22`, `"code":1`, -1)
 		responseBody = []byte(newBody)
 	}
+	responseBody = sanitizeMidjourneySubmitResponse(responseBody, midjResponse)
 	//resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
 	bodyReader := io.NopCloser(bytes.NewBuffer(responseBody))
 
@@ -678,6 +692,29 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		}
 	}
 	return nil
+}
+
+func sanitizeMidjourneySubmitResponse(responseBody []byte, response *dto.MidjourneyResponse) []byte {
+	if response == nil || response.Code == 1 || response.Code == 21 || response.Code == 22 {
+		return responseBody
+	}
+	diagnostic, err := common.Marshal(response)
+	if err != nil {
+		return responseBody
+	}
+	message, matched := types.PublicGroupErrorMessage(string(diagnostic))
+	if !matched {
+		return responseBody
+	}
+	publicResponse := map[string]any{
+		"code":        response.Code,
+		"description": message,
+	}
+	publicBody, err := common.Marshal(publicResponse)
+	if err != nil {
+		return responseBody
+	}
+	return publicBody
 }
 
 type taskChangeParams struct {

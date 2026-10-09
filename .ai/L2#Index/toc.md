@@ -103,6 +103,10 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - `service/upstream_resource.go#SanitizeFinalRelayError`：最终 HTTP/WS 错误边界同时识别上游中英文分组权限/无渠道错误；检查包装后的 message、`RelayError`/metadata/raw body，复制并净化对外错误，保留状态码、错误类型/代码、重试标记及原对象供渠道健康和后台诊断。
 - `types/group_error_privacy.go`：集中定义保守语义识别与 OpenAI/Claude/嵌套错误 envelope 净化；覆盖实际的 group 下渠道获取失败、当前分组下模型无渠道、分组停用/无权限措辞，但不按固定分组名匹配。已识别错误按最小标准信封重建，仅保守保留合法错误 type/code，丢弃 provider-controlled param、metadata/details、raw/nested/数组诊断，避免敏感名称换字段泄露。
 - `relay/helper/common.go`：已提交的 OpenAI、Claude、Responses SSE 与 WebSocket `WssPublicString`/`WssPublicObject` 结构化错误写出前执行同一净化；先解析 JSON 再按解码文本识别，覆盖 unicode escapes、流式数组、bare string 与嵌套 `response.error` 并统一重建。普通 completion/正常 WS 帧/拒答内容不属于错误 envelope，不改写；原始流错误只记后台日志。`relay/channel/openai/relay_realtime.go` 仅上游到客户端调用公开写出口，客户到上游仍用原始 `WssString`，不净化客户输入。
+- `controller/relay.go#respondTaskError` / `publicMidjourneyError`：任务与 Midjourney 的独立错误出口同样只修改公开副本；任务检查 message、内部 Error 和附加 Data，已识别分组错误不透传附加诊断，保留状态码、计费/重试标记与后台原件。
+- `model/task.go#CopyForPublicResponse` / `model/task_detail.go#SanitizeTaskPublicErrorJSON`：持久化任务的 FailReason/Data 仅在公开副本上处理；数据库原件继续供轮询、重试、计费和诊断。只处理显式失败字段和错误信封，不改写正常 prompt/output。
+- `relay/relay_task.go`：`TaskModel2Dto` 统一供列表/详情使用；视频 converter 读取公开任务副本，fetch 最终响应也检查错误信封。`controller/task.go` 复用上述 DTO 与既有凭据清理。`relay/mjproxy_handler.go#coverMidjourneyTaskDto` 在公开 DTO 净化 FailReason/Description 及失败 Result 派生字段；Midjourney submit 的原始响应直写也在持久化后执行公开净化，正常成功提交字节与原始任务均不改写。
+- 任务旁路回归：`controller/task_group_privacy_test.go`、`controller/relay_retry_test.go`、`model/task_group_privacy_test.go`、`relay/relay_task_group_privacy_test.go`；验证失败字段、fetch 真实写出、附加诊断、公开副本不污染原件与普通成功输出不变。
 - 回归入口：`middleware/distributor_privacy_test.go`、`controller/relay_group_privacy_test.go`、`types/group_error_privacy_test.go`、`service/upstream_resource_test.go`、`relay/helper/group_error_privacy_test.go`；覆盖本地无渠道/数据库失败、上游完整 raw body 与嵌套序列化、中英文随机分组、OpenAI/Claude/Responses 流错误、后台保留原文及非分组错误/正常模型文本不受影响。
 
 ### Auto 分组重试选择链路

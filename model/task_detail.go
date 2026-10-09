@@ -104,42 +104,128 @@ func SanitizeTaskPublicErrorJSON(raw json.RawMessage) json.RawMessage {
 	return json.RawMessage(sanitized)
 }
 
-func sanitizeTaskPublicErrorValue(value any, inError bool) bool {
-	changed := false
-	switch typed := value.(type) {
-	case map[string]any:
-		status, _ := typed["status"].(string)
-		failed := strings.EqualFold(status, "failed") || strings.EqualFold(status, "failure")
-		for key, child := range typed {
-			normalizedKey := strings.ToLower(strings.ReplaceAll(key, "_", ""))
-			diagnosticField := normalizedKey == "error" || normalizedKey == "failreason" || normalizedKey == "message" || normalizedKey == "details" || normalizedKey == "metadata"
-			childInError := inError || normalizedKey == "error" || (failed && diagnosticField)
-			if text, ok := child.(string); ok && (childInError || normalizedKey == "failreason") {
-				if message, matched := types.PublicGroupErrorMessage(text); matched {
-					typed[key] = message
-					changed = true
-				}
-				continue
-			}
-			if sanitizeTaskPublicErrorValue(child, childInError) {
+func sanitizeTaskPublicErrorValue(value any, _ bool) bool {
+	if items, ok := value.([]any); ok {
+		changed := false
+		for _, item := range items {
+			if sanitizeTaskPublicErrorValue(item, false) {
 				changed = true
 			}
 		}
-	case []any:
-		for i, child := range typed {
-			if text, ok := child.(string); ok && inError {
-				if message, matched := types.PublicGroupErrorMessage(text); matched {
-					typed[i] = message
-					changed = true
-				}
+		return changed
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+
+	changed := false
+	explicitErrorMatched := false
+	for key, child := range typed {
+		normalizedKey := normalizeTaskDetailKey(key)
+		if normalizedKey == "error" {
+			if publicError, matched := sanitizeStructuredTaskError(child); matched {
+				typed[key] = publicError
+				changed = true
+				explicitErrorMatched = true
 				continue
 			}
-			if sanitizeTaskPublicErrorValue(child, inError) {
-				changed = true
-			}
+		}
+		if sanitizeTaskPublicErrorValue(child, false) {
+			changed = true
 		}
 	}
-	return changed
+
+	publicMessages := publicFlatTaskFailures(typed)
+	flatFailureMatched := len(publicMessages) > 0
+	if !explicitErrorMatched && !flatFailureMatched {
+		return changed
+	}
+
+	// Once an explicit error object/array or flat failure field is recognized
+	// as a group error, rebuild its parent object rather than replacing strings
+	// recursively. This prevents the same group name from surviving in sibling
+	// metadata/details/debug fields while retaining ordinary task identity,
+	// state, prompt and successful output fields.
+	for key, child := range typed {
+		normalizedKey := normalizeTaskDetailKey(key)
+		if normalizedKey == "error" && explicitErrorMatched {
+			continue
+		}
+		if isPublicTaskResultKey(normalizedKey) {
+			if isDiagnosticTaskResultKey(normalizedKey) {
+				if text, ok := child.(string); ok {
+					if message, matched := types.PublicGroupErrorMessage(text); matched {
+						typed[key] = message
+					}
+				}
+			}
+			continue
+		}
+		if message, matched := publicMessages[key]; matched {
+			typed[key] = message
+			continue
+		}
+		delete(typed, key)
+	}
+	return true
+}
+
+func sanitizeStructuredTaskError(value any) (any, bool) {
+	envelope, err := common.Marshal(map[string]any{"type": "error", "error": value})
+	if err != nil {
+		return value, false
+	}
+	sanitized, changed := types.SanitizeGroupErrorStreamData(string(envelope))
+	if !changed {
+		return value, false
+	}
+	var publicEnvelope map[string]any
+	if err := common.Unmarshal([]byte(sanitized), &publicEnvelope); err != nil {
+		return value, false
+	}
+	publicError, ok := publicEnvelope["error"]
+	return publicError, ok
+}
+
+func publicFlatTaskFailures(value map[string]any) map[string]string {
+	messages := make(map[string]string)
+	for key, child := range value {
+		normalizedKey := normalizeTaskDetailKey(key)
+		if normalizedKey != "message" && normalizedKey != "failreason" {
+			continue
+		}
+		text, ok := child.(string)
+		if !ok {
+			continue
+		}
+		if message, matched := types.PublicGroupErrorMessage(text); matched {
+			messages[key] = message
+		}
+	}
+	return messages
+}
+
+func normalizeTaskDetailKey(key string) string {
+	return strings.ToLower(strings.NewReplacer("_", "", "-", "", " ", "").Replace(key))
+}
+
+func isPublicTaskResultKey(key string) bool {
+	switch key {
+	case "id", "taskid", "status", "state", "progress", "prompt", "output", "result", "resulturl", "url", "createdat", "updatedat", "submittime", "starttime", "finishtime":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDiagnosticTaskResultKey(key string) bool {
+	switch key {
+	case "result", "resulturl", "url":
+		return true
+	default:
+		return false
+	}
 }
 
 // SanitizeTaskDetailJSON returns a safe JSON copy suitable for persistence or
