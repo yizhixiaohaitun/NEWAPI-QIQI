@@ -87,9 +87,7 @@ func RelaySeedanceAsset(c *gin.Context) {
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, retryLimit-retryParam.GetRetry()) {
 			break
 		}
-		if !channel.ChannelInfo.IsMultiKey {
-			service.MarkChannelFailed(c, channel.Id)
-		}
+		markChannelFailedForRetry(c, channel)
 		if !retryParam.IncreaseRetry() {
 			break
 		}

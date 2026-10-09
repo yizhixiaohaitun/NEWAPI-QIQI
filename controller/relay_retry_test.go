@@ -11,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -60,6 +63,36 @@ func TestQiqiEC003ResponsesResourceMismatchDoesNotRetry(t *testing.T) {
 		http.StatusBadRequest,
 	)
 	assert.False(t, shouldRetry(ctx, mismatch, 2))
+}
+
+func TestMarkChannelFailedForRetryPreservesMultiKeyRotation(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	markChannelFailedForRetry(ctx, &model.Channel{Id: 461, ChannelInfo: model.ChannelInfo{IsMultiKey: true}})
+	_, exists := common.GetContextKey(ctx, constant.ContextKeyFailedChannels)
+	assert.False(t, exists, "a multi-key channel must keep rotating its remaining keys")
+
+	markChannelFailedForRetry(ctx, &model.Channel{Id: 464})
+	value, exists := common.GetContextKey(ctx, constant.ContextKeyFailedChannels)
+	require.True(t, exists)
+	assert.True(t, value.(map[int]bool)[464])
+}
+
+func TestChannelErrorsRespectExplicitRetryStops(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
+	channelErr := types.NewErrorWithStatusCode(fmt.Errorf("channel unavailable"), types.ErrorCode("channel:test"), http.StatusServiceUnavailable)
+
+	assert.True(t, shouldRetry(ctx, channelErr, 1), "ordinary channel errors remain retryable")
+	assert.False(t, shouldRetry(ctx, channelErr, 0), "channel errors must respect the remaining retry budget")
+
+	ctx.Set("specific_channel_id", 461)
+	assert.False(t, shouldRetry(ctx, channelErr, 1), "a specific channel must never fall through to another group channel")
+	resourceErr := types.NewErrorWithStatusCode(fmt.Errorf("upstream quota exhausted"), types.ErrorCodeUpstreamResourceInsufficient, http.StatusForbidden)
+	assert.False(t, shouldRetry(ctx, resourceErr, 1), "resource exhaustion must not bypass a specific channel binding")
+	ctx.Set("specific_channel_id", nil)
+
+	skipChannelErr := types.NewErrorWithStatusCode(fmt.Errorf("channel unavailable"), types.ErrorCode("channel:test"), http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+	assert.False(t, shouldRetry(ctx, skipChannelErr, 1), "explicit skip-retry must win over channel:error")
 }
 
 func TestUpstreamPreConsumeFailureRetriesWhenForbidden(t *testing.T) {

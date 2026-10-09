@@ -37,7 +37,7 @@ func MarkChannelFailed(c *gin.Context, channelID int) {
 		return
 	}
 	failed := make(map[int]bool)
-	if value, exists := common.GetContextKey(c, constant.ContextKeyAutoGroupFailedChannels); exists {
+	if value, exists := common.GetContextKey(c, constant.ContextKeyFailedChannels); exists {
 		if existing, ok := value.(map[int]bool); ok {
 			for id, isFailed := range existing {
 				failed[id] = isFailed
@@ -45,7 +45,7 @@ func MarkChannelFailed(c *gin.Context, channelID int) {
 		}
 	}
 	failed[channelID] = true
-	common.SetContextKey(c, constant.ContextKeyAutoGroupFailedChannels, failed)
+	common.SetContextKey(c, constant.ContextKeyFailedChannels, failed)
 }
 
 func (p *RetryParam) IncreaseRetry() bool {
@@ -67,7 +67,7 @@ func (p *RetryParam) IncreaseRetry() bool {
 func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
 	selectGroup := param.TokenGroup
 	failedChannels := make(map[int]bool)
-	if value, exists := common.GetContextKey(param.Ctx, constant.ContextKeyAutoGroupFailedChannels); exists {
+	if value, exists := common.GetContextKey(param.Ctx, constant.ContextKeyFailedChannels); exists {
 		if failed, ok := value.(map[int]bool); ok {
 			for channelID, isFailed := range failed {
 				failedChannels[channelID] = isFailed

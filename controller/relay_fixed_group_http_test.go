@@ -1,10 +1,12 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,6 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+var fixedGroupAffinityTestSequence atomic.Uint64
 
 func TestRelayHTTPFixedGroupAffinityFailureImmediatelyUsesUntriedChannel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -80,16 +84,16 @@ func TestRelayHTTPFixedGroupAffinityFailureImmediatelyUsesUntriedChannel(t *test
 		Name: "fixed-http-affinity", ModelRegex: []string{"^test-model$"}, PathRegex: []string{"^/v1/messages$"},
 		KeySources: []operation_setting.ChannelAffinityKeySource{{Type: "request_header", Key: "X-Test-Affinity"}}, TTLSeconds: 60,
 	}}
-	p10, p5, weight := int64(10), int64(5), uint(1)
+	priority, weight := int64(10), uint(1)
 	baseA, baseB := upstreamA.URL, upstreamB.URL
 	require.NoError(t, db.Create(&model.User{Id: 1, Username: "fixed-http-user", Quota: 1000000, Status: common.UserStatusEnabled}).Error)
 	require.NoError(t, db.Create(&[]model.Channel{
-		{Id: 461, Name: "affinity-a", Key: "key-a", BaseURL: &baseA, Group: "fixed", Models: "test-model", Status: common.ChannelStatusEnabled, Priority: &p10, Weight: &weight},
-		{Id: 464, Name: "fallback-b", Key: "key-b", BaseURL: &baseB, Group: "fixed", Models: "test-model", Status: common.ChannelStatusEnabled, Priority: &p5, Weight: &weight},
+		{Id: 461, Name: "affinity-a", Key: "key-a", BaseURL: &baseA, Group: "fixed", Models: "test-model", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+		{Id: 464, Name: "fallback-b", Key: "key-b", BaseURL: &baseB, Group: "fixed", Models: "test-model", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: common.GetPointer(uint(0))},
 	}).Error)
 	require.NoError(t, db.Create(&[]model.Ability{
-		{Group: "fixed", Model: "test-model", ChannelId: 461, Enabled: true, Priority: &p10, Weight: 1},
-		{Group: "fixed", Model: "test-model", ChannelId: 464, Enabled: true, Priority: &p5, Weight: 1},
+		{Group: "fixed", Model: "test-model", ChannelId: 461, Enabled: true, Priority: &priority, Weight: 1},
+		{Group: "fixed", Model: "test-model", ChannelId: 464, Enabled: true, Priority: &priority, Weight: 0},
 	}).Error)
 	model.InitChannelCache()
 	service.InitHttpClient()
@@ -110,10 +114,11 @@ func TestRelayHTTPFixedGroupAffinityFailureImmediatelyUsesUntriedChannel(t *test
 		usedChannels = append([]string(nil), c.GetStringSlice("use_channel")...)
 	})
 
+	affinityKey := fmt.Sprintf("same-session-%d", fixedGroupAffinityTestSequence.Add(1))
 	doRequest := func() *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"test-model","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`))
 		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("X-Test-Affinity", "same-session")
+		request.Header.Set("X-Test-Affinity", affinityKey)
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
 		return response
@@ -121,6 +126,7 @@ func TestRelayHTTPFixedGroupAffinityFailureImmediatelyUsesUntriedChannel(t *test
 	warmup := doRequest()
 	require.Equal(t, http.StatusOK, warmup.Code, warmup.Body.String())
 	mu.Lock()
+	require.Equal(t, []string{"A"}, append([]string(nil), calls...), "warmup must select channel 461 before affinity can be asserted")
 	calls = calls[:0]
 	mu.Unlock()
 	usedChannels = nil

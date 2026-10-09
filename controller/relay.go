@@ -273,9 +273,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if !shouldRetry(c, newAPIError, retryLimit-retryParam.GetRetry()) {
 			break
 		}
-		if !channel.ChannelInfo.IsMultiKey {
-			service.MarkChannelFailed(c, channel.Id)
-		}
+		markChannelFailedForRetry(c, channel)
 		if !retryParam.IncreaseRetry() {
 			break
 		}
@@ -327,6 +325,13 @@ func addUsedChannel(c *gin.Context, channelId int) {
 	useChannel := c.GetStringSlice("use_channel")
 	useChannel = append(useChannel, fmt.Sprintf("%d", channelId))
 	c.Set("use_channel", useChannel)
+}
+
+func markChannelFailedForRetry(c *gin.Context, channel *model.Channel) {
+	if channel == nil || channel.ChannelInfo.IsMultiKey {
+		return
+	}
+	service.MarkChannelFailed(c, channel.Id)
 }
 
 func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
@@ -408,23 +413,22 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
+	if types.IsSkipRetryError(openaiErr) || retryTimes <= 0 {
+		return false
+	}
+	if c != nil {
+		if _, ok := c.Get("specific_channel_id"); ok {
+			return false
+		}
+	}
 	if types.IsChannelError(openaiErr) {
 		return true
-	}
-	if types.IsSkipRetryError(openaiErr) {
-		return false
 	}
 	// Upstream NEWAPI-compatible services can report their own pre-consume
 	// exhaustion as HTTP 403. Retry the marked provider resource failure while
 	// leaving ordinary 403 errors under the configured status-code policy.
 	if openaiErr.GetErrorCode() == types.ErrorCodeUpstreamResourceInsufficient {
 		return retryTimes > 0
-	}
-	if retryTimes <= 0 {
-		return false
-	}
-	if _, ok := c.Get("specific_channel_id"); ok {
-		return false
 	}
 	if service.IsResponsesStateResourceMismatchError(openaiErr) {
 		return true
@@ -703,9 +707,7 @@ func RelayTask(c *gin.Context) {
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, retryLimit-retryParam.GetRetry()) {
 			break
 		}
-		if !channel.ChannelInfo.IsMultiKey {
-			service.MarkChannelFailed(c, channel.Id)
-		}
+		markChannelFailedForRetry(c, channel)
 		if !retryParam.IncreaseRetry() {
 			break
 		}
