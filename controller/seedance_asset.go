@@ -84,7 +84,13 @@ func RelaySeedanceAsset(c *gin.Context) {
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
 		}
-		if !shouldRetryTaskRelay(c, channel.Id, taskErr, retryLimit-retryParam.GetRetry()) || !retryParam.IncreaseRetry() {
+		if !shouldRetryTaskRelay(c, channel.Id, taskErr, retryLimit-retryParam.GetRetry()) {
+			break
+		}
+		if !channel.ChannelInfo.IsMultiKey {
+			service.MarkChannelFailed(c, channel.Id)
+		}
+		if !retryParam.IncreaseRetry() {
 			break
 		}
 	}

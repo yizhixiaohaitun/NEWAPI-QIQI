@@ -273,6 +273,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if !shouldRetry(c, newAPIError, retryLimit-retryParam.GetRetry()) {
 			break
 		}
+		if !channel.ChannelInfo.IsMultiKey {
+			service.MarkChannelFailed(c, channel.Id)
+		}
 		if !retryParam.IncreaseRetry() {
 			break
 		}
@@ -699,6 +702,9 @@ func RelayTask(c *gin.Context) {
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, retryLimit-retryParam.GetRetry()) {
 			break
+		}
+		if !channel.ChannelInfo.IsMultiKey {
+			service.MarkChannelFailed(c, channel.Id)
 		}
 		if !retryParam.IncreaseRetry() {
 			break

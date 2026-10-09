@@ -41,10 +41,11 @@ const (
 	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey               ContextKey = "channel_key"
 
-	ContextKeyAutoGroup           ContextKey = "auto_group"
-	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
-	ContextKeyAutoGroupRetryIndex ContextKey = "auto_group_retry_index"
-	ContextKeyAutoGroupVisited    ContextKey = "auto_group_visited"
+	ContextKeyAutoGroup               ContextKey = "auto_group"
+	ContextKeyAutoGroupIndex          ContextKey = "auto_group_index"
+	ContextKeyAutoGroupRetryIndex     ContextKey = "auto_group_retry_index"
+	ContextKeyAutoGroupVisited        ContextKey = "auto_group_visited"
+	ContextKeyAutoGroupFailedChannels ContextKey = "auto_group_failed_channels"
 
 	/* user related keys */
 	ContextKeyUserId      ContextKey = "id"

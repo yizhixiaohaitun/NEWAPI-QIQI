@@ -30,6 +30,24 @@ func (p *RetryParam) SetRetry(retry int) {
 	p.Retry = &retry
 }
 
+// MarkChannelFailed prevents a request retry from selecting the same failed
+// single-key upstream channel again, including through an overlapping auto group.
+func MarkChannelFailed(c *gin.Context, channelID int) {
+	if c == nil || channelID <= 0 {
+		return
+	}
+	failed := make(map[int]bool)
+	if value, exists := common.GetContextKey(c, constant.ContextKeyAutoGroupFailedChannels); exists {
+		if existing, ok := value.(map[int]bool); ok {
+			for id, isFailed := range existing {
+				failed[id] = isFailed
+			}
+		}
+	}
+	failed[channelID] = true
+	common.SetContextKey(c, constant.ContextKeyAutoGroupFailedChannels, failed)
+}
+
 func (p *RetryParam) IncreaseRetry() bool {
 	if p.Retry == nil {
 		p.Retry = new(int)
@@ -48,8 +66,16 @@ func (p *RetryParam) IncreaseRetry() bool {
 // no matching channel are skipped without consuming another controller retry.
 func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
 	selectGroup := param.TokenGroup
+	failedChannels := make(map[int]bool)
+	if value, exists := common.GetContextKey(param.Ctx, constant.ContextKeyAutoGroupFailedChannels); exists {
+		if failed, ok := value.(map[int]bool); ok {
+			for channelID, isFailed := range failed {
+				failedChannels[channelID] = isFailed
+			}
+		}
+	}
 	if param.TokenGroup != "auto" {
-		channel, err := model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath)
+		channel, err := model.GetRandomSatisfiedChannelExcluding(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath, failedChannels)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}
@@ -95,7 +121,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		}
 		logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-		channel, _ := model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath)
+		channel, _ := model.GetRandomSatisfiedChannelExcluding(autoGroup, param.ModelName, priorityRetry, param.RequestPath, failedChannels)
 		if channel == nil {
 			logger.LogDebug(param.Ctx, "No available channel in group %s for model %s, trying next group", autoGroup, param.ModelName)
 			continue

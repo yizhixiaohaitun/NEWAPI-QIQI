@@ -192,10 +192,31 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 }
 
 func GetChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+	return GetChannelExcluding(group, model, retry, requestPath, nil)
+}
+
+// GetChannelExcluding is the database-backed equivalent of the cache selector
+// with request-local failed channel filtering.
+func GetChannelExcluding(group string, model string, retry int, requestPath string, excluded map[int]bool) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil
 	channelQuery, err := getChannelQuery(group, model, retry)
+	if len(excluded) > 0 {
+		excludedIDs := make([]int, 0, len(excluded))
+		for channelID, isExcluded := range excluded {
+			if isExcluded {
+				excludedIDs = append(excludedIDs, channelID)
+			}
+		}
+		// Path compatibility depends on channel configuration, so fetch every
+		// unfailed ability first. The highest remaining compatible priority is
+		// chosen after filterAbilitiesByRequestPathAndModel below.
+		channelQuery = DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true)
+		if len(excludedIDs) > 0 {
+			channelQuery = channelQuery.Where("channel_id NOT IN ?", excludedIDs)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -208,6 +229,31 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 		return nil, err
 	}
 	abilities = filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
+	if len(excluded) > 0 {
+		var highestPriority *int64
+		for i := range abilities {
+			priority := int64(0)
+			if abilities[i].Priority != nil {
+				priority = *abilities[i].Priority
+			}
+			if highestPriority == nil || priority > *highestPriority {
+				highestPriority = &priority
+			}
+		}
+		candidates := make([]Ability, 0, len(abilities))
+		if highestPriority != nil {
+			for _, ability := range abilities {
+				priority := int64(0)
+				if ability.Priority != nil {
+					priority = *ability.Priority
+				}
+				if priority == *highestPriority {
+					candidates = append(candidates, ability)
+				}
+			}
+		}
+		abilities = candidates
+	}
 	channel := Channel{}
 	if len(abilities) > 0 {
 		// Randomly choose one
