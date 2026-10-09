@@ -159,11 +159,15 @@ var safeGroupErrorTypes = map[string]struct{}{
 	"error": {}, "permission_error": {}, "authentication_error": {},
 	"authorization_error": {}, "invalid_request_error": {}, "api_error": {},
 	"server_error": {}, "rate_limit_error": {}, "overloaded_error": {},
+	"upstream_error": {}, "new_api_error": {}, "openai_error": {}, "claude_error": {},
 }
 
 var safeGroupErrorCodes = map[string]struct{}{
 	"forbidden": {}, "permission_denied": {}, "access_denied": {},
 	"unauthorized": {}, "not_authorized": {}, "no_available_channel": {},
+	string(ErrorCodeBadResponseStatusCode): {}, string(ErrorCodeGetChannelFailed): {},
+	string(ErrorCodeBadResponse): {}, string(ErrorCodeQueryDataError): {},
+	string(ErrorCodeChannelNoAvailableKey): {},
 }
 
 func safePublicErrorType(value string) string {
@@ -171,7 +175,7 @@ func safePublicErrorType(value string) string {
 	if _, ok := safeGroupErrorTypes[normalized]; ok {
 		return value
 	}
-	return ""
+	return string(ErrorTypeUpstreamError)
 }
 
 func safePublicErrorClassifier(value any) any {

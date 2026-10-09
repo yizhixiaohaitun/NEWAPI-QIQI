@@ -222,3 +222,14 @@ func TestSanitizeGroupErrorStreamDataDoesNotRedactNormalModelOutput(t *testing.T
 	assert.False(t, changed)
 	assert.Equal(t, refusal, output)
 }
+
+func TestPublicGroupErrorPreservesKnownLocalClassifiers(t *testing.T) {
+	t.Parallel()
+	original := WithOpenAIError(OpenAIError{Message: "无权访问 classifier-secret 分组", Type: "upstream_error", Code: "bad_response_status_code"}, 403)
+	clean := original.CopyWithPublicMessage(publicGroupAccessDeniedMessage)
+	assert.Equal(t, "upstream_error", clean.ToOpenAIError().Type)
+	assert.Equal(t, "bad_response_status_code", clean.ToOpenAIError().Code)
+	unknown := WithOpenAIError(OpenAIError{Message: "无权访问 classifier-secret 分组", Type: "classifier-secret", Code: "classifier-secret"}, 403).CopyWithPublicMessage(publicGroupAccessDeniedMessage)
+	assert.Equal(t, "upstream_error", unknown.ToOpenAIError().Type)
+	assert.Nil(t, unknown.ToOpenAIError().Code)
+}
