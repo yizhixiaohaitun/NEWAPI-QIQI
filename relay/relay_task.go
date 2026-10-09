@@ -403,6 +403,8 @@ func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 	}
 	if len(respBody) == 0 {
 		respBody = []byte("{\"code\":\"success\",\"data\":null}")
+	} else {
+		respBody = model.SanitizeTaskPublicErrorJSON(respBody)
 	}
 
 	c.Writer.Header().Set("Content-Type", "application/json")
@@ -497,7 +499,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 			taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("task response conversion not implemented: %s", originTask.Platform), "not_implemented", http.StatusNotImplemented)
 			return
 		}
-		respBody, err = converter.ConvertTaskResponse(originTask)
+		respBody, err = converter.ConvertTaskResponse(originTask.CopyForPublicResponse())
 		if err != nil {
 			taskResp = service.TaskErrorWrapper(err, "convert_task_response_failed", http.StatusInternalServerError)
 		}
@@ -518,7 +520,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 			return
 		}
 		if converter, ok := adaptor.(channel.OpenAIVideoConverter); ok {
-			openAIVideoData, err := converter.ConvertToOpenAIVideo(originTask)
+			openAIVideoData, err := converter.ConvertToOpenAIVideo(originTask.CopyForPublicResponse())
 			if err != nil {
 				taskResp = service.TaskErrorWrapper(err, "convert_to_openai_video_failed", http.StatusInternalServerError)
 				return
@@ -609,13 +611,14 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 
 	// 非 OpenAI Video API: 构建自定义格式响应
 	format := detectVideoFormat(body)
+	publicTask := task.CopyForPublicResponse()
 	out := map[string]any{
 		"error":    nil,
 		"format":   format,
 		"metadata": nil,
 		"status":   mapTaskStatusToSimple(task.Status),
 		"task_id":  task.TaskID,
-		"url":      task.GetResultURL(),
+		"url":      publicTask.GetResultURL(),
 	}
 	respBody, _ := common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
@@ -668,6 +671,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	if task.Status == model.TaskStatusSuccess {
 		resultURL = taskcommon.StableResultURL(task.Platform, task.TaskID, resultURL)
 	}
+	task = task.CopyForPublicResponse()
 	return &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,

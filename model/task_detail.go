@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/types"
 )
 
 var taskDetailSecretTextPattern = regexp.MustCompile(`(?i)(authorization|api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|secret|password|credential|cookie)(\s*[:=]\s*)([^\s,;]+)`)
@@ -80,6 +81,65 @@ func sanitizeTaskDetailValue(value any) any {
 	default:
 		return value
 	}
+}
+
+// SanitizeTaskPublicErrorJSON rewrites group names only in explicit task
+// failure fields. Normal prompts, generated output, and successful data remain
+// unchanged.
+func SanitizeTaskPublicErrorJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return raw
+	}
+	var value any
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return raw
+	}
+	if !sanitizeTaskPublicErrorValue(value, false) {
+		return raw
+	}
+	sanitized, err := common.Marshal(value)
+	if err != nil {
+		return raw
+	}
+	return json.RawMessage(sanitized)
+}
+
+func sanitizeTaskPublicErrorValue(value any, inError bool) bool {
+	changed := false
+	switch typed := value.(type) {
+	case map[string]any:
+		status, _ := typed["status"].(string)
+		failed := strings.EqualFold(status, "failed") || strings.EqualFold(status, "failure")
+		for key, child := range typed {
+			normalizedKey := strings.ToLower(strings.ReplaceAll(key, "_", ""))
+			diagnosticField := normalizedKey == "error" || normalizedKey == "failreason" || normalizedKey == "message" || normalizedKey == "details" || normalizedKey == "metadata"
+			childInError := inError || normalizedKey == "error" || (failed && diagnosticField)
+			if text, ok := child.(string); ok && (childInError || normalizedKey == "failreason") {
+				if message, matched := types.PublicGroupErrorMessage(text); matched {
+					typed[key] = message
+					changed = true
+				}
+				continue
+			}
+			if sanitizeTaskPublicErrorValue(child, childInError) {
+				changed = true
+			}
+		}
+	case []any:
+		for i, child := range typed {
+			if text, ok := child.(string); ok && inError {
+				if message, matched := types.PublicGroupErrorMessage(text); matched {
+					typed[i] = message
+					changed = true
+				}
+				continue
+			}
+			if sanitizeTaskPublicErrorValue(child, inError) {
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // SanitizeTaskDetailJSON returns a safe JSON copy suitable for persistence or

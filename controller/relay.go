@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -533,19 +534,27 @@ func RelayMidjourney(c *gin.Context) {
 	}
 	log.Println(mjErr)
 	if mjErr != nil {
-		statusCode := http.StatusBadRequest
-		if mjErr.Code == 30 {
-			mjErr.Result = "当前分组负载已饱和，请稍后再试，或升级账户以提升服务质量。"
-			statusCode = http.StatusTooManyRequests
-		}
+		rawDescription := fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result)
+		statusCode, publicDescription := publicMidjourneyError(mjErr)
 		c.JSON(statusCode, gin.H{
-			"description": fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result),
+			"description": publicDescription,
 			"type":        "upstream_error",
 			"code":        mjErr.Code,
 		})
 		channelId := c.GetInt("channel_id")
-		logger.LogError(c, fmt.Sprintf("relay error (channel #%d, status code %d): %s", channelId, statusCode, fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result)))
+		logger.LogError(c, fmt.Sprintf("relay error (channel #%d, status code %d): %s", channelId, statusCode, rawDescription))
 	}
+}
+
+func publicMidjourneyError(mjErr *dto.MidjourneyResponse) (int, string) {
+	if mjErr.Code == 30 {
+		return http.StatusTooManyRequests, "当前分组负载已饱和，请稍后再试，或升级账户以提升服务质量。"
+	}
+	description := fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result)
+	if message, ok := types.PublicGroupErrorMessage(description); ok {
+		description = message
+	}
+	return http.StatusBadRequest, description
 }
 
 func RelayNotImplemented(c *gin.Context) {
@@ -742,12 +751,40 @@ func RelayTask(c *gin.Context) {
 // respondTaskError 统一输出 Task 错误响应。用户自身额度不足保留原始提示；
 // 只有上游限流类 429 才改写为负载饱和。
 func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
+	publicTaskErr := *taskErr
+	diagnostic := taskErr.Message
+	if taskErr.Error != nil {
+		diagnostic += " " + taskErr.Error.Error()
+	}
+	publicMessage, groupFailure := types.PublicGroupErrorMessage(diagnostic)
+	if taskErr.Data != nil {
+		if rawData, err := common.Marshal(taskErr.Data); err == nil {
+			if dataMessage, ok := types.PublicGroupErrorMessage(string(rawData)); ok {
+				if !groupFailure {
+					publicMessage = dataMessage
+				}
+				groupFailure = true
+			}
+			if !groupFailure {
+				sanitizedData := model.SanitizeTaskPublicErrorJSON(rawData)
+				if !bytes.Equal(rawData, sanitizedData) {
+					groupFailure = true
+					publicMessage = "无权访问请求的上游分组"
+				}
+			}
+		}
+	}
+	if groupFailure {
+		publicTaskErr.Data = nil
+	}
 	if taskErr.StatusCode == http.StatusTooManyRequests &&
 		taskErr.Code != string(types.ErrorCodeInsufficientUserQuota) &&
 		taskErr.Code != string(types.ErrorCodePreConsumeTokenQuotaFailed) {
-		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
+		publicTaskErr.Message = "当前分组上游负载已饱和，请稍后再试"
+	} else if groupFailure {
+		publicTaskErr.Message = publicMessage
 	}
-	c.JSON(taskErr.StatusCode, taskErr)
+	c.JSON(publicTaskErr.StatusCode, &publicTaskErr)
 }
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {

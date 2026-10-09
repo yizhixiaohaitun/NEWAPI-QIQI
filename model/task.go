@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 )
 
 type TaskStatus string
@@ -140,6 +141,23 @@ func (t *Task) GetResultURL() string {
 		return t.PrivateData.ResultURL
 	}
 	return t.FailReason
+}
+
+// CopyForPublicResponse returns a shallow copy with provider-controlled group
+// failures redacted. The persisted task remains untouched for polling, retry,
+// billing, and internal diagnostics.
+func (t *Task) CopyForPublicResponse() *Task {
+	if t == nil {
+		return nil
+	}
+	publicTask := *t
+	if message, ok := types.PublicGroupErrorMessage(t.FailReason); ok {
+		publicTask.FailReason = message
+		publicTask.Data = nil
+	} else {
+		publicTask.Data = SanitizeTaskPublicErrorJSON(t.Data)
+	}
+	return &publicTask
 }
 
 // GenerateTaskID 生成对外暴露的 task_xxxx 格式 ID

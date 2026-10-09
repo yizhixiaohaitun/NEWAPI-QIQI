@@ -221,6 +221,42 @@ func TestRespondTaskErrorPreservesUserQuota429Message(t *testing.T) {
 	assert.NotContains(t, recorder.Body.String(), "当前分组上游负载已饱和")
 }
 
+func TestRespondTaskErrorSanitizesGroupFailureWithoutMutatingDiagnostic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	rawMessage := "group ClaudeCode_AZ has no available channels"
+	taskErr := &dto.TaskError{
+		Code:       "upstream_error",
+		Message:    rawMessage,
+		Data:       map[string]any{"metadata": map[string]any{"group": "ClaudeCode_AZ"}},
+		StatusCode: http.StatusBadGateway,
+		Error:      fmt.Errorf("raw body: not authorized to access group claude-enterprise"),
+	}
+
+	respondTaskError(ctx, taskErr)
+
+	assert.Equal(t, http.StatusBadGateway, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "无权访问请求的上游分组")
+	assert.NotContains(t, recorder.Body.String(), "ClaudeCode_AZ")
+	assert.NotContains(t, recorder.Body.String(), "claude-enterprise")
+	assert.Equal(t, rawMessage, taskErr.Message)
+	assert.NotNil(t, taskErr.Data)
+	assert.Contains(t, taskErr.Error.Error(), "claude-enterprise")
+}
+
+func TestPublicMidjourneyErrorSanitizesGroupFailureWithoutMutatingSource(t *testing.T) {
+	rawDescription := "not authorized to access group claude-enterprise"
+	mjErr := &dto.MidjourneyResponse{Code: 4, Description: rawDescription, Result: "request rejected"}
+
+	statusCode, description := publicMidjourneyError(mjErr)
+
+	assert.Equal(t, http.StatusBadRequest, statusCode)
+	assert.Equal(t, "无权访问请求的上游分组", description)
+	assert.Equal(t, rawDescription, mjErr.Description)
+	assert.Equal(t, "request rejected", mjErr.Result)
+}
+
 func TestRespondTaskErrorRewritesGenericUpstream429Message(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -257,6 +293,25 @@ func TestTaskRelayRetriesOnlyTransientStatuses(t *testing.T) {
 		Message:    "upstream price missing",
 		StatusCode: http.StatusBadGateway,
 	}, 2), "upstream price configuration errors must keep their attribution instead of being retried away")
+}
+
+func TestRespondTaskErrorClearsGroupDiagnosticsFromGeneric429Data(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	taskErr := &dto.TaskError{
+		Code:       "rate_limit_exceeded",
+		Message:    "raw upstream rate limit message",
+		Data:       map[string]any{"error": map[string]any{"metadata": []any{"group ClaudeCode_AZ has no available channels"}}},
+		StatusCode: http.StatusTooManyRequests,
+	}
+
+	respondTaskError(ctx, taskErr)
+
+	assert.Contains(t, recorder.Body.String(), "当前分组上游负载已饱和，请稍后再试")
+	assert.NotContains(t, recorder.Body.String(), "ClaudeCode_AZ")
+	assert.Contains(t, recorder.Body.String(), `"data":null`)
+	assert.NotNil(t, taskErr.Data)
 }
 
 func TestRetryLimitForEarlyResponsesStreamError(t *testing.T) {
