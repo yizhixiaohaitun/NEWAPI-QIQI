@@ -159,7 +159,7 @@ func WssString(c *gin.Context, ws *websocket.Conn, str string) error {
 		return errors.New("websocket connection is nil")
 	}
 	//common.LogInfo(c, fmt.Sprintf("sending message: %s", str))
-	return ws.WriteMessage(1, []byte(str))
+	return ws.WriteMessage(websocket.TextMessage, []byte(sanitizePublicStreamData(c, str)))
 }
 
 func WssObject(c *gin.Context, ws *websocket.Conn, object interface{}) error {
@@ -172,7 +172,7 @@ func WssObject(c *gin.Context, ws *websocket.Conn, object interface{}) error {
 		return errors.New("websocket connection is nil")
 	}
 	//common.LogInfo(c, fmt.Sprintf("sending message: %s", jsonData))
-	return ws.WriteMessage(1, jsonData)
+	return ws.WriteMessage(websocket.TextMessage, []byte(sanitizePublicStreamData(c, string(jsonData))))
 }
 
 func WssError(c *gin.Context, ws *websocket.Conn, openaiError types.OpenAIError) {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,6 +82,29 @@ func TestSanitizeFinalRelayGroupErrorPreservesDiagnosticsAndSemantics(t *testing
 	assert.Contains(t, upstream.Error(), "ClaudeCode_AZ")
 	assert.Contains(t, upstream.Error(), rawBody)
 	assert.Contains(t, string(upstream.Metadata), "ClaudeCode_AZ")
+}
+
+func TestSanitizeFinalRelayGroupErrorDropsProviderControlledParamAndCode(t *testing.T) {
+	t.Parallel()
+
+	upstream := types.WithOpenAIError(types.OpenAIError{
+		Message:  "group private-provider is disabled",
+		Type:     "permission_error",
+		Param:    "private-provider",
+		Code:     "private-provider",
+		Metadata: []byte(`{"details":["private-provider"]}`),
+	}, http.StatusForbidden)
+	sanitized := SanitizeFinalRelayError(upstream)
+	require.NotSame(t, upstream, sanitized)
+	public := sanitized.ToOpenAIError()
+	assert.Equal(t, "permission_error", public.Type)
+	assert.Empty(t, public.Param)
+	assert.Nil(t, public.Code)
+	encoded, marshalErr := common.Marshal(public)
+	require.NoError(t, marshalErr)
+	assert.NotContains(t, string(encoded), "private-provider")
+	assert.Equal(t, "private-provider", upstream.ToOpenAIError().Param)
+	assert.Equal(t, "private-provider", upstream.ToOpenAIError().Code)
 }
 
 func TestSanitizeFinalRelayGroupErrorFindsNestedRelayPayload(t *testing.T) {

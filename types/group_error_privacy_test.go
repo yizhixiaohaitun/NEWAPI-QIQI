@@ -21,6 +21,10 @@ func TestPublicGroupErrorMessageRecognizesGroupFailuresWithoutFixedNames(t *test
 		{name: "English access denial", text: "not authorized to access private-blue group", want: publicGroupAccessDeniedMessage},
 		{name: "Chinese no channel", text: "分组 corp-secret 下模型 claude 无可用渠道", want: publicGroupNoChannelMessage},
 		{name: "English no channel", text: "no available upstream channel for group hidden-west", want: publicGroupNoChannelMessage},
+		{name: "actual English channel selection", text: "Failed to get available channel under group hidden-west", want: publicGroupNoChannelMessage},
+		{name: "current Chinese group model selection", text: "当前分组 hidden-east 下对于模型 claude 无可用渠道", want: publicGroupNoChannelMessage},
+		{name: "English disabled group", text: "group hidden-disabled is disabled", want: publicGroupAccessDeniedMessage},
+		{name: "Chinese disabled group", text: "分组 hidden-disabled 已停用", want: publicGroupAccessDeniedMessage},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -62,6 +66,73 @@ func TestSanitizeGroupErrorStreamDataScrubsNestedAndRawErrorFields(t *testing.T)
 	assert.Equal(t, "permission_error", streamErr["type"])
 	assert.Equal(t, "forbidden", streamErr["code"])
 	assert.NotContains(t, streamErr, "group")
+}
+
+func TestSanitizeGroupErrorStreamDataRebuildsRecognizedErrorEnvelope(t *testing.T) {
+	t.Parallel()
+
+	input := `{"type":"response.failed","metadata":{"group":"stream-secret"},"details":["stream-secret",{"raw":"provider trace for stream-secret"}],"response":{"id":"resp-safe","error":{"message":"Failed to get available channel under group stream-secret","type":"permission_error","code":"stream-secret","param":"stream-secret","details":["stream-secret"],"nested":{"error":"stream-secret"}}}}`
+	output, changed := SanitizeGroupErrorStreamData(input)
+	require.True(t, changed)
+	assert.NotContains(t, output, "stream-secret")
+	assert.NotContains(t, output, "provider trace")
+	assert.Contains(t, output, publicGroupNoChannelMessage)
+
+	var envelope map[string]any
+	require.NoError(t, common.Unmarshal([]byte(output), &envelope))
+	assert.Equal(t, "response.failed", envelope["type"])
+	assert.NotContains(t, envelope, "metadata")
+	response := envelope["response"].(map[string]any)
+	streamErr := response["error"].(map[string]any)
+	assert.Equal(t, "permission_error", streamErr["type"])
+	assert.NotContains(t, streamErr, "code")
+	assert.NotContains(t, streamErr, "param")
+	assert.NotContains(t, streamErr, "details")
+}
+
+func TestSanitizeGroupErrorStreamDataRecognizesUnicodeEscapedMessage(t *testing.T) {
+	t.Parallel()
+
+	input := `{"type":"error","error":{"message":"\u65e0\u6743\u8bbf\u95ee escaped-secret \u5206\u7ec4","details":["escaped-secret"]}}`
+	output, changed := SanitizeGroupErrorStreamData(input)
+	require.True(t, changed)
+	assert.NotContains(t, output, "escaped-secret")
+	assert.Contains(t, output, publicGroupAccessDeniedMessage)
+}
+
+func TestSanitizeGroupErrorStreamDataScrubsArrayAndBareStringErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{
+		`{"type":"error","error":["无权访问 array-secret 分组",{"message":"array-secret","details":["array-secret"]}]}`,
+		`{"type":"error","error":"group disabled: bare-secret group"}`,
+		`{"type":"response.error","response":{"error":{"message":"当前分组 zh-secret 下对于模型 claude 无可用渠道","details":["zh-secret"]}}}`,
+	} {
+		output, changed := SanitizeGroupErrorStreamData(input)
+		require.True(t, changed, input)
+		assert.NotContains(t, output, "secret", input)
+		assert.NotContains(t, output, "details", input)
+	}
+}
+
+func TestCopyWithPublicMessageDropsProviderControlledClassifiers(t *testing.T) {
+	t.Parallel()
+
+	original := WithOpenAIError(OpenAIError{
+		Message:  "无权访问 copy-secret 分组",
+		Type:     "permission_error",
+		Param:    "copy-secret",
+		Code:     "copy-secret",
+		Metadata: []byte(`{"details":["copy-secret"]}`),
+	}, 403)
+	clean := original.CopyWithPublicMessage(publicGroupAccessDeniedMessage)
+	serialized, err := common.Marshal(clean.ToOpenAIError())
+	require.NoError(t, err)
+	assert.NotContains(t, string(serialized), "copy-secret")
+	assert.Equal(t, "permission_error", clean.ToOpenAIError().Type)
+	assert.Empty(t, clean.ToOpenAIError().Param)
+	assert.Nil(t, clean.ToOpenAIError().Code)
+	assert.Contains(t, original.ToOpenAIError().Param, "copy-secret")
 }
 
 func TestSanitizeGroupErrorStreamDataDoesNotRedactNormalModelOutput(t *testing.T) {
