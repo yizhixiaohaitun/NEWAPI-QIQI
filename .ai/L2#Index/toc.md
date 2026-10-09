@@ -100,7 +100,10 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - `controller/relay.go#getChannel`：重试渠道选择采用同样边界，保留原错误码和跳过重试语义。
 - `middleware/auth.go#TokenAuth`：分组权限和弃用错误不返回具体分组名，后台日志保留定位信息。
 - `i18n/locales/{en,zh-CN,zh-TW}.yaml`：渠道错误翻译不得包含分组或底层错误占位符。
-- 回归入口：`middleware/distributor_privacy_test.go`、`controller/relay_group_privacy_test.go`；覆盖无渠道和数据库失败、三种首次分发语言，以及客户端隐藏分组而后台日志保留分组。
+- `service/upstream_resource.go#SanitizeFinalRelayError`：最终 HTTP/WS 错误边界同时识别上游中英文分组权限/无渠道错误；检查包装后的 message、`RelayError`/metadata/raw body，复制并净化对外错误，保留状态码、错误类型/代码、重试标记及原对象供渠道健康和后台诊断。
+- `types/group_error_privacy.go`：集中定义保守语义识别与 OpenAI/Claude/嵌套错误 envelope 净化；只匹配同时具备“分组/group”和权限拒绝或无渠道语义的错误，不按固定分组名匹配。
+- `relay/helper/common.go`：已提交的 OpenAI、Claude、Responses SSE 结构化错误写出前执行同一净化；普通 completion/拒答内容不属于错误 envelope，不改写；原始流错误只记后台日志。
+- 回归入口：`middleware/distributor_privacy_test.go`、`controller/relay_group_privacy_test.go`、`types/group_error_privacy_test.go`、`service/upstream_resource_test.go`、`relay/helper/group_error_privacy_test.go`；覆盖本地无渠道/数据库失败、上游完整 raw body 与嵌套序列化、中英文随机分组、OpenAI/Claude/Responses 流错误、后台保留原文及非分组错误/正常模型文本不受影响。
 
 ### 🎯 核心概念
 

@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/types"
 )
 
@@ -69,10 +70,27 @@ func SanitizeFinalRelayError(err *types.NewAPIError) *types.NewAPIError {
 	if err.GetErrorCode() == types.ErrorCodeUpstreamResourceInsufficient {
 		return NewUpstreamResourceInsufficientError()
 	}
-	if !IsUpstreamResourceInsufficient(err.StatusCode, err.ErrorWithStatusCode()) {
-		return err
+	if IsUpstreamResourceInsufficient(err.StatusCode, err.ErrorWithStatusCode()) {
+		return NewUpstreamResourceInsufficientError()
 	}
-	return NewUpstreamResourceInsufficientError()
+
+	// Some adaptors keep a short Err while retaining the provider's nested
+	// OpenAI/Claude payload or raw metadata in RelayError. Inspect all client-
+	// serializable representations, then return a copy so internal diagnostics
+	// and retry history keep the original provider text.
+	diagnosticText := err.ErrorWithStatusCode()
+	if err.RelayError != nil {
+		if relayPayload, marshalErr := common.Marshal(err.RelayError); marshalErr == nil {
+			diagnosticText += " " + string(relayPayload)
+		}
+	}
+	if len(err.Metadata) > 0 {
+		diagnosticText += " " + string(err.Metadata)
+	}
+	if publicMessage, matched := types.PublicGroupErrorMessage(diagnosticText); matched {
+		return err.CopyWithPublicMessage(publicMessage)
+	}
+	return err
 }
 
 // PublicRelayErrorLogContent returns the error text safe to persist in the

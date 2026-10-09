@@ -51,6 +51,55 @@ func TestRelayErrorHandlerMarksChinesePreConsumeFailureForRetry(t *testing.T) {
 	assert.Contains(t, err.Error(), "upstream-secret")
 }
 
+func TestSanitizeFinalRelayGroupErrorPreservesDiagnosticsAndSemantics(t *testing.T) {
+	t.Parallel()
+
+	rawBody := `{"error":{"message":"无权访问 ClaudeCode_AZ 分组 (request id: upstream-secret)","type":"permission_error","code":"forbidden"}}`
+	upstream := types.WithOpenAIError(types.OpenAIError{
+		Message:  "无权访问 ClaudeCode_AZ 分组 (request id: upstream-secret)",
+		Type:     "permission_error",
+		Code:     "forbidden",
+		Metadata: []byte(`{"body":"` + strings.ReplaceAll(rawBody, `"`, `\"`) + `"}`),
+	}, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+	upstream.Err = errors.New("bad response status code 403, message: 无权访问 ClaudeCode_AZ 分组 (request id: upstream-secret), body: " + rawBody)
+
+	sanitized := SanitizeFinalRelayError(upstream)
+	require.NotSame(t, upstream, sanitized)
+	assert.Equal(t, http.StatusForbidden, sanitized.StatusCode)
+	assert.Equal(t, upstream.GetErrorCode(), sanitized.GetErrorCode())
+	assert.Equal(t, upstream.GetErrorType(), sanitized.GetErrorType())
+	assert.True(t, types.IsSkipRetryError(sanitized))
+	assert.Equal(t, "无权访问请求的上游分组", sanitized.Error())
+	assert.Equal(t, "permission_error", sanitized.ToOpenAIError().Type)
+	assert.Equal(t, "forbidden", sanitized.ToOpenAIError().Code)
+	assert.Equal(t, "无权访问请求的上游分组", sanitized.ToOpenAIError().Message)
+	assert.Equal(t, "无权访问请求的上游分组", sanitized.ToClaudeError().Message)
+	assert.NotContains(t, PublicRelayErrorLogContent(upstream), "ClaudeCode_AZ")
+	assert.NotContains(t, PublicRelayErrorLogContent(upstream), "upstream-secret")
+
+	// The original is retained for retry/channel-health/admin diagnostics.
+	assert.Contains(t, upstream.Error(), "ClaudeCode_AZ")
+	assert.Contains(t, upstream.Error(), rawBody)
+	assert.Contains(t, string(upstream.Metadata), "ClaudeCode_AZ")
+}
+
+func TestSanitizeFinalRelayGroupErrorFindsNestedRelayPayload(t *testing.T) {
+	t.Parallel()
+
+	upstream := types.WithClaudeError(types.ClaudeError{
+		Type:    "permission_error",
+		Message: "not authorized to access random-provider-group group",
+	}, http.StatusForbidden)
+	upstream.Err = errors.New("upstream request rejected")
+
+	sanitized := SanitizeFinalRelayError(upstream)
+	require.NotSame(t, upstream, sanitized)
+	assert.Equal(t, "无权访问请求的上游分组", sanitized.ToClaudeError().Message)
+	assert.Equal(t, "permission_error", sanitized.ToClaudeError().Type)
+	assert.Equal(t, "upstream request rejected", upstream.Error())
+	assert.Contains(t, upstream.ToClaudeError().Message, "random-provider-group")
+}
+
 func TestSanitizeFinalRelayError(t *testing.T) {
 	raw := "status_code=403, 预扣费额度失败, 用户剩余额度: $0.226296, 需要预扣费额度: $0.576756 (request id: upstream-example)"
 	upstream := types.NewOpenAIError(errors.New(raw), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
