@@ -667,11 +667,11 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+	task = task.CopyForPublicResponse()
 	resultURL := task.GetResultURL()
 	if task.Status == model.TaskStatusSuccess {
 		resultURL = taskcommon.StableResultURL(task.Platform, task.TaskID, resultURL)
 	}
-	task = task.CopyForPublicResponse()
 	return &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,
