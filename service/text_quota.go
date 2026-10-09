@@ -365,18 +365,37 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 	return "openai"
 }
 
+func preserveFixedPriceAfterInputTokenDeduction(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, normalizedUsage *dto.Usage, audit inputTokenDeductionAudit, summary *textQuotaSummary) {
+	if summary == nil || audit.AppliedTokens <= 0 || relayInfo == nil || !relayInfo.PriceData.UsePrice ||
+		hasBillableTextUsage(*summary) || !hasReportedBillableUsage(normalizedUsage) {
+		return
+	}
+	// A fixed per-request price is independent of token counts. Preserve it
+	// only when this feature turned a real text usage into zero; do not change
+	// the legacy zero-usage behavior for unconfigured channels.
+	originalSummary := calculateTextQuotaSummary(ctx, relayInfo, normalizedUsage)
+	summary.Quota = originalSummary.Quota
+}
+
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
 	originUsage := usage
-	billingUsage := effectiveBillingUsage(usage)
+	normalizedUsage := effectiveBillingUsage(usage)
 	if usage == nil {
 		extraContent = append(extraContent, "上游无计费信息")
+		normalizedUsage = &dto.Usage{
+			PromptTokens: relayInfo.GetEstimatePromptTokens(),
+			TotalTokens:  relayInfo.GetEstimatePromptTokens(),
+		}
 	}
 	if originUsage != nil {
-		ObserveChannelAffinityUsageCacheByRelayFormat(ctx, billingUsage, relayInfo.GetFinalRequestRelayFormat())
+		ObserveChannelAffinityUsageCacheByRelayFormat(ctx, normalizedUsage, relayInfo.GetFinalRequestRelayFormat())
 	}
 
+	requestedInputTokenDeduction := resolveInputTokenDeduction(relayInfo)
+	billingUsage, inputTokenDeductionAudit := applyInputTokenDeduction(relayInfo, normalizedUsage, requestedInputTokenDeduction)
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
 	summary := calculateTextQuotaSummary(ctx, relayInfo, billingUsage)
+	preserveFixedPriceAfterInputTokenDeduction(ctx, relayInfo, normalizedUsage, inputTokenDeductionAudit, &summary)
 
 	var tieredResult *billingexpr.TieredResult
 	tieredBillingApplied := false
@@ -409,7 +428,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		extraContent = append(extraContent, fmt.Sprintf("Image Generation Call 花费 %s", decimal.NewFromFloat(summary.ImageGenerationCallPrice).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
 	}
 
-	if !hasBillableTextUsage(summary) {
+	if !hasBillableTextUsage(summary) && (originUsage == nil || !hasReportedBillableUsage(normalizedUsage)) {
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
@@ -446,6 +465,15 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other = GenerateTextOtherInfo(ctx, relayInfo, summary.ModelRatio, summary.GroupRatio, summary.CompletionRatio, summary.CacheTokens, summary.CacheRatio, summary.ModelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	}
 	appendUsageBillingPathForLog(other, common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens), originUsage)
+	if requestedInputTokenDeduction > 0 {
+		adminInfo, ok := other["admin_info"].(map[string]interface{})
+		if !ok || adminInfo == nil {
+			adminInfo = make(map[string]interface{})
+			other["admin_info"] = adminInfo
+		}
+		adminInfo["input_token_deduction_original_input_tokens"] = inputTokenDeductionAudit.OriginalTextInputTokens
+		adminInfo["input_token_deduction_applied"] = inputTokenDeductionAudit.AppliedTokens
+	}
 	if adminRejectReason != "" {
 		other["reject_reason"] = adminRejectReason
 	}

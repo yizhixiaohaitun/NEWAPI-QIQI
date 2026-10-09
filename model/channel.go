@@ -955,6 +955,14 @@ func (channel *Channel) ValidateSettings() error {
 	if !channelParams.VideoUpstreamProtocol.Valid() {
 		return fmt.Errorf("invalid video_upstream_protocol: %s", channelParams.VideoUpstreamProtocol)
 	}
+	if channelParams.InputTokenDeduction < 0 {
+		return fmt.Errorf("input_token_deduction must not be negative")
+	}
+	for group, deduction := range channelParams.InputTokenDeductionByGroup {
+		if deduction < 0 {
+			return fmt.Errorf("input_token_deduction_by_group[%q] must not be negative", group)
+		}
+	}
 	if channel.Type == constant.ChannelTypeAdvancedCustom {
 		if channelOtherSettings.AdvancedCustom == nil {
 			return fmt.Errorf("advanced_custom is required")

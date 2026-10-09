@@ -48,13 +48,15 @@ func UsesMegabyVideoProtocol(protocol VideoUpstreamProtocol, baseURL string) boo
 }
 
 type ChannelSettings struct {
-	ForceFormat            bool                  `json:"force_format,omitempty"`
-	ThinkingToContent      bool                  `json:"thinking_to_content,omitempty"`
-	Proxy                  string                `json:"proxy"`
-	PassThroughBodyEnabled bool                  `json:"pass_through_body_enabled,omitempty"`
-	SystemPrompt           string                `json:"system_prompt,omitempty"`
-	SystemPromptOverride   bool                  `json:"system_prompt_override,omitempty"`
-	VideoUpstreamProtocol  VideoUpstreamProtocol `json:"video_upstream_protocol,omitempty"`
+	ForceFormat                bool                  `json:"force_format,omitempty"`
+	ThinkingToContent          bool                  `json:"thinking_to_content,omitempty"`
+	Proxy                      string                `json:"proxy"`
+	PassThroughBodyEnabled     bool                  `json:"pass_through_body_enabled,omitempty"`
+	SystemPrompt               string                `json:"system_prompt,omitempty"`
+	SystemPromptOverride       bool                  `json:"system_prompt_override,omitempty"`
+	VideoUpstreamProtocol      VideoUpstreamProtocol `json:"video_upstream_protocol,omitempty"`
+	InputTokenDeduction        int                   `json:"input_token_deduction,omitempty"`
+	InputTokenDeductionByGroup map[string]int        `json:"input_token_deduction_by_group,omitempty"`
 }
 
 type VertexKeyType string

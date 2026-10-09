@@ -116,6 +116,14 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - `controller/relay.go#getChannel`：Relay、RelayTask 与 Seedance 共用 `RetryParam` 和请求上下文；停止、客户端取消及请求总超时仍由各自外层循环判定。
 - 回归入口：`service/channel_select_cross_group_test.go` 使用真实缓存选择器覆盖无渠道、重复配置、亲和从中间/末尾开始、耗尽、关闭跨组和指定组；`controller/relay_auto_group_retry_test.go` 覆盖控制器逐次选择及耗尽边界。
 
+### 渠道固定输入 Token 减免
+
+- `dto/channel_settings.go#ChannelSettings`：渠道设置保存 `input_token_deduction` 与可选 `input_token_deduction_by_group`；分组条目（包括显式 `0`）按成功请求最终 `RelayInfo.UsingGroup` 优先于渠道默认值。
+- `model/channel.go#ValidateSettings`：拒绝默认值或分组值中的负数；设置沿现有渠道缓存和请求上下文传递，不新增请求级数据库查询。
+- `service/input_token_deduction.go`：从归一化计费用量创建独立副本，仅减文本输入；顺序为普通文本、cache read、cache write（5m 后 1h），下限为零，保持缓存明细一致，不改客户端原始 usage、输出、图像或音频。
+- `service/text_quota.go#PostTextConsumeQuota`：普通倍率、tiered 参数、最终结算和消费日志共用扣减后的计费用量；固定按次价格不因 token 减免消失。管理员日志 `admin_info` 保存原文本输入和实际减免，普通日志仅显示扣后输入。
+- 回归入口：`service/input_token_deduction_test.go`（含 SQLite 余额/消费日志、缓存与协议语义、最终分组、tiered/按次边界和 benchmark）、`model/channel_input_token_deduction_test.go`（配置验证）。
+
 ### 🎯 核心概念
 
 #### 路径为王 (Path is King)
