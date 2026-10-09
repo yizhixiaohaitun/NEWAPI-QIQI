@@ -120,7 +120,7 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 
 - `middleware/distributor.go#Distribute`：首次随机选择或渠道亲和命中时，在请求上下文记录实际 auto 分组；亲和命中同时记录配置索引及已访问分组。
 - `service/channel_select.go#CacheGetRandomSatisfiedChannel`：跨分组开启后，重试按配置顺序选择尚未访问的可用分组，每个新分组从其首选优先级开始；无渠道分组直接跳过，耗尽后不回绕。请求内单 key 渠道一旦失败，后续选择会排除该渠道，即使它同时属于多个 Auto 分组；固定组及关闭跨组时同样不回打已失败渠道，但多 key 渠道保留既有 key 轮换。
-- `model/channel_cache.go#GetRandomSatisfiedChannelExcluding` / `model/ability.go#GetChannelExcluding`：缓存与数据库选择路径都先排除请求内失败渠道，再从最高尚可用优先级选择，避免重试索引跳过未尝试的优先级。
+- `model/channel_cache.go#GetRandomSatisfiedChannelExcluding` / `model/ability.go#GetChannelExcluding`：缓存与数据库选择路径都先排除请求内失败渠道，再从最高尚可用优先级选择，避免重试索引跳过未尝试的优先级；数据库排除路径不再预查旧重试优先级，最后渠道被禁用时正常返回耗尽。
 - `controller/relay.go` / `controller/seedance_asset.go`：Relay、RelayTask 与 Seedance 共用 `RetryParam` 和请求级失败渠道集合；仅在错误满足重试策略后标记失败。`shouldRetry` 先执行显式 SkipRetry、剩余预算和指定渠道等停止条件，再处理 `channel:*` 与资源不足错误，避免指定渠道切换到组内其他渠道；客户端取消、亲和禁止重试及请求总超时同样停止。
 - 回归入口：`service/channel_select_cross_group_test.go` 覆盖分组顺序与边界；`service/channel_select_failed_channel_test.go`、`model/channel_excluding_test.go` 和 `model/channel_excluding_path_test.go` 覆盖固定组、缓存/数据库优先级一致性及高级路由过滤后选择最高兼容层级；`controller/relay_auto_group_http_test.go` 从真实 `/v1/chat/completions` 入口连接 A=500、B=200 mock 上游，覆盖同一渠道横跨两个 Auto 分组时 `use_channel=461,464`；`controller/relay_fixed_group_http_test.go` 先建立真实 `/v1/messages` 请求头亲和，再验证固定组 A=503（上游分组无可用渠道）后立即走 B=200 且 `use_channel=461,464`；`controller/relay_auto_group_retry_test.go` 覆盖控制器逐次选择及耗尽。
 

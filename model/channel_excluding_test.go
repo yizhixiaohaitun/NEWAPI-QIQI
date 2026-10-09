@@ -46,4 +46,12 @@ func TestGetChannelExcludingUsesHighestRemainingPriority(t *testing.T) {
 	channel, err = GetChannelExcluding("fixed", "test-model", 3, "", map[int]bool{461: true, 464: true, 465: true})
 	require.NoError(t, err)
 	assert.Nil(t, channel)
+
+	// An upstream failure may disable the final channel before the next
+	// selection. Exclusion retries must report exhaustion, not a stale
+	// priority-query consistency error.
+	require.NoError(t, db.Model(&Ability{}).Where("1 = 1").Update("enabled", false).Error)
+	channel, err = GetChannelExcluding("fixed", "test-model", 1, "", map[int]bool{461: true})
+	require.NoError(t, err)
+	assert.Nil(t, channel)
 }

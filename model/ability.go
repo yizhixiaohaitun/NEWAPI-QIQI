@@ -200,8 +200,8 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 func GetChannelExcluding(group string, model string, retry int, requestPath string, excluded map[int]bool) (*Channel, error) {
 	var abilities []Ability
 
-	var err error = nil
-	channelQuery, err := getChannelQuery(group, model, retry)
+	var err error
+	var channelQuery *gorm.DB
 	if len(excluded) > 0 {
 		excludedIDs := make([]int, 0, len(excluded))
 		for channelID, isExcluded := range excluded {
@@ -216,6 +216,8 @@ func GetChannelExcluding(group string, model string, retry int, requestPath stri
 		if len(excludedIDs) > 0 {
 			channelQuery = channelQuery.Where("channel_id NOT IN ?", excludedIDs)
 		}
+	} else {
+		channelQuery, err = getChannelQuery(group, model, retry)
 	}
 	if err != nil {
 		return nil, err
