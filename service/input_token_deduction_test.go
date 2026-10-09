@@ -259,6 +259,41 @@ func TestPostTextConsumeQuotaDeductsSQLiteBalanceAndConsumeLog(t *testing.T) {
 	require.Equal(t, 500, original.PromptTokens, "the client-facing usage remains unchanged")
 }
 
+func TestPostTextConsumeQuotaAppliesDeductionBeforeFestivalSnapshot(t *testing.T) {
+	truncate(t)
+	seedUser(t, 61, 1000)
+	seedToken(t, 62, 61, "deduction-festival-key", 1000)
+	seedChannel(t, 63)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	relayInfo := &relaycommon.RelayInfo{
+		UserId: 61, TokenId: 62, TokenKey: "deduction-festival-key", OriginModelName: "gpt-test",
+		UsingGroup: "default", StartTime: time.Now(),
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 63, ChannelSetting: dto.ChannelSettings{InputTokenDeduction: 490}},
+		PriceData: types.PriceData{
+			ModelRatio: 1, CompletionRatio: 1, GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+			FestivalDiscountEnabled: true, FestivalDiscountFactor: 0.5,
+		},
+	}
+	original := &dto.Usage{PromptTokens: 500, CompletionTokens: 20, TotalTokens: 520}
+
+	PostTextConsumeQuota(ctx, relayInfo, original, nil)
+
+	require.Equal(t, 985, getQuota(t, 61), "(10 input + 20 output) * 0.5 must settle to 15")
+	require.Equal(t, 985, getTokenRemain(t, 62))
+	var log model.Log
+	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeConsume).First(&log).Error)
+	require.Equal(t, 10, log.PromptTokens)
+	require.Equal(t, 20, log.CompletionTokens)
+	require.Equal(t, 15, log.Quota)
+	require.Contains(t, log.Other, `"festival_discount_factor":0.5`)
+	require.Equal(t, 500, original.PromptTokens, "client usage must remain unchanged")
+	require.Equal(t, 20, original.CompletionTokens)
+	require.True(t, relayInfo.PriceData.FestivalDiscountEnabled, "the captured pricing snapshot must remain intact")
+	require.Equal(t, 0.5, relayInfo.PriceData.FestivalDiscountFactor)
+}
+
 func TestInputTokenDeductionDoesNotRemoveFixedPerRequestPrice(t *testing.T) {
 	ctx := testGinContext()
 	relayInfo := &relaycommon.RelayInfo{
