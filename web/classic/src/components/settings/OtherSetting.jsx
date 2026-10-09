@@ -33,12 +33,14 @@ import {
   confirmSwitchToDefaultFrontend,
   showError,
   showSuccess,
+  setStatusData,
   timestamp2string,
 } from '../../helpers';
 import { marked } from 'marked';
 import { useTranslation } from 'react-i18next';
 import { StatusContext } from '../../context/Status';
 import Text from '@douyinfe/semi-ui/lib/es/typography/text';
+import { logoFileToDataUrl } from './logoImage.js';
 
 const LEGAL_USER_AGREEMENT_KEY = 'legal.user_agreement';
 const LEGAL_PRIVACY_POLICY_KEY = 'legal.privacy_policy';
@@ -56,6 +58,10 @@ const OtherSetting = () => {
     HomePageContent: '',
   });
   let [loading, setLoading] = useState(false);
+  const logoFileInput = useRef(null);
+  const logoReadGeneration = useRef(0);
+  const logoReadPendingRef = useRef(false);
+  const [logoReadPending, setLogoReadPending] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [statusState, statusDispatch] = useContext(StatusContext);
   const [updateData, setUpdateData] = useState({
@@ -76,6 +82,7 @@ const OtherSetting = () => {
       showError(message);
     }
     setLoading(false);
+    return success;
   };
 
   const [loadingInput, setLoadingInput] = useState({
@@ -180,8 +187,23 @@ const OtherSetting = () => {
   const submitLogo = async () => {
     try {
       setLoadingInput((loadingInput) => ({ ...loadingInput, Logo: true }));
-      await updateOption('Logo', inputs.Logo);
-      showSuccess('Logo 已更新');
+      if (logoReadPendingRef.current) {
+        showError('请等待徽标图片读取完成');
+        return;
+      }
+      const success = await updateOption('Logo', inputs.Logo);
+      if (success) {
+        try {
+          const statusResponse = await API.get('/api/status');
+          if (statusResponse.data.success) {
+            setStatusData(statusResponse.data.data);
+            statusDispatch({ type: 'set', payload: statusResponse.data.data });
+          }
+        } catch {
+          // The Logo option is already saved; a later page refresh will reload status.
+        }
+        showSuccess('Logo 已更新');
+      }
     } catch (error) {
       console.error('Logo 更新失败', error);
       showError('Logo 更新失败');
@@ -189,6 +211,29 @@ const OtherSetting = () => {
       setLoadingInput((loadingInput) => ({ ...loadingInput, Logo: false }));
     }
   };
+  const handleLogoFile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const generation = ++logoReadGeneration.current;
+    logoReadPendingRef.current = true;
+    setLogoReadPending(true);
+    try {
+      const value = await logoFileToDataUrl(file);
+      if (generation !== logoReadGeneration.current) return;
+      setInputs((current) => ({ ...current, Logo: value }));
+      formAPIPersonalization.current?.setValue('Logo', value);
+    } catch (error) {
+      if (generation !== logoReadGeneration.current) return;
+      showError(error instanceof Error ? error.message : '徽标图片无效');
+    } finally {
+      if (generation === logoReadGeneration.current) {
+        logoReadPendingRef.current = false;
+        setLogoReadPending(false);
+        if (logoFileInput.current) logoFileInput.current.value = '';
+      }
+    }
+  };
+
   // 个性化设置 - 首页内容
   const submitOption = async (key) => {
     try {
@@ -317,6 +362,10 @@ const OtherSetting = () => {
 
   useEffect(() => {
     getOptions();
+    return () => {
+      logoReadGeneration.current += 1;
+      logoReadPendingRef.current = false;
+    };
   }, []);
 
   // Function to open GitHub release page
@@ -460,15 +509,60 @@ const OtherSetting = () => {
               >
                 {t('设置系统名称')}
               </Button>
-              <Form.Input
-                label={t('Logo 图片地址')}
-                placeholder={t('在此输入 Logo 图片地址')}
-                field={'Logo'}
-                onChange={handleInputChange}
-              />
-              <Button onClick={submitLogo} loading={loadingInput['Logo']}>
-                {t('设置 Logo')}
-              </Button>
+              <div style={{ marginBottom: 12 }}>
+                <Text strong>{t('Logo 图片')}</Text>
+                {inputs.Logo ? (
+                  <div style={{ marginTop: 8, marginBottom: 8 }}>
+                    <img
+                      src={inputs.Logo}
+                      alt={t('Logo 预览')}
+                      style={{
+                        maxWidth: '100%',
+                        maxHeight: 96,
+                        objectFit: 'contain',
+                      }}
+                    />
+                  </div>
+                ) : null}
+                <input
+                  ref={logoFileInput}
+                  type='file'
+                  accept='image/png,image/jpeg,image/webp,image/gif'
+                  disabled={logoReadPending || loadingInput['Logo']}
+                  onChange={handleLogoFile}
+                  style={{ display: 'block', marginTop: 8, marginBottom: 8 }}
+                />
+                <Text type='tertiary'>
+                  {t('支持 PNG、JPEG、WebP、GIF，最大 256 KiB')}
+                </Text>
+                <div style={{ marginTop: 8 }}>
+                  {inputs.Logo ? (
+                    <Button
+                      type='danger'
+                      disabled={logoReadPending || loadingInput['Logo']}
+                      onClick={() => {
+                        logoReadGeneration.current += 1;
+                        logoReadPendingRef.current = false;
+                        setLogoReadPending(false);
+                        setInputs((current) => ({ ...current, Logo: '' }));
+                        formAPIPersonalization.current?.setValue('Logo', '');
+                        if (logoFileInput.current)
+                          logoFileInput.current.value = '';
+                      }}
+                    >
+                      {t('移除')}
+                    </Button>
+                  ) : null}
+                  <Button
+                    style={{ marginLeft: inputs.Logo ? 8 : 0 }}
+                    onClick={submitLogo}
+                    loading={loadingInput['Logo']}
+                    disabled={logoReadPending}
+                  >
+                    {t('保存 Logo')}
+                  </Button>
+                </div>
+              </div>
               <Form.TextArea
                 label={t('首页内容')}
                 placeholder={t(

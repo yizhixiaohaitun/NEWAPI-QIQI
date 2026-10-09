@@ -17,10 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useEffect, useRef, useState } from 'react'
 import type { Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
+import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -52,6 +54,7 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { isSupportedLogoValue, logoFileToDataUrl } from './logo-image'
 
 const _systemInfoSchema = z.object({
   theme: z.object({
@@ -59,7 +62,7 @@ const _systemInfoSchema = z.object({
   }),
   SystemName: z.string().min(1),
   ServerAddress: z.string().optional(),
-  Logo: z.string().url().optional().or(z.literal('')),
+  Logo: z.string().refine(isSupportedLogoValue).optional().or(z.literal('')),
   Footer: z.string().optional(),
   About: z.string().optional(),
   HomePageContent: z.string().optional(),
@@ -83,6 +86,11 @@ function normalizeValue(value: unknown): string {
 export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const logoReadGenerationRef = useRef(0)
+  const logoReadPendingRef = useRef(false)
+  const [isReadingLogo, setIsReadingLogo] = useState(false)
+  const [logoUploadError, setLogoUploadError] = useState('')
 
   const normalizedDefaults: SystemInfoFormValues = {
     theme: {
@@ -109,7 +117,13 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       error: () => t('System name is required'),
     }),
     ServerAddress: z.string().optional(),
-    Logo: z.string().url().optional().or(z.literal('')),
+    Logo: z
+      .string()
+      .refine(isSupportedLogoValue, {
+        error: () => t('Choose a valid logo image'),
+      })
+      .optional()
+      .or(z.literal('')),
     Footer: z.string().optional(),
     About: z.string().optional(),
     HomePageContent: z.string().optional(),
@@ -119,60 +133,116 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
     }),
   })
 
-  const { form, handleSubmit, handleReset, isDirty, isSubmitting } =
-    useSettingsForm<SystemInfoFormValues>({
-      resolver: zodResolver(systemInfoSchemaWithI18n) as Resolver<
-        SystemInfoFormValues,
-        unknown,
-        SystemInfoFormValues
-      >,
-      defaultValues: normalizedDefaults,
-      onSubmit: async (_data, changedFields) => {
-        // 主题切换会改变后端返回的前端产物，需放到最后处理：先更新其余设置项，
-        // 仅当它们全部成功后才提交主题切换，避免其它设置失败时就切换了主题，
-        // 导致用户停留或刷新到另一套前端不存在的路由而 404。
-        const entries = Object.entries(changedFields)
-        const themeEntry = entries.find(([key]) => key === 'theme.frontend')
-        const otherEntries = entries.filter(([key]) => key !== 'theme.frontend')
+  const {
+    form,
+    handleSubmit,
+    handleReset: resetForm,
+    isDirty,
+    isSubmitting,
+  } = useSettingsForm<SystemInfoFormValues>({
+    resolver: zodResolver(systemInfoSchemaWithI18n) as Resolver<
+      SystemInfoFormValues,
+      unknown,
+      SystemInfoFormValues
+    >,
+    defaultValues: normalizedDefaults,
+    onSubmit: async (_data, changedFields) => {
+      if (logoReadPendingRef.current) {
+        throw new Error(t('Wait for the logo image to finish loading'))
+      }
+      // 主题切换会改变后端返回的前端产物，需放到最后处理：先更新其余设置项，
+      // 仅当它们全部成功后才提交主题切换，避免其它设置失败时就切换了主题，
+      // 导致用户停留或刷新到另一套前端不存在的路由而 404。
+      const entries = Object.entries(changedFields)
+      const themeEntry = entries.find(([key]) => key === 'theme.frontend')
+      const otherEntries = entries.filter(([key]) => key !== 'theme.frontend')
 
-        let allSucceeded = true
-        for (const [key, value] of otherEntries) {
-          let v = normalizeValue(value)
-          if (key === 'ServerAddress') {
-            v = v.replace(/\/+$/, '')
-          }
-          const res = await updateOption.mutateAsync({
-            key,
-            value: v,
-          })
-          if (!res.success) {
-            allSucceeded = false
-          }
+      let allSucceeded = true
+      for (const [key, value] of otherEntries) {
+        let v = normalizeValue(value)
+        if (key === 'ServerAddress') {
+          v = v.replace(/\/+$/, '')
         }
-        if (themeEntry && !allSucceeded) {
-          // Theme was not submitted; keep form state consistent with backend.
+        const res = await updateOption.mutateAsync({
+          key,
+          value: v,
+        })
+        if (!res.success) {
+          allSucceeded = false
+        }
+      }
+      if (themeEntry && !allSucceeded) {
+        // Theme was not submitted; keep form state consistent with backend.
+        _data.theme.frontend = normalizedDefaults.theme.frontend
+        return
+      }
+      if (themeEntry && allSucceeded) {
+        const res = await updateOption.mutateAsync({
+          key: themeEntry[0],
+          value: normalizeValue(themeEntry[1]),
+        })
+        if (res.success) {
+          // 当前路由在另一套前端中并不存在，主题切换成功后重置到首页以避免 404。
+          // 延时用于让表单脏状态先清除（移除 beforeunload 拦截）并展示成功提示后再刷新；
+          // 使用 replace 让已失效的路由不进入历史，防止返回按钮再次触发 404。
+          setTimeout(() => {
+            window.location.replace('/')
+          }, 600)
+        } else {
+          // Theme update failed; revert to the last saved value.
           _data.theme.frontend = normalizedDefaults.theme.frontend
-          return
         }
-        if (themeEntry && allSucceeded) {
-          const res = await updateOption.mutateAsync({
-            key: themeEntry[0],
-            value: normalizeValue(themeEntry[1]),
-          })
-          if (res.success) {
-            // 当前路由在另一套前端中并不存在，主题切换成功后重置到首页以避免 404。
-            // 延时用于让表单脏状态先清除（移除 beforeunload 拦截）并展示成功提示后再刷新；
-            // 使用 replace 让已失效的路由不进入历史，防止返回按钮再次触发 404。
-            setTimeout(() => {
-              window.location.replace('/')
-            }, 600)
-          } else {
-            // Theme update failed; revert to the last saved value.
-            _data.theme.frontend = normalizedDefaults.theme.frontend
-          }
-        }
-      },
-    })
+      }
+    },
+  })
+
+  const handleLogoFile = async (file: File | undefined) => {
+    if (!file) return
+    const generation = ++logoReadGenerationRef.current
+    setLogoUploadError('')
+    logoReadPendingRef.current = true
+    setIsReadingLogo(true)
+    try {
+      const value = await logoFileToDataUrl(file)
+      if (generation !== logoReadGenerationRef.current) return
+      form.setValue('Logo', value, { shouldDirty: true, shouldValidate: true })
+    } catch (error) {
+      if (generation !== logoReadGenerationRef.current) return
+      setLogoUploadError(
+        t(error instanceof Error ? error.message : 'Choose a valid logo image')
+      )
+    } finally {
+      if (generation === logoReadGenerationRef.current) {
+        logoReadPendingRef.current = false
+        setIsReadingLogo(false)
+        // Clearing allows selecting the same file again after removal or failure.
+        if (fileInputRef.current) fileInputRef.current.value = ''
+      }
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      logoReadGenerationRef.current += 1
+      logoReadPendingRef.current = false
+    }
+  }, [])
+
+  let logoChooseButtonLabel = t('Choose image')
+  if (isReadingLogo) {
+    logoChooseButtonLabel = t('Reading image...')
+  } else if (form.watch('Logo')) {
+    logoChooseButtonLabel = t('Replace image')
+  }
+
+  const handleReset = () => {
+    logoReadGenerationRef.current += 1
+    logoReadPendingRef.current = false
+    setIsReadingLogo(false)
+    setLogoUploadError('')
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    resetForm()
+  }
 
   return (
     <>
@@ -185,6 +255,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
               onSave={handleSubmit}
               onReset={handleReset}
               isSaving={isSubmitting || updateOption.isPending}
+              isSaveDisabled={isReadingLogo}
               isResetDisabled={!isDirty}
             />
             <FormDirtyIndicator isDirty={isDirty} />
@@ -276,16 +347,75 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                 name='Logo'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('Logo URL')}</FormLabel>
-                    <FormControl>
+                    <FormLabel>{t('Logo')}</FormLabel>
+                    <div className='flex flex-col gap-3'>
+                      {field.value ? (
+                        <div className='bg-muted/30 flex min-h-24 items-center justify-center rounded-lg border p-3'>
+                          <img
+                            src={field.value}
+                            alt={t('Logo preview')}
+                            className='max-h-24 max-w-full object-contain'
+                          />
+                        </div>
+                      ) : null}
                       <Input
-                        placeholder={t('https://example.com/logo.png')}
-                        {...field}
+                        ref={fileInputRef}
+                        type='file'
+                        accept='image/png,image/jpeg,image/webp,image/gif'
+                        aria-label={t('Choose logo image')}
+                        className='hidden'
+                        disabled={
+                          isReadingLogo ||
+                          isSubmitting ||
+                          updateOption.isPending
+                        }
+                        onChange={(event) => {
+                          void handleLogoFile(event.target.files?.[0])
+                        }}
                       />
-                    </FormControl>
+                      <div className='flex gap-2'>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          disabled={
+                            isReadingLogo ||
+                            isSubmitting ||
+                            updateOption.isPending
+                          }
+                          onClick={() => fileInputRef.current?.click()}
+                        >
+                          {logoChooseButtonLabel}
+                        </Button>
+                        {field.value ? (
+                          <Button
+                            type='button'
+                            variant='destructive'
+                            disabled={
+                              isReadingLogo ||
+                              isSubmitting ||
+                              updateOption.isPending
+                            }
+                            onClick={() => {
+                              setLogoUploadError('')
+                              field.onChange('')
+                              if (fileInputRef.current) {
+                                fileInputRef.current.value = ''
+                              }
+                            }}
+                          >
+                            {t('Remove')}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
                     <FormDescription>
-                      {t('URL to your logo image (optional)')}
+                      {t('PNG, JPEG, WebP, or GIF. Maximum size: 256 KiB.')}
                     </FormDescription>
+                    {logoUploadError ? (
+                      <p className='text-destructive text-sm'>
+                        {logoUploadError}
+                      </p>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 )}

@@ -5482,6 +5482,19 @@
     "Discount factor": "Discount factor",
     "Final consumption = original consumption × factor": "Final consumption = original consumption × factor",
     "Applies once after the group billing ratio; disabling restores original prices.": "Applies once after the group billing ratio; disabling restores original prices.",
-    "Use 0.8 for 20% off. This does not change group or top-up ratios.": "Use 0.8 for 20% off. This does not change group or top-up ratios."
+    "Use 0.8 for 20% off. This does not change group or top-up ratios.": "Use 0.8 for 20% off. This does not change group or top-up ratios.",
+    "Logo preview": "Logo preview",
+    "Choose a valid logo image": "Choose a valid logo image",
+    "Wait for the logo image to finish loading": "Wait for the logo image to finish loading",
+    "Reading image...": "Reading image...",
+    "Replace image": "Replace image",
+    "Choose image": "Choose image",
+    "Choose logo image": "Choose logo image",
+    "Remove": "Remove",
+    "PNG, JPEG, WebP, or GIF. Maximum size: 256 KiB.": "PNG, JPEG, WebP, or GIF. Maximum size: 256 KiB.",
+    "The image file is empty": "The image file is empty",
+    "The logo image must be 256 KiB or smaller": "The logo image must be 256 KiB or smaller",
+    "Choose a PNG, JPEG, WebP, or GIF image": "Choose a PNG, JPEG, WebP, or GIF image",
+    "The logo dimensions must not exceed 4096 x 4096 pixels": "The logo dimensions must not exceed 4096 x 4096 pixels"
   }
 }

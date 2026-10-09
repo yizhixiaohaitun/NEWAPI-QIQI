@@ -5688,6 +5688,19 @@
     "Discount factor": "折扣系数",
     "Final consumption = original consumption × factor": "最终消耗 = 原消耗 × 系数",
     "Applies once after the group billing ratio; disabling restores original prices.": "在分组计费倍率之后统一乘一次；关闭后新请求恢复原价。",
-    "Use 0.8 for 20% off. This does not change group or top-up ratios.": "0.8 表示八折，不修改分组倍率或充值倍率。"
+    "Use 0.8 for 20% off. This does not change group or top-up ratios.": "0.8 表示八折，不修改分组倍率或充值倍率。",
+    "Logo preview": "徽标预览",
+    "Choose a valid logo image": "请选择有效的徽标图片",
+    "Wait for the logo image to finish loading": "请等待徽标图片读取完成",
+    "Reading image...": "正在读取图片...",
+    "Replace image": "更换图片",
+    "Choose image": "选择图片",
+    "Choose logo image": "选择徽标图片",
+    "Remove": "移除",
+    "PNG, JPEG, WebP, or GIF. Maximum size: 256 KiB.": "支持 PNG、JPEG、WebP 或 GIF，最大 256 KiB。",
+    "The image file is empty": "图片文件不能为空",
+    "The logo image must be 256 KiB or smaller": "徽标图片不能超过 256 KiB",
+    "Choose a PNG, JPEG, WebP, or GIF image": "请选择 PNG、JPEG、WebP 或 GIF 图片",
+    "The logo dimensions must not exceed 4096 x 4096 pixels": "徽标尺寸不能超过 4096 x 4096 像素"
   }
 }

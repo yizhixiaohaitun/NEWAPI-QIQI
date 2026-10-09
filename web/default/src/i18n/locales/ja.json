@@ -5251,6 +5251,19 @@
     "Discount factor": "割引係数",
     "Final consumption = original consumption × factor": "最終利用額 = 元の利用額 × 係数",
     "Applies once after the group billing ratio; disabling restores original prices.": "グループの課金倍率の後に一度だけ適用します。無効にすると新しいリクエストは通常料金に戻ります。",
-    "Use 0.8 for 20% off. This does not change group or top-up ratios.": "0.8 は20%割引です。グループ倍率とチャージ倍率は変更しません。"
+    "Use 0.8 for 20% off. This does not change group or top-up ratios.": "0.8 は20%割引です。グループ倍率とチャージ倍率は変更しません。",
+    "Logo preview": "Logo preview",
+    "Choose a valid logo image": "Choose a valid logo image",
+    "Wait for the logo image to finish loading": "Wait for the logo image to finish loading",
+    "Reading image...": "Reading image...",
+    "Replace image": "Replace image",
+    "Choose image": "Choose image",
+    "Choose logo image": "Choose logo image",
+    "Remove": "Remove",
+    "PNG, JPEG, WebP, or GIF. Maximum size: 256 KiB.": "PNG, JPEG, WebP, or GIF. Maximum size: 256 KiB.",
+    "The image file is empty": "The image file is empty",
+    "The logo image must be 256 KiB or smaller": "The logo image must be 256 KiB or smaller",
+    "Choose a PNG, JPEG, WebP, or GIF image": "Choose a PNG, JPEG, WebP, or GIF image",
+    "The logo dimensions must not exceed 4096 x 4096 pixels": "The logo dimensions must not exceed 4096 x 4096 pixels"
   }
 }

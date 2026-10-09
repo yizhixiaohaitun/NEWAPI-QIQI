@@ -133,6 +133,13 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - 经典主题入口：`web/classic/src/components/table/channels/modals/EditChannelModal.jsx` 与同目录 `inputTokenDeduction.js` 提供同等编辑及加载保存语义，不更改已有配置结构。
 - 回归入口：`service/input_token_deduction_test.go`（含 SQLite 余额/消费日志、缓存与协议语义、最终分组、tiered/按次边界和 benchmark）、`model/channel_input_token_deduction_test.go`（配置验证）、`web/default/src/features/channels/lib/input-token-deduction.test.ts`（留空/零/未知配置保留和整数校验）。
 
+### 系统徽标本地上传
+
+- 默认主题：`web/default/src/features/system-settings/general/system-info-section.tsx` 使用本地文件选择、即时预览、更换、移除及设置表单保存/重置；读取代际与卸载清理防止 reset/unmount 后晚完成的读取覆盖表单，保存失败不更新已保存基线。`logo-image.ts` 按文件内容识别并用浏览器解码 PNG/JPEG/WebP/GIF，限制 256 KiB、4096×4096 像素，并转换为持久化 data URL。已有 HTTP(S) Logo URL 继续兼容。
+- 经典主题：`web/classic/src/components/settings/OtherSetting.jsx` 与同目录 `logoImage.js` 提供相同的内容识别、完整解码、尺寸限制、读取竞态保护、预览、移除和保存语义；成功后刷新 `/api/status`、localStorage 与 Header。
+- 后端边界：`controller/logo_option.go` 在通用 Option 更新入口执行严格 base64、`image.DecodeConfig` 格式/尺寸检查和完整 `image.Decode`，拒绝截断图片及 SVG/HTML 等主动内容。值仍存入既有 `Logo` option，不新增文件目录、请求级查询或部署卷；`web/default/src/features/system-settings/hooks/use-update-option.ts` 将 Logo 纳入 status 刷新路径。
+- 回归入口：`controller/logo_option_test.go` 覆盖完整解码、截断、256 KiB 与尺寸边界；`model/logo_option_storage_test.go` 覆盖 SQLite data URL 往返和 MySQL longtext/PostgreSQL text 类型；`web/default/src/features/system-settings/general/logo-image.test.ts` 覆盖内容识别、浏览器解码和尺寸/大小拒绝。两个主题均需生产构建验证。
+
 ### 🎯 核心概念
 
 #### 路径为王 (Path is King)
