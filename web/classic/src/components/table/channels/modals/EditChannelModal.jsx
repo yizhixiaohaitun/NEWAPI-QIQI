@@ -73,6 +73,10 @@ import {
   collectNewDisallowedStatusCodeRedirects,
 } from './statusCodeRiskGuard';
 import {
+  buildChannelSettingWithInputTokenDeduction,
+  parseInputTokenDeductionFormValues,
+} from './inputTokenDeduction';
+import {
   IconSave,
   IconClose,
   IconServer,
@@ -196,6 +200,8 @@ const EditChannelModal = (props) => {
     system_prompt: '',
     system_prompt_override: false,
     video_upstream_protocol: 'channel_default',
+    input_token_deduction: '0',
+    input_token_deduction_by_group: {},
     settings: '',
     // 仅 Vertex: 密钥格式（存入 settings.vertex_key_type）
     vertex_key_type: 'json',
@@ -535,9 +541,14 @@ const EditChannelModal = (props) => {
     // 同步更新inputs状态
     setInputs((prev) => ({ ...prev, [key]: value }));
 
-    // 生成setting JSON并更新
+    // 同步setting JSON，同时保留后端新增或其它未在此表单展示的设置。
     const newSettings = { ...channelSettings, [key]: value };
-    const settingsJson = JSON.stringify(newSettings);
+    const settingsJson = buildChannelSettingWithInputTokenDeduction(
+      inputs.setting,
+      newSettings,
+      inputs.input_token_deduction,
+      inputs.input_token_deduction_by_group || {},
+    );
     handleInputChange('setting', settingsJson);
   };
 
@@ -859,6 +870,7 @@ const EditChannelModal = (props) => {
         setMultiToSingle(false);
       }
       // 解析渠道额外设置并合并到data中
+      Object.assign(data, parseInputTokenDeductionFormValues(data.setting));
       if (data.setting) {
         try {
           const parsedSettings = JSON.parse(data.setting);
@@ -1753,7 +1765,7 @@ const EditChannelModal = (props) => {
       localInputs.other = 'v2.1';
     }
 
-    // 生成渠道额外设置JSON
+    // 生成渠道额外设置JSON，并保留未由当前表单管理的已有设置。
     const channelExtraSettings = {
       force_format: localInputs.force_format || false,
       thinking_to_content: localInputs.thinking_to_content || false,
@@ -1764,7 +1776,17 @@ const EditChannelModal = (props) => {
       video_upstream_protocol:
         localInputs.video_upstream_protocol || 'channel_default',
     };
-    localInputs.setting = JSON.stringify(channelExtraSettings);
+    try {
+      localInputs.setting = buildChannelSettingWithInputTokenDeduction(
+        localInputs.setting,
+        channelExtraSettings,
+        localInputs.input_token_deduction,
+        localInputs.input_token_deduction_by_group || {},
+      );
+    } catch (error) {
+      showError(t(error.message));
+      return;
+    }
 
     // 处理 settings 字段（包括企业账户设置和字段透传控制）
     let settings = {};
@@ -1851,6 +1873,8 @@ const EditChannelModal = (props) => {
     delete localInputs.system_prompt;
     delete localInputs.system_prompt_override;
     delete localInputs.video_upstream_protocol;
+    delete localInputs.input_token_deduction;
+    delete localInputs.input_token_deduction_by_group;
     delete localInputs.is_enterprise_account;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
@@ -2531,6 +2555,26 @@ const EditChannelModal = (props) => {
                   <Text className='text-sm font-medium text-gray-500 mb-3 block'>
                     {t('额外设置')}
                   </Text>
+
+                  <div className='mb-4 space-y-3'>
+                    <div>
+                      <Text className='mb-1 block text-sm font-medium'>{t('输入 Token 固定减免')}</Text>
+                      <Input type='number' min={0} step={1} value={inputs.input_token_deduction} placeholder='0' onChange={(value) => handleInputChange('input_token_deduction', value)} />
+                      <Text type='tertiary' size='small' className='mt-1 block'>{t('影响本平台计费和消费日志；输入不足归零，输出不变，客户端usage保持原始值。')}</Text>
+                    </div>
+                    <div>
+                      <Text className='mb-1 block text-sm font-medium'>{t('按分组设置')}</Text>
+                      <Text type='tertiary' size='small' className='mb-2 block'>{t('留空使用渠道默认值；显式填写0表示不减免。仅影响普通文本输入，不改变按次、音频或图片费用。')}</Text>
+                      <div className='grid grid-cols-1 gap-2 sm:grid-cols-2'>
+                        {(inputs.groups || []).map((group) => (
+                          <label key={group} className='block'>
+                            <Text type='tertiary' size='small' ellipsis>{group}</Text>
+                            <Input type='number' min={0} step={1} value={inputs.input_token_deduction_by_group?.[group] ?? ''} placeholder={t('使用默认值')} onChange={(value) => handleInputChange('input_token_deduction_by_group', { ...(inputs.input_token_deduction_by_group || {}), [group]: value })} />
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
 
                   {inputs.type === 14 && (
                     <Form.Switch field='claude_beta_query' label={t('Claude 强制 beta=true')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('claude_beta_query', value)} extraText={t('开启后，该渠道请求 Claude 时将强制追加 ?beta=true（无需客户端手动传参）')} />

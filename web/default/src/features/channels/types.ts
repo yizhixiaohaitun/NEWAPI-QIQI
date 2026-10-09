@@ -93,6 +93,10 @@ export interface ChannelSettings {
     | 'xinshuju_content'
     | 'seedance_async'
     | 'seedance_discount'
+    | 'seedance_async'
+    | 'seedance_discount'
+  input_token_deduction?: number
+  input_token_deduction_by_group?: Record<string, number>
 }
 
 export interface ChannelOtherSettings {

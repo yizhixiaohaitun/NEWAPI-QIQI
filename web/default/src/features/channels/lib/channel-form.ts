@@ -31,6 +31,11 @@ import {
   stringifyAdvancedCustomConfig,
   validateAdvancedCustomConfig,
 } from './advanced-custom'
+import {
+  buildChannelSettingWithInputTokenDeduction,
+  isNonnegativeIntegerInput,
+  parseInputTokenDeductionFormValues,
+} from './input-token-deduction'
 
 // ============================================================================
 // Form Validation Schema
@@ -202,6 +207,21 @@ export const channelFormSchema = z
         'seedance_discount',
       ])
       .optional(),
+    input_token_deduction: z
+      .string()
+      .refine(
+        (value) => isNonnegativeIntegerInput(value, true),
+        'Input token deduction must be a nonnegative integer'
+      ),
+    input_token_deduction_by_group: z
+      .record(z.string(), z.string())
+      .refine(
+        (values) =>
+          Object.values(values).every((value) =>
+            isNonnegativeIntegerInput(value, true)
+          ),
+        'Group input token deductions must be nonnegative integers'
+      ),
     // Type-specific settings (stored in settings JSON)
     is_enterprise_account: z.boolean().optional(), // OpenRouter specific
     vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
@@ -344,6 +364,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   system_prompt: '',
   system_prompt_override: false,
   video_upstream_protocol: 'channel_default',
+  input_token_deduction: '0',
+  input_token_deduction_by_group: {},
   // Type-specific settings
   is_enterprise_account: false,
   vertex_key_type: 'json',
@@ -375,6 +397,9 @@ export function transformChannelToFormDefaults(
   channel: Channel
 ): ChannelFormValues {
   // Parse channel extra settings from setting field
+  const inputTokenDeduction = parseInputTokenDeductionFormValues(
+    channel.setting
+  )
   let extraSettings = {
     force_format: false,
     thinking_to_content: false,
@@ -401,7 +426,8 @@ export function transformChannelToFormDefaults(
         pass_through_body_enabled: parsed.pass_through_body_enabled || false,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
-        video_upstream_protocol: parsed.video_upstream_protocol || 'channel_default',
+        video_upstream_protocol:
+          parsed.video_upstream_protocol || 'channel_default',
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -491,6 +517,7 @@ export function transformChannelToFormDefaults(
     key_mode: 'append', // Default to append mode for editing multi-key channels
     // Channel extra settings
     ...extraSettings,
+    ...inputTokenDeduction,
     // Type-specific settings
     is_enterprise_account: isEnterpriseAccount,
     vertex_key_type: vertexKeyType,
@@ -515,16 +542,21 @@ export function transformChannelToFormDefaults(
  * Build the setting JSON string from form extra settings
  */
 function buildSettingJSON(formData: ChannelFormValues): string {
-  const settingObj = {
-    force_format: formData.force_format || false,
-    thinking_to_content: formData.thinking_to_content || false,
-    proxy: formData.proxy || '',
-    pass_through_body_enabled: formData.pass_through_body_enabled || false,
-    system_prompt: formData.system_prompt || '',
-    system_prompt_override: formData.system_prompt_override || false,
-    video_upstream_protocol: formData.video_upstream_protocol || 'channel_default',
-  }
-  return JSON.stringify(settingObj)
+  return buildChannelSettingWithInputTokenDeduction(
+    formData.setting,
+    {
+      force_format: formData.force_format || false,
+      thinking_to_content: formData.thinking_to_content || false,
+      proxy: formData.proxy || '',
+      pass_through_body_enabled: formData.pass_through_body_enabled || false,
+      system_prompt: formData.system_prompt || '',
+      system_prompt_override: formData.system_prompt_override || false,
+      video_upstream_protocol:
+        formData.video_upstream_protocol || 'channel_default',
+    },
+    formData.input_token_deduction,
+    formData.input_token_deduction_by_group
+  )
 }
 
 /**

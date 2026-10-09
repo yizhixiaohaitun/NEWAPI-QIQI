@@ -339,7 +339,12 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.thinking_to_content ||
     values.pass_through_body_enabled ||
     values.system_prompt_override ||
-    (values.video_upstream_protocol && values.video_upstream_protocol !== 'channel_default') ||
+    Number(values.input_token_deduction) > 0 ||
+    Object.values(values.input_token_deduction_by_group).some(
+      (value) => value !== ''
+    ) ||
+    (values.video_upstream_protocol &&
+      values.video_upstream_protocol !== 'channel_default') ||
     values.claude_beta_query ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
@@ -740,6 +745,10 @@ export function ChannelMutateDrawer({
   const currentParamOverride = form.watch('param_override')
   const currentHeaderOverride = form.watch('header_override')
   const currentForceFormat = form.watch('force_format')
+  const currentInputTokenDeduction = form.watch('input_token_deduction')
+  const currentInputTokenDeductionByGroup = form.watch(
+    'input_token_deduction_by_group'
+  )
   const currentThinkingToContent = form.watch('thinking_to_content')
   const currentPassThroughBodyEnabled = form.watch('pass_through_body_enabled')
   const currentDisableTaskPollingSleep = form.watch(
@@ -1009,6 +1018,10 @@ export function ChannelMutateDrawer({
     currentForceFormat ||
     currentThinkingToContent ||
     currentPassThroughBodyEnabled ||
+    Number(currentInputTokenDeduction) > 0 ||
+    Object.values(currentInputTokenDeductionByGroup).some(
+      (value) => value !== ''
+    ) ||
     currentDisableTaskPollingSleep ||
     currentProxy?.trim() ||
     currentSystemPrompt?.trim() ||
@@ -4082,6 +4095,76 @@ export function ChannelMutateDrawer({
                             className='space-y-4 disabled:opacity-60'
                           >
                             <div className='divide-border space-y-0 divide-y border-y'>
+                              <div className='space-y-4 px-4 py-4'>
+                                <FormField
+                                  control={form.control}
+                                  name='input_token_deduction'
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel>
+                                        {t('输入 Token 固定减免')}
+                                      </FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          type='number'
+                                          min={0}
+                                          step={1}
+                                          placeholder='0'
+                                          {...field}
+                                        />
+                                      </FormControl>
+                                      <FormDescription>
+                                        {t(
+                                          '影响本平台计费和消费日志；输入不足归零，输出不变，客户端usage保持原始值。'
+                                        )}
+                                      </FormDescription>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+
+                                <FormField
+                                  control={form.control}
+                                  name='input_token_deduction_by_group'
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel>{t('按分组设置')}</FormLabel>
+                                      <FormDescription>
+                                        {t(
+                                          '留空使用渠道默认值；显式填写0表示不减免。仅影响普通文本输入，不改变按次、音频或图片费用。'
+                                        )}
+                                      </FormDescription>
+                                      <div className='grid gap-3 sm:grid-cols-2'>
+                                        {currentGroups.map((group) => (
+                                          <label
+                                            key={group}
+                                            className='space-y-1 text-sm'
+                                          >
+                                            <span className='text-muted-foreground block truncate'>
+                                              {group}
+                                            </span>
+                                            <Input
+                                              type='number'
+                                              min={0}
+                                              step={1}
+                                              placeholder={t('使用默认值')}
+                                              value={field.value[group] ?? ''}
+                                              onChange={(event) =>
+                                                field.onChange({
+                                                  ...field.value,
+                                                  [group]: event.target.value,
+                                                })
+                                              }
+                                            />
+                                          </label>
+                                        ))}
+                                      </div>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </div>
+
                               {currentType === 1 && (
                                 <FormField
                                   control={form.control}
@@ -4164,9 +4247,18 @@ export function ChannelMutateDrawer({
                                 name='video_upstream_protocol'
                                 render={({ field }) => (
                                   <FormItem className='px-4 py-3'>
-                                    <FormLabel>{t('Video Upstream Protocol')}</FormLabel>
-                                    <Select value={field.value || 'channel_default'} onValueChange={field.onChange}>
-                                      <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                                    <FormLabel>
+                                      {t('Video Upstream Protocol')}
+                                    </FormLabel>
+                                    <Select
+                                      value={field.value || 'channel_default'}
+                                      onValueChange={field.onChange}
+                                    >
+                                      <FormControl>
+                                        <SelectTrigger>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                      </FormControl>
                                       <SelectContent>
                                         <SelectGroup>
                                           <SelectItem value='channel_default'>{t('Channel default')}</SelectItem>
@@ -4179,10 +4271,26 @@ export function ChannelMutateDrawer({
                                           </SelectItem>
                                           <SelectItem value='seedance_async'>{t('Seedance official async')}</SelectItem>
                                           <SelectItem value='seedance_discount'>{t('Seedance discount')}</SelectItem>
+                                          <SelectItem value='channel_default'>
+                                            {t('Channel default')}
+                                          </SelectItem>
+                                          <SelectItem value='openai_video'>
+                                            {t('OpenAI Videos / Sora')}
+                                          </SelectItem>
+                                          <SelectItem value='seedance_async'>
+                                            {t('Seedance official async')}
+                                          </SelectItem>
+                                          <SelectItem value='seedance_discount'>
+                                            {t('Seedance discount')}
+                                          </SelectItem>
                                         </SelectGroup>
                                       </SelectContent>
                                     </Select>
-                                    <FormDescription>{t('Explicitly selects the upstream video wire protocol; it is not inferred from the model name.')}</FormDescription>
+                                    <FormDescription>
+                                      {t(
+                                        'Explicitly selects the upstream video wire protocol; it is not inferred from the model name.'
+                                      )}
+                                    </FormDescription>
                                   </FormItem>
                                 )}
                               />
