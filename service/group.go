@@ -45,9 +45,14 @@ func GroupInUserUsableGroups(userGroup, groupName string) bool {
 func GetUserAutoGroup(userGroup string) []string {
 	groups := GetUserUsableGroups(userGroup)
 	autoGroups := make([]string, 0)
+	seen := make(map[string]struct{})
 	for _, group := range setting.GetAutoGroups() {
+		if _, duplicate := seen[group]; duplicate {
+			continue
+		}
 		if _, ok := groups[group]; ok {
 			autoGroups = append(autoGroups, group)
+			seen[group] = struct{}{}
 		}
 	}
 	return autoGroups

@@ -105,6 +105,13 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - `relay/helper/common.go`：已提交的 OpenAI、Claude、Responses SSE 与 WebSocket `WssPublicString`/`WssPublicObject` 结构化错误写出前执行同一净化；先解析 JSON 再按解码文本识别，覆盖 unicode escapes、流式数组、bare string 与嵌套 `response.error` 并统一重建。普通 completion/正常 WS 帧/拒答内容不属于错误 envelope，不改写；原始流错误只记后台日志。`relay/channel/openai/relay_realtime.go` 仅上游到客户端调用公开写出口，客户到上游仍用原始 `WssString`，不净化客户输入。
 - 回归入口：`middleware/distributor_privacy_test.go`、`controller/relay_group_privacy_test.go`、`types/group_error_privacy_test.go`、`service/upstream_resource_test.go`、`relay/helper/group_error_privacy_test.go`；覆盖本地无渠道/数据库失败、上游完整 raw body 与嵌套序列化、中英文随机分组、OpenAI/Claude/Responses 流错误、后台保留原文及非分组错误/正常模型文本不受影响。
 
+### Auto 分组重试选择链路
+
+- `middleware/distributor.go#Distribute`：首次随机选择或渠道亲和命中时，在请求上下文记录实际 auto 分组；亲和命中同时记录配置索引及已访问分组。
+- `service/channel_select.go#CacheGetRandomSatisfiedChannel`：跨分组开启后，重试按配置顺序选择尚未访问的可用分组，每个新分组从其首选优先级开始；无渠道分组直接跳过，耗尽后不回绕。关闭跨组或使用指定分组时保留原优先级重试行为。
+- `controller/relay.go#getChannel`：Relay、RelayTask 与 Seedance 共用 `RetryParam` 和请求上下文；停止、客户端取消及请求总超时仍由各自外层循环判定。
+- 回归入口：`service/channel_select_cross_group_test.go` 使用真实缓存选择器覆盖无渠道、重复配置、亲和从中间/末尾开始、耗尽、关闭跨组和指定组；`controller/relay_auto_group_retry_test.go` 覆盖控制器逐次选择及耗尽边界。
+
 ### 🎯 核心概念
 
 #### 路径为王 (Path is King)

@@ -15,13 +15,12 @@ func TestRetryParamIncreaseRetryStopsAtIntegerBoundary(t *testing.T) {
 	assert.Equal(t, maxInt, param.GetRetry())
 }
 
-func TestRetryParamIncreaseRetryPreservesCrossGroupReset(t *testing.T) {
+func TestRetryParamIncreaseRetryCountsEveryControllerAttempt(t *testing.T) {
 	retry := 0
 	param := &RetryParam{Retry: &retry}
-	param.ResetRetryNextTry()
 
 	require.True(t, param.IncreaseRetry())
-	assert.Zero(t, param.GetRetry())
-	require.True(t, param.IncreaseRetry())
 	assert.Equal(t, 1, param.GetRetry())
+	require.True(t, param.IncreaseRetry())
+	assert.Equal(t, 2, param.GetRetry())
 }
