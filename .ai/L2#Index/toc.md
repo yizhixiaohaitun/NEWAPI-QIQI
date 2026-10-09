@@ -122,7 +122,9 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - `model/channel.go#ValidateSettings`：拒绝默认值或分组值中的负数；设置沿现有渠道缓存和请求上下文传递，不新增请求级数据库查询。
 - `service/input_token_deduction.go`：从归一化计费用量创建独立副本，仅减文本输入；顺序为普通文本、cache read、cache write（5m 后 1h），下限为零，保持缓存明细一致，不改客户端原始 usage、输出、图像或音频。
 - `service/text_quota.go#PostTextConsumeQuota`：普通倍率、tiered 参数、最终结算和消费日志共用扣减后的计费用量；固定按次价格不因 token 减免消失。管理员日志 `admin_info` 保存原文本输入和实际减免，普通日志仅显示扣后输入。
-- 回归入口：`service/input_token_deduction_test.go`（含 SQLite 余额/消费日志、缓存与协议语义、最终分组、tiered/按次边界和 benchmark）、`model/channel_input_token_deduction_test.go`（配置验证）。
+- 默认主题入口：`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 在高级设置中编辑渠道默认和当前分组减免，已有减免配置自动展开；`web/default/src/features/channels/lib/channel-form.ts` 负责完整加载、校验及保存，`web/default/src/features/channels/lib/input-token-deduction.ts` 保留未知 setting 字段并区分留空继承与显式 `0`。
+- 经典主题入口：`web/classic/src/components/table/channels/modals/EditChannelModal.jsx` 与同目录 `inputTokenDeduction.js` 提供同等编辑及加载保存语义，不更改已有配置结构。
+- 回归入口：`service/input_token_deduction_test.go`（含 SQLite 余额/消费日志、缓存与协议语义、最终分组、tiered/按次边界和 benchmark）、`model/channel_input_token_deduction_test.go`（配置验证）、`web/default/src/features/channels/lib/input-token-deduction.test.ts`（留空/零/未知配置保留和整数校验）。
 
 ### 🎯 核心概念
 

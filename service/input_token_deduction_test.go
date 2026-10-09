@@ -321,6 +321,30 @@ func TestPostTextConsumeQuotaFullyDeductedStillCountsSuccessfulRequest(t *testin
 	require.NotContains(t, log.Content, "上游没有返回计费信息")
 }
 
+func TestPostTextConsumeQuotaNoDeductionKeepsLegacyZeroUsageGuard(t *testing.T) {
+	truncate(t)
+	seedUser(t, 51, 1000)
+	seedToken(t, 52, 51, "legacy-zero-key", 1000)
+	seedChannel(t, 53)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/v1/embeddings", nil)
+	relayInfo := &relaycommon.RelayInfo{
+		UserId: 51, TokenId: 52, TokenKey: "legacy-zero-key", OriginModelName: "embedding-test",
+		UsingGroup: "default", StartTime: time.Now(), ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 53},
+		PriceData: types.PriceData{ModelRatio: 1, CompletionRatio: 1, GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1}},
+	}
+
+	PostTextConsumeQuota(ctx, relayInfo, &dto.Usage{InputTokens: 100}, nil)
+
+	var user model.User
+	require.NoError(t, model.DB.First(&user, "id = ?", 51).Error)
+	require.Zero(t, user.RequestCount, "unconfigured zero billable usage retains the existing failure guard")
+	var log model.Log
+	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeConsume).First(&log).Error)
+	require.Contains(t, log.Content, "上游没有返回计费信息")
+}
+
 func TestApplyInputTokenDeductionNoConfigIsNoOpWithoutClone(t *testing.T) {
 	usage := &dto.Usage{PromptTokens: 12, TotalTokens: 12}
 	adjusted, audit := applyInputTokenDeduction(nil, usage, 0)
