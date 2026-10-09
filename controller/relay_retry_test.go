@@ -89,7 +89,8 @@ func TestChannelErrorsRespectExplicitRetryStops(t *testing.T) {
 	assert.False(t, shouldRetry(ctx, channelErr, 1), "a specific channel must never fall through to another group channel")
 	resourceErr := types.NewErrorWithStatusCode(fmt.Errorf("upstream quota exhausted"), types.ErrorCodeUpstreamResourceInsufficient, http.StatusForbidden)
 	assert.False(t, shouldRetry(ctx, resourceErr, 1), "resource exhaustion must not bypass a specific channel binding")
-	ctx.Set("specific_channel_id", nil)
+	delete(ctx.Keys, "specific_channel_id")
+	assert.True(t, shouldRetry(ctx, channelErr, 1), "removing the binding must restore ordinary channel retries")
 
 	skipChannelErr := types.NewErrorWithStatusCode(fmt.Errorf("channel unavailable"), types.ErrorCode("channel:test"), http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
 	assert.False(t, shouldRetry(ctx, skipChannelErr, 1), "explicit skip-retry must win over channel:error")

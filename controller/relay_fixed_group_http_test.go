@@ -99,6 +99,7 @@ func TestRelayHTTPFixedGroupAffinityFailureImmediatelyUsesUntriedChannel(t *test
 	service.InitHttpClient()
 
 	var usedChannels []string
+	var affinityInfo map[string]interface{}
 	router := gin.New()
 	router.POST("/v1/messages", func(c *gin.Context) {
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, "fixed")
@@ -110,6 +111,8 @@ func TestRelayHTTPFixedGroupAffinityFailureImmediatelyUsesUntriedChannel(t *test
 		common.SetContextKey(c, common.RequestIdKey, "fixed-http-affinity")
 		c.Next()
 	}, middleware.Distribute(), func(c *gin.Context) {
+		affinityInfo = make(map[string]interface{})
+		service.AppendChannelAffinityAdminInfo(c, affinityInfo)
 		Relay(c, types.RelayFormatClaude)
 		usedChannels = append([]string(nil), c.GetStringSlice("use_channel")...)
 	})
@@ -132,6 +135,11 @@ func TestRelayHTTPFixedGroupAffinityFailureImmediatelyUsesUntriedChannel(t *test
 	usedChannels = nil
 
 	response := doRequest()
+	require.Contains(t, affinityInfo, "channel_affinity", "second request must hit middleware affinity, not merely random selection")
+	usedAffinity, ok := affinityInfo["channel_affinity"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, 461, usedAffinity["channel_id"])
+	assert.Equal(t, "fixed", usedAffinity["selected_group"])
 	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), `"text":"ok"`)
 	mu.Lock()
