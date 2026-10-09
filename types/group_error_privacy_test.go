@@ -115,6 +115,80 @@ func TestSanitizeGroupErrorStreamDataScrubsArrayAndBareStringErrors(t *testing.T
 	}
 }
 
+func TestSanitizeGroupErrorStreamDataKeepsMinimalFlatErrorContract(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		input           string
+		wantType        string
+		wantCode        any
+		wantSequence    any
+		forbiddenFields []string
+	}{
+		{
+			name:            "flat error event",
+			input:           `{"type":"error","message":"无权访问 flat-secret 分组","code":"forbidden","param":"flat-secret","metadata":{"group":"flat-secret"}}`,
+			wantType:        "error",
+			wantCode:        "forbidden",
+			forbiddenFields: []string{"param", "metadata"},
+		},
+		{
+			name:            "Responses response.error event",
+			input:           `{"type":"response.error","message":"Failed to get available channel under group responses-secret","code":"no_available_channel","param":"responses-secret","sequence_number":17,"metadata":{"group":"responses-secret"}}`,
+			wantType:        "response.error",
+			wantCode:        "no_available_channel",
+			wantSequence:    float64(17),
+			forbiddenFields: []string{"param", "metadata"},
+		},
+		{
+			name:            "metadata-only diagnostic",
+			input:           `{"type":"error","metadata":{"message":"not authorized to access metadata-secret group","details":["metadata-secret"]}}`,
+			wantType:        "error",
+			forbiddenFields: []string{"metadata"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			output, changed := SanitizeGroupErrorStreamData(test.input)
+			require.True(t, changed)
+			assert.NotContains(t, output, "secret")
+
+			var envelope map[string]any
+			require.NoError(t, common.Unmarshal([]byte(output), &envelope))
+			assert.Equal(t, test.wantType, envelope["type"])
+			assert.NotEmpty(t, envelope["message"])
+			assert.Contains(t, envelope["message"], "上游分组")
+			if test.wantCode != nil {
+				assert.Equal(t, test.wantCode, envelope["code"])
+			}
+			if test.wantSequence != nil {
+				assert.Equal(t, test.wantSequence, envelope["sequence_number"])
+			}
+			for _, field := range test.forbiddenFields {
+				assert.NotContains(t, envelope, field)
+			}
+		})
+	}
+}
+
+func TestSanitizeGroupErrorStreamDataRebuildsArrayErrorWithoutLeakingElements(t *testing.T) {
+	t.Parallel()
+
+	input := `{"type":"error","error":[{"message":"无权访问 array-contract-secret 分组","code":"forbidden"},"array-contract-secret",{"metadata":{"group":"array-contract-secret"}}],"metadata":{"trace":"array-contract-secret"}}`
+	output, changed := SanitizeGroupErrorStreamData(input)
+	require.True(t, changed)
+	assert.NotContains(t, output, "array-contract-secret")
+
+	var envelope map[string]any
+	require.NoError(t, common.Unmarshal([]byte(output), &envelope))
+	streamErr, ok := envelope["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, publicGroupAccessDeniedMessage, streamErr["message"])
+	assert.NotContains(t, envelope, "metadata")
+}
+
 func TestCopyWithPublicMessageDropsProviderControlledClassifiers(t *testing.T) {
 	t.Parallel()
 

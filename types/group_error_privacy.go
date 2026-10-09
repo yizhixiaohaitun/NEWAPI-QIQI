@@ -193,19 +193,37 @@ func safePublicErrorClassifier(value any) any {
 // copied, so a group identifier cannot move to a field that lacks the complete
 // error phrase. Non-error stream payloads never enter this function.
 func rebuildPublicErrorEnvelope(envelope map[string]any, kind groupErrorKind) map[string]any {
-	result := make(map[string]any, 2)
+	result := make(map[string]any, 4)
 	if eventType, ok := envelope["type"].(string); ok {
 		switch strings.ToLower(strings.TrimSpace(eventType)) {
 		case "error", "response.error", "response.failed":
 			result["type"] = eventType
 		}
 	}
+
+	hasNestedError := false
 	if value, ok := envelope["error"]; ok && value != nil {
 		result["error"] = rebuildPublicErrorObject(value, kind)
+		hasNestedError = true
 	}
 	if response, ok := envelope["response"].(map[string]any); ok && response["error"] != nil {
 		result["response"] = map[string]any{
 			"error": rebuildPublicErrorObject(response["error"], kind),
+		}
+		hasNestedError = true
+	}
+
+	// OpenAI Responses error events may put the standard error fields directly
+	// on the event rather than under error/response.error. Rebuild that flat
+	// form too, so recognized metadata-only diagnostics cannot leave an empty
+	// event while provider-controlled message/param/metadata are discarded.
+	if !hasNestedError {
+		result["message"] = publicGroupErrorMessage(kind)
+		if code := safePublicErrorClassifier(envelope["code"]); code != nil {
+			result["code"] = code
+		}
+		if sequence, ok := envelope["sequence_number"].(float64); ok {
+			result["sequence_number"] = sequence
 		}
 	}
 	return result
