@@ -159,7 +159,21 @@ func WssString(c *gin.Context, ws *websocket.Conn, str string) error {
 		return errors.New("websocket connection is nil")
 	}
 	//common.LogInfo(c, fmt.Sprintf("sending message: %s", str))
-	return ws.WriteMessage(websocket.TextMessage, []byte(sanitizePublicStreamData(c, str)))
+	return ws.WriteMessage(websocket.TextMessage, []byte(str))
+}
+
+// WssPublicString sanitizes only upstream-to-client structured error frames.
+// WssString remains a raw writer for client-to-upstream traffic.
+func WssPublicString(c *gin.Context, ws *websocket.Conn, str string) error {
+	return WssString(c, ws, sanitizePublicStreamData(c, str))
+}
+
+func WssPublicObject(c *gin.Context, ws *websocket.Conn, object interface{}) error {
+	jsonData, err := common.Marshal(object)
+	if err != nil {
+		return fmt.Errorf("error marshalling object: %w", err)
+	}
+	return WssPublicString(c, ws, string(jsonData))
 }
 
 func WssObject(c *gin.Context, ws *websocket.Conn, object interface{}) error {
@@ -172,7 +186,7 @@ func WssObject(c *gin.Context, ws *websocket.Conn, object interface{}) error {
 		return errors.New("websocket connection is nil")
 	}
 	//common.LogInfo(c, fmt.Sprintf("sending message: %s", jsonData))
-	return ws.WriteMessage(websocket.TextMessage, []byte(sanitizePublicStreamData(c, string(jsonData))))
+	return ws.WriteMessage(websocket.TextMessage, jsonData)
 }
 
 func WssError(c *gin.Context, ws *websocket.Conn, openaiError types.OpenAIError) {
@@ -184,7 +198,7 @@ func WssError(c *gin.Context, ws *websocket.Conn, openaiError types.OpenAIError)
 		EventId: GetLocalRealtimeID(c),
 		Error:   &openaiError,
 	}
-	_ = WssObject(c, ws, errorObj)
+	_ = WssPublicObject(c, ws, errorObj)
 }
 
 func GetResponseID(c *gin.Context) string {

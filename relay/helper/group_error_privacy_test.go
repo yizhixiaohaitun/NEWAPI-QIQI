@@ -114,15 +114,17 @@ func TestWebSocketWritersHideStructuredGroupErrorsAndPreserveNormalFrames(t *tes
 		defer ws.Close()
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Request = r
-		require.NoError(t, WssString(c, ws, `{"type":"error","error":{"message":"\u65e0\u6743\u8bbf\u95ee ws-secret \u5206\u7ec4","details":["ws-secret"]}}`))
-		require.NoError(t, WssObject(c, ws, map[string]any{
+		require.NoError(t, WssPublicString(c, ws, `{"type":"error","error":{"message":"\u65e0\u6743\u8bbf\u95ee ws-secret \u5206\u7ec4","details":["ws-secret"]}}`))
+		require.NoError(t, WssPublicObject(c, ws, map[string]any{
 			"type": "response.failed",
 			"response": map[string]any{"error": map[string]any{
 				"message": "Failed to get available channel under group object-secret",
 				"type":    "permission_error", "code": "forbidden", "details": []string{"object-secret"},
 			}},
 		}))
-		require.NoError(t, WssString(c, ws, `{"type":"message","text":"normal frame"}`))
+		require.NoError(t, WssPublicString(c, ws, `{"type":"message","text":"normal frame"}`))
+		require.NoError(t, WssString(c, ws, `{"type":"error","error":{"message":"无权访问 client-input 分组"}}`))
+		require.NoError(t, WssObject(c, ws, map[string]any{"type": "error", "error": map[string]any{"message": "无权访问 client-object 分组"}}))
 	}))
 	defer server.Close()
 
@@ -140,6 +142,14 @@ func TestWebSocketWritersHideStructuredGroupErrorsAndPreserveNormalFrames(t *tes
 	_, normal, err := client.ReadMessage()
 	require.NoError(t, err)
 	assert.Equal(t, `{"type":"message","text":"normal frame"}`, string(normal))
+	_, raw, readErr := client.ReadMessage()
+	require.NoError(t, readErr)
+	assert.Equal(t, `{"type":"error","error":{"message":"无权访问 client-input 分组"}}`, string(raw))
+	_, rawObject, readErr := client.ReadMessage()
+	require.NoError(t, readErr)
+	assert.Contains(t, string(rawObject), "client-object")
+	assert.NotContains(t, logs.String(), "client-input")
+	assert.NotContains(t, logs.String(), "client-object")
 	assert.Contains(t, logs.String(), "ws-secret")
 	assert.Contains(t, logs.String(), "object-secret")
 }
