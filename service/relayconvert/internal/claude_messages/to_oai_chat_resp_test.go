@@ -8,6 +8,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The upstream sends no content blocks: the only explanation is in stop_details.
@@ -41,6 +43,65 @@ func wireChoice(t *testing.T, response *dto.ChatCompletionsStreamResponse) map[s
 		t.Fatalf("choices = %s", data)
 	}
 	return wire.Choices[0]
+}
+
+func TestResponseClaude2OpenAIRefusalExplanation(t *testing.T) {
+	const explanation = "Policy refusal:\nNo reverse engineering."
+	for _, tc := range []struct {
+		name        string
+		response    dto.ClaudeResponse
+		wantContent string
+		wantRefusal *string
+		wantFinish  string
+	}{
+		{
+			name: "exact empty refusal stays empty",
+			response: dto.ClaudeResponse{
+				StopReason: "refusal",
+			},
+			wantContent: "",
+			wantFinish:  "content_filter",
+		},
+		{
+			name: "explanation is preserved verbatim once per field",
+			response: dto.ClaudeResponse{
+				StopReason:  "refusal",
+				StopDetails: &dto.ClaudeStopDetails{Type: "refusal", Explanation: explanation},
+			},
+			wantContent: explanation,
+			wantRefusal: common.GetPointer(explanation),
+			wantFinish:  "content_filter",
+		},
+		{
+			name: "existing body is not overwritten",
+			response: dto.ClaudeResponse{
+				StopReason:  "refusal",
+				StopDetails: &dto.ClaudeStopDetails{Type: "refusal", Explanation: explanation},
+				Content:     []dto.ClaudeMediaMessage{{Type: "text", Text: common.GetPointer("Existing refusal body.")}},
+			},
+			wantContent: "Existing refusal body.",
+			wantFinish:  "content_filter",
+		},
+		{
+			name: "ordinary end turn ignores stop details",
+			response: dto.ClaudeResponse{
+				StopReason:  "end_turn",
+				StopDetails: &dto.ClaudeStopDetails{Explanation: explanation},
+				Content:     []dto.ClaudeMediaMessage{{Type: "text", Text: common.GetPointer("Normal response.")}},
+			},
+			wantContent: "Normal response.",
+			wantFinish:  "stop",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			converted := ResponseClaude2OpenAI(&tc.response)
+			require.Len(t, converted.Choices, 1)
+			choice := converted.Choices[0]
+			assert.Equal(t, tc.wantContent, choice.Message.Content)
+			assert.Equal(t, tc.wantRefusal, choice.Message.Refusal)
+			assert.Equal(t, tc.wantFinish, choice.FinishReason)
+		})
+	}
 }
 
 func TestStreamResponseClaude2OpenAIRefusalSSE(t *testing.T) {

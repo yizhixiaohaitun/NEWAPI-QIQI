@@ -109,6 +109,13 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - 任务旁路回归：`controller/task_group_privacy_test.go`、`controller/relay_retry_test.go`、`model/task_group_privacy_test.go`、`relay/relay_task_group_privacy_test.go`；验证失败字段、fetch 真实写出、附加诊断、公开副本不污染原件与普通成功输出不变。
 - 回归入口：`middleware/distributor_privacy_test.go`、`controller/relay_group_privacy_test.go`、`types/group_error_privacy_test.go`、`service/upstream_resource_test.go`、`relay/helper/group_error_privacy_test.go`；覆盖本地无渠道/数据库失败、上游完整 raw body 与嵌套序列化、中英文随机分组、OpenAI/Claude/Responses 流错误、后台保留原文及非分组错误/正常模型文本不受影响。
 
+### Claude 非流式 refusal 解释兼容
+
+- `dto/claude.go#ClaudeResponse` / `ClaudeStopDetails`：解析上游非流式 `stop_reason` 与可选 `stop_details.explanation`；缺少解释时不生成替代文案。
+- `service/relayconvert/internal/claude_messages/to_oai_chat_resp.go#ResponseClaude2OpenAI`：仅在明确 `refusal`、没有正常正文且解释非空时，将上游解释逐字写入 OpenAI `message.refusal`，并按既有流式兼容语义同步给只读取 `message.content` 的客户端；已有正文、普通 `end_turn` 不受影响。
+- `relay/channel/claude/relay-claude.go#HandleClaudeResponseData`：OpenAI 格式调用上述转换；Claude 原生格式继续直接透传上游响应字节。
+- 回归入口：`service/relayconvert/internal/claude_messages/to_oai_chat_resp_test.go` 覆盖精确空拒绝、解释逐字保留且不重复、已有正文和普通结束；`relay/channel/claude/relay_claude_test.go` 从真实非流式 handler 覆盖 OpenAI 可见性与 Claude 原生字节不变。
+
 ### Auto 分组重试选择链路
 
 - `middleware/distributor.go#Distribute`：首次随机选择或渠道亲和命中时，在请求上下文记录实际 auto 分组；亲和命中同时记录配置索引及已访问分组。

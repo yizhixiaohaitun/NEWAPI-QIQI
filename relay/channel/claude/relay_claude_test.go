@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -386,6 +387,65 @@ func TestHandleClaudeResponseDataUsesRefusalStopExplanation(t *testing.T) {
 	require.Positive(t, claudeInfo.Usage.CompletionTokens)
 	require.Equal(t, 1901, claudeInfo.Usage.PromptTokensDetails.CachedTokens)
 	require.Equal(t, 2909, claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens)
+}
+
+func TestHandleClaudeResponseDataPreservesRefusalWireSemantics(t *testing.T) {
+	const explanation = "Policy refusal:\nNo reverse engineering."
+	for _, tc := range []struct {
+		name          string
+		format        types.RelayFormat
+		data          []byte
+		wantContent   string
+		wantRefusal   *string
+		wantByteEqual bool
+	}{
+		{
+			name:          "native Claude bytes remain unchanged",
+			format:        types.RelayFormatClaude,
+			data:          []byte(`{"id":"msg_native","type":"message","role":"assistant","stop_reason":"refusal","stop_details":{"type":"refusal","explanation":"Policy refusal:\nNo reverse engineering."},"model":"claude-test","usage":{"input_tokens":1,"output_tokens":0}}`),
+			wantByteEqual: true,
+		},
+		{
+			name:        "OpenAI exact empty refusal stays empty",
+			format:      types.RelayFormatOpenAI,
+			data:        []byte(`{"id":"msg_empty","type":"message","role":"assistant","stop_reason":"refusal","model":"claude-test","usage":{"input_tokens":1,"output_tokens":0}}`),
+			wantContent: "",
+		},
+		{
+			name:        "OpenAI explanation is visible verbatim",
+			format:      types.RelayFormatOpenAI,
+			data:        []byte(`{"id":"msg_explained","type":"message","role":"assistant","stop_reason":"refusal","stop_details":{"type":"refusal","explanation":"Policy refusal:\nNo reverse engineering."},"model":"claude-test","usage":{"input_tokens":1,"output_tokens":0}}`),
+			wantContent: explanation,
+			wantRefusal: common.GetPointer(explanation),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			info := &relaycommon.RelayInfo{
+				RelayFormat:             tc.format,
+				FinalRequestRelayFormat: types.RelayFormatClaude,
+				ChannelMeta:             &relaycommon.ChannelMeta{UpstreamModelName: "claude-test"},
+			}
+			claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
+			response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header)}
+
+			require.Nil(t, HandleClaudeResponseData(ctx, info, claudeInfo, response, tc.data))
+			if tc.wantByteEqual {
+				require.True(t, bytes.Equal(tc.data, recorder.Body.Bytes()))
+				return
+			}
+
+			var converted dto.OpenAITextResponse
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &converted))
+			require.Len(t, converted.Choices, 1)
+			choice := converted.Choices[0]
+			require.Equal(t, tc.wantContent, choice.Message.Content)
+			require.Equal(t, tc.wantRefusal, choice.Message.Refusal)
+			require.Equal(t, "content_filter", choice.FinishReason)
+		})
+	}
 }
 
 func TestHandleStreamResponseDataCollectsRefusalExplanation(t *testing.T) {

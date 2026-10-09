@@ -178,6 +178,11 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 		FinishReason: StopReasonClaudeToOpenAI(claudeResponse.StopReason),
 	}
 	choice.SetStringContent(responseText)
+	if claudeResponse.StopReason == "refusal" && responseText == "" && claudeResponse.StopDetails != nil && claudeResponse.StopDetails.Explanation != "" {
+		choice.Message.Refusal = common.GetPointer(claudeResponse.StopDetails.Explanation)
+		// Match the streaming compatibility behavior for clients that only read content.
+		choice.SetStringContent(claudeResponse.StopDetails.Explanation)
+	}
 	if len(responseThinking) > 0 {
 		choice.ReasoningContent = &responseThinking
 	}
