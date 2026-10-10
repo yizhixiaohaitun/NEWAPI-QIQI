@@ -42,6 +42,7 @@ func handleClaudeFormat(c *gin.Context, data string, info *relaycommon.RelayInfo
 
 	if streamResponse.Usage != nil {
 		info.ClaudeConvertInfo.Usage = streamResponse.Usage
+		streamResponse.Usage = service.AdjustUsageForClient(info, streamResponse.Usage)
 	}
 	result, err := relayconvert.ConvertStreamResponse(c, info, types.RelayFormatClaude, &streamResponse)
 	if err != nil {
@@ -166,7 +167,8 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
 		if info.ShouldIncludeUsage && !containStreamUsage {
-			response := helper.GenerateFinalUsageResponse(responseId, createAt, model, *usage)
+			publicUsage := service.AdjustUsageForClient(info, usage)
+			response := helper.GenerateFinalUsageResponse(responseId, createAt, model, *publicUsage)
 			response.SetSystemFingerprint(systemFingerprint)
 			helper.ObjectData(c, response)
 		}
@@ -179,9 +181,10 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 			return
 		}
 
-		info.ClaudeConvertInfo.Usage = usage
+		info.ClaudeConvertInfo.Usage = service.AdjustUsageForClient(info, usage)
 
 		result, err := relayconvert.ConvertStreamResponse(c, info, types.RelayFormatClaude, &streamResponse)
+		info.ClaudeConvertInfo.Usage = usage
 		if err != nil {
 			common.SysLog("error converting Claude stream response: " + err.Error())
 			return
@@ -236,9 +239,12 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 	}
 }
 
-func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamResponse, data string) {
+func sendResponsesStreamData(c *gin.Context, info *relaycommon.RelayInfo, streamResponse dto.ResponsesStreamResponse, data string) {
 	if data == "" {
 		return
+	}
+	if streamResponse.Response != nil && streamResponse.Response.Usage != nil {
+		data = patchResponsesUsageForClient(data, info, streamResponse.Response.Usage, true)
 	}
 	_ = helper.ResponseChunkData(c, streamResponse, data)
 }

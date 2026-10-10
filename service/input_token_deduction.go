@@ -127,6 +127,53 @@ func applyCacheWriteDeduction(usage *dto.Usage, originalTotal, deduction int) {
 	}
 }
 
+// AdjustUsageForClient applies the same channel deduction used by settlement to
+// an isolated, normalized usage value for client responses. The returned usage
+// never contains the internal BillingUsage audit snapshot. Callers must keep
+// returning the original usage to PostTextConsumeQuota so settlement applies
+// the deduction exactly once.
+func AdjustUsageForClient(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) *dto.Usage {
+	requested := resolveInputTokenDeduction(relayInfo)
+	if usage == nil || requested <= 0 {
+		return usage
+	}
+	adjusted, _ := applyInputTokenDeduction(relayInfo, effectiveBillingUsage(usage), requested)
+	if adjusted != nil {
+		adjusted.BillingUsage = nil
+	}
+	return adjusted
+}
+
+// AdjustClaudeUsageForClient preserves Claude's native cache buckets while
+// applying the shared ordinary -> cache-read -> cache-write deduction order.
+// Internal billing_usage is deliberately omitted from the public result.
+func AdjustClaudeUsageForClient(relayInfo *relaycommon.RelayInfo, usage *dto.ClaudeUsage) *dto.ClaudeUsage {
+	if usage == nil || resolveInputTokenDeduction(relayInfo) <= 0 {
+		return usage
+	}
+	billing := dto.NewClaudeMessagesBillingUsage(usage)
+	adjusted := AdjustUsageForClient(relayInfo, &dto.Usage{BillingUsage: billing})
+	if adjusted == nil {
+		return usage
+	}
+
+	result := *usage
+	result.InputTokens = adjusted.PromptTokens
+	result.OutputTokens = adjusted.CompletionTokens
+	result.CacheReadInputTokens = adjusted.PromptTokensDetails.CachedTokens
+	result.CacheCreationInputTokens = adjusted.PromptTokensDetails.CacheCreationTokensTotal()
+	result.ClaudeCacheCreation5mTokens = adjusted.ClaudeCacheCreation5mTokens
+	result.ClaudeCacheCreation1hTokens = adjusted.ClaudeCacheCreation1hTokens
+	if usage.CacheCreation != nil {
+		cacheCreation := *usage.CacheCreation
+		cacheCreation.Ephemeral5mInputTokens = adjusted.ClaudeCacheCreation5mTokens
+		cacheCreation.Ephemeral1hInputTokens = adjusted.ClaudeCacheCreation1hTokens
+		result.CacheCreation = &cacheCreation
+	}
+	result.BillingUsage = nil
+	return &result
+}
+
 func hasReportedBillableUsage(usage *dto.Usage) bool {
 	if usage == nil {
 		return false

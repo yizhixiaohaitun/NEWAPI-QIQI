@@ -5,7 +5,123 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 )
+
+func patchOpenAIUsageMapForClient(raw map[string]interface{}, adjusted *dto.Usage) {
+	if raw == nil || adjusted == nil {
+		return
+	}
+	raw["prompt_tokens"] = adjusted.PromptTokens
+	raw["completion_tokens"] = adjusted.CompletionTokens
+	raw["total_tokens"] = adjusted.TotalTokens
+	if _, ok := raw["input_tokens"]; ok || adjusted.InputTokens != 0 {
+		raw["input_tokens"] = adjusted.InputTokens
+	}
+	if _, ok := raw["output_tokens"]; ok || adjusted.OutputTokens != 0 {
+		raw["output_tokens"] = adjusted.OutputTokens
+	}
+	if details, ok := raw["prompt_tokens_details"].(map[string]interface{}); ok {
+		details["cached_tokens"] = adjusted.PromptTokensDetails.CachedTokens
+		if _, exists := details["cache_write_tokens"]; exists {
+			details["cache_write_tokens"] = adjusted.PromptTokensDetails.CacheWriteTokens
+		}
+		if _, exists := details["cached_creation_tokens"]; exists {
+			details["cached_creation_tokens"] = adjusted.PromptTokensDetails.CachedCreationTokens
+		}
+	}
+	if details, ok := raw["input_tokens_details"].(map[string]interface{}); ok && adjusted.InputTokensDetails != nil {
+		details["cached_tokens"] = adjusted.InputTokensDetails.CachedTokens
+		if _, exists := details["cache_write_tokens"]; exists {
+			details["cache_write_tokens"] = adjusted.InputTokensDetails.CacheWriteTokens
+		}
+		if _, exists := details["cached_creation_tokens"]; exists {
+			details["cached_creation_tokens"] = adjusted.InputTokensDetails.CachedCreationTokens
+		}
+	}
+	delete(raw, "billing_usage")
+}
+
+func normalizedClientUsage(usage *dto.Usage) *dto.Usage {
+	if usage == nil || usage.PromptTokens != 0 || usage.InputTokens == 0 {
+		return usage
+	}
+	clone := *usage
+	clone.PromptTokens = usage.InputTokens
+	clone.CompletionTokens = usage.OutputTokens
+	if clone.TotalTokens == 0 {
+		clone.TotalTokens = clone.PromptTokens + clone.CompletionTokens
+	}
+	if usage.InputTokensDetails != nil {
+		clone.PromptTokensDetails = *usage.InputTokensDetails
+	}
+	return &clone
+}
+
+func patchOpenAIResponseUsageForClient(data string, info *relaycommon.RelayInfo, usage *dto.Usage) string {
+	normalized := normalizedClientUsage(usage)
+	adjusted := service.AdjustUsageForClient(info, normalized)
+	if adjusted == normalized {
+		return data
+	}
+	var envelope map[string]interface{}
+	if err := common.UnmarshalJsonStr(data, &envelope); err != nil {
+		return data
+	}
+	rawUsage, ok := envelope["usage"].(map[string]interface{})
+	if !ok {
+		return data
+	}
+	patchOpenAIUsageMapForClient(rawUsage, adjusted)
+	encoded, err := common.Marshal(envelope)
+	if err != nil {
+		return data
+	}
+	return string(encoded)
+}
+
+func patchResponsesUsageForClient(data string, info *relaycommon.RelayInfo, usage *dto.Usage, nestedResponse bool) string {
+	normalized := normalizedClientUsage(usage)
+	adjusted := service.AdjustUsageForClient(info, normalized)
+	if adjusted == normalized || adjusted == nil {
+		return data
+	}
+	var envelope map[string]interface{}
+	if err := common.UnmarshalJsonStr(data, &envelope); err != nil {
+		return data
+	}
+	target := envelope
+	if nestedResponse {
+		response, ok := envelope["response"].(map[string]interface{})
+		if !ok {
+			return data
+		}
+		target = response
+	}
+	rawUsage, ok := target["usage"].(map[string]interface{})
+	if !ok {
+		return data
+	}
+	patchOpenAIUsageMapForClient(rawUsage, adjusted)
+	// Responses names its aggregate fields input_tokens/output_tokens. Keep the
+	// compatibility aliases coherent when an upstream also emits them.
+	rawUsage["input_tokens"] = adjusted.PromptTokens
+	rawUsage["output_tokens"] = adjusted.CompletionTokens
+	if adjusted.InputTokensDetails == nil {
+		adjusted.InputTokensDetails = &adjusted.PromptTokensDetails
+	}
+	if details, ok := rawUsage["input_tokens_details"].(map[string]interface{}); ok {
+		details["cached_tokens"] = adjusted.PromptTokensDetails.CachedTokens
+		if _, exists := details["cache_write_tokens"]; exists {
+			details["cache_write_tokens"] = adjusted.PromptTokensDetails.CacheWriteTokens
+		}
+	}
+	encoded, err := common.Marshal(envelope)
+	if err != nil {
+		return data
+	}
+	return string(encoded)
+}
 
 func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, responseBody []byte) {
 	if info == nil || usage == nil {

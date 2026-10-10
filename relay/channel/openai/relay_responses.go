@@ -152,10 +152,8 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	}
 	recordResponsesStateChannelAffinity(c, info, service.CollectOpenAIResponsesAffinityAliases(&responsesResponse))
 
-	// 写入新的 response body
-	service.IOCopyBytesGracefully(c, resp, responseBody)
-
-	// compute usage
+	// compute usage before writing so the public response can use the same
+	// deduction semantics while settlement retains this original value.
 	usage := dto.Usage{}
 	if responsesResponse.Usage != nil {
 		usage.PromptTokens = responsesResponse.Usage.InputTokens
@@ -166,6 +164,8 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 			usage.PromptTokensDetails.CacheWriteTokens = responsesResponse.Usage.InputTokensDetails.CacheWriteTokens
 		}
 	}
+	responseBody = []byte(patchResponsesUsageForClient(string(responseBody), info, &usage, false))
+	service.IOCopyBytesGracefully(c, resp, responseBody)
 	if info == nil || info.ResponsesUsageInfo == nil || info.ResponsesUsageInfo.BuiltInTools == nil {
 		return &usage, nil
 	}
@@ -223,7 +223,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		if upstreamStreamErr != nil {
 			if !retryEnabled {
 				recordResponsesStreamRetryRecommendation(c)
-				sendResponsesStreamData(c, streamResponse, data)
+				sendResponsesStreamData(c, info, streamResponse, data)
 				return
 			}
 			if retryWriter != nil && !retryWriter.committed {
@@ -233,7 +233,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				return
 			}
 			sr.Error(upstreamStreamErr)
-			sendResponsesStreamData(c, streamResponse, data)
+			sendResponsesStreamData(c, info, streamResponse, data)
 			return
 		}
 
@@ -247,7 +247,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		}
 
-		sendResponsesStreamData(c, streamResponse, data)
+		sendResponsesStreamData(c, info, streamResponse, data)
 		addResponseAffinityAliases(streamResponse.Response)
 		if streamResponse.Item != nil {
 			addAffinityAliases(streamResponse.Item.ID)

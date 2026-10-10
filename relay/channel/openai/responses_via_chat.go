@@ -57,6 +57,7 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
+	responseBody = []byte(patchResponsesUsageForClient(string(responseBody), info, usage, false))
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 	return usage, nil
@@ -83,6 +84,10 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		if err != nil {
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 			return false
+		}
+		var streamResponse dto.ResponsesStreamResponse
+		if common.Unmarshal(data, &streamResponse) == nil && streamResponse.Response != nil && streamResponse.Response.Usage != nil {
+			data = []byte(patchResponsesUsageForClient(string(data), info, streamResponse.Response.Usage, true))
 		}
 		helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: event.Type}, string(data))
 		return true

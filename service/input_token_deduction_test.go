@@ -59,6 +59,48 @@ func TestApplyInputTokenDeductionOpenAIKeepsOriginalIndependent(t *testing.T) {
 	require.Equal(t, 500, original.PromptTokensDetails.TextTokens)
 }
 
+func TestAdjustClaudeUsageForClientDeductsOrdinaryThenCacheRead(t *testing.T) {
+	relayInfo := &relaycommon.RelayInfo{
+		UsingGroup:  "default",
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelSetting: dto.ChannelSettings{InputTokenDeduction: 490}},
+	}
+	original := &dto.ClaudeUsage{
+		InputTokens:          56,
+		CacheReadInputTokens: 450,
+		OutputTokens:         0,
+		BillingUsage:         dto.NewClaudeMessagesBillingUsage(&dto.ClaudeUsage{InputTokens: 999}),
+	}
+
+	adjusted := AdjustClaudeUsageForClient(relayInfo, original)
+
+	require.Zero(t, adjusted.InputTokens)
+	require.Equal(t, 16, adjusted.CacheReadInputTokens)
+	require.Zero(t, adjusted.OutputTokens)
+	require.Nil(t, adjusted.BillingUsage, "internal audit usage must not be exposed")
+	require.Equal(t, 56, original.InputTokens)
+	require.Equal(t, 450, original.CacheReadInputTokens)
+	require.NotNil(t, original.BillingUsage)
+
+	openAI := AdjustUsageForClient(relayInfo, &dto.Usage{BillingUsage: dto.NewClaudeMessagesBillingUsage(original)})
+	require.Zero(t, openAI.PromptTokens)
+	require.Equal(t, 16, openAI.PromptTokensDetails.CachedTokens)
+	require.Equal(t, 16, openAI.InputTokens)
+	require.Zero(t, openAI.OutputTokens)
+	require.Nil(t, openAI.BillingUsage)
+}
+
+func TestAdjustClaudeUsageForClientKeepsExplicitZeroGroupOverride(t *testing.T) {
+	relayInfo := &relaycommon.RelayInfo{
+		UsingGroup: "free-off",
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelSetting: dto.ChannelSettings{
+			InputTokenDeduction:        490,
+			InputTokenDeductionByGroup: map[string]int{"free-off": 0},
+		}},
+	}
+	original := &dto.ClaudeUsage{InputTokens: 56, CacheReadInputTokens: 450}
+	require.Same(t, original, AdjustClaudeUsageForClient(relayInfo, original))
+}
+
 func TestApplyInputTokenDeductionCacheOrderAndClaudeSplitConsistency(t *testing.T) {
 	original := &dto.Usage{
 		PromptTokens:     100,
@@ -257,6 +299,40 @@ func TestPostTextConsumeQuotaDeductsSQLiteBalanceAndConsumeLog(t *testing.T) {
 	require.Contains(t, log.Other, `"input_token_deduction_original_input_tokens":500`)
 	require.Contains(t, log.Other, `"input_token_deduction_applied":490`)
 	require.Equal(t, 500, original.PromptTokens, "the client-facing usage remains unchanged")
+}
+
+func TestPostTextConsumeQuotaDeductsClaudeCacheReadInSQLiteSettlement(t *testing.T) {
+	truncate(t)
+	seedUser(t, 71, 1000)
+	seedToken(t, 72, 71, "deduction-cache-key", 1000)
+	seedChannel(t, 73)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+	relayInfo := &relaycommon.RelayInfo{
+		UserId: 71, TokenId: 72, TokenKey: "deduction-cache-key", OriginModelName: "claude-test",
+		UsingGroup: "default", StartTime: time.Now(), FinalRequestRelayFormat: types.RelayFormatClaude,
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 73, ChannelSetting: dto.ChannelSettings{InputTokenDeduction: 490}},
+		PriceData: types.PriceData{
+			ModelRatio: 1, CompletionRatio: 1, CacheRatio: 0.5,
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	originalClaude := &dto.ClaudeUsage{InputTokens: 56, CacheReadInputTokens: 450, OutputTokens: 0}
+	original := &dto.Usage{BillingUsage: dto.NewClaudeMessagesBillingUsage(originalClaude)}
+
+	PostTextConsumeQuota(ctx, relayInfo, original, nil)
+
+	require.Equal(t, 992, getQuota(t, 71), "16 cache-read tokens at 0.5 ratio settle to quota 8")
+	require.Equal(t, 992, getTokenRemain(t, 72))
+	var log model.Log
+	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeConsume).First(&log).Error)
+	require.Zero(t, log.PromptTokens)
+	require.Equal(t, 8, log.Quota)
+	require.Contains(t, log.Other, `"cache_tokens":16`)
+	require.Contains(t, log.Other, `"input_tokens_total":16`)
+	require.Equal(t, 56, original.BillingUsage.ClaudeUsage.InputTokens)
+	require.Equal(t, 450, original.BillingUsage.ClaudeUsage.CacheReadInputTokens)
 }
 
 func TestPostTextConsumeQuotaAppliesDeductionBeforeFestivalSnapshot(t *testing.T) {

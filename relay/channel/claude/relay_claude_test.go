@@ -448,6 +448,76 @@ func TestHandleClaudeResponseDataPreservesRefusalWireSemantics(t *testing.T) {
 	}
 }
 
+func TestHandleClaudeResponseDataPublishesDeductedCacheUsageWithoutChangingSettlementUsage(t *testing.T) {
+	for _, format := range []types.RelayFormat{types.RelayFormatClaude, types.RelayFormatOpenAI} {
+		t.Run(string(format), func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			info := &relaycommon.RelayInfo{
+				RelayFormat:             format,
+				FinalRequestRelayFormat: types.RelayFormatClaude,
+				UsingGroup:              "default",
+				ChannelMeta: &relaycommon.ChannelMeta{
+					UpstreamModelName: "claude-test",
+					ChannelSetting:    dto.ChannelSettings{InputTokenDeduction: 490},
+				},
+			}
+			claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
+			response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header)}
+			data := []byte(`{"id":"msg_refusal","type":"message","role":"assistant","model":"claude-test","stop_reason":"refusal","output_config":{"effort":"medium"},"provider_extension":"kept","usage":{"input_tokens":56,"cache_read_input_tokens":450,"cache_creation_input_tokens":0,"output_tokens":0,"usage_extension":"kept","billing_usage":{"source":"must-not-leak"}}}`)
+
+			require.Nil(t, HandleClaudeResponseData(ctx, info, claudeInfo, response, data))
+			require.Equal(t, 56, claudeInfo.Usage.PromptTokens, "settlement must retain original usage")
+			require.Equal(t, 450, claudeInfo.Usage.PromptTokensDetails.CachedTokens)
+
+			if format == types.RelayFormatClaude {
+				var public map[string]interface{}
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &public))
+				usage := public["usage"].(map[string]interface{})
+				require.EqualValues(t, 0, usage["input_tokens"])
+				require.EqualValues(t, 16, usage["cache_read_input_tokens"])
+				require.EqualValues(t, 0, usage["output_tokens"])
+				require.Equal(t, "kept", usage["usage_extension"])
+				require.NotContains(t, usage, "billing_usage")
+				require.Equal(t, "kept", public["provider_extension"])
+				return
+			}
+
+			var public dto.OpenAITextResponse
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &public))
+			require.Equal(t, 16, public.Usage.PromptTokens)
+			require.Equal(t, 16, public.Usage.InputTokens)
+			require.Equal(t, 16, public.Usage.PromptTokensDetails.CachedTokens)
+			require.Zero(t, public.Usage.CompletionTokens)
+			require.Nil(t, public.Usage.BillingUsage)
+		})
+	}
+}
+
+func TestPatchClaudeStreamUsagePublishesDeductedCacheBuckets(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		UsingGroup:  "default",
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelSetting: dto.ChannelSettings{InputTokenDeduction: 490}},
+	}
+	start := `{"type":"message_start","message":{"id":"msg","type":"message","usage":{"input_tokens":56,"cache_read_input_tokens":450,"cache_creation_input_tokens":0,"output_tokens":0},"provider_extension":"kept"}}`
+	patchedStart := patchClaudeResponseUsageForClient(start, info, &dto.ClaudeUsage{InputTokens: 56, CacheReadInputTokens: 450}, true)
+	var startEnvelope map[string]interface{}
+	require.NoError(t, common.UnmarshalJsonStr(patchedStart, &startEnvelope))
+	startUsage := startEnvelope["message"].(map[string]interface{})["usage"].(map[string]interface{})
+	require.EqualValues(t, 0, startUsage["input_tokens"])
+	require.EqualValues(t, 16, startUsage["cache_read_input_tokens"])
+
+	delta := `{"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":0,"cache_read_input_tokens":450,"input_tokens":56}}`
+	patchedDelta := patchClaudeResponseUsageForClient(delta, info, &dto.ClaudeUsage{InputTokens: 56, CacheReadInputTokens: 450}, false)
+	var deltaEnvelope map[string]interface{}
+	require.NoError(t, common.UnmarshalJsonStr(patchedDelta, &deltaEnvelope))
+	deltaUsage := deltaEnvelope["usage"].(map[string]interface{})
+	require.EqualValues(t, 0, deltaUsage["input_tokens"])
+	require.EqualValues(t, 16, deltaUsage["cache_read_input_tokens"])
+	require.EqualValues(t, 0, deltaUsage["output_tokens"])
+}
+
 func TestHandleStreamResponseDataCollectsRefusalExplanation(t *testing.T) {
 	ctx, info := newClaudeRefusalUsageTestContext(t)
 	claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
