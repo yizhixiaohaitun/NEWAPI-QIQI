@@ -113,7 +113,7 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 
 - `dto/claude.go#ClaudeResponse` / `ClaudeStopDetails`：解析上游非流式 `stop_reason` 与可选 `stop_details.explanation`；缺少解释时不生成替代文案。
 - `service/relayconvert/internal/claude_messages/to_oai_chat_resp.go#ResponseClaude2OpenAI`：仅在明确 `refusal`、没有正常正文且解释非空时，将上游解释逐字写入 OpenAI `message.refusal`，并按既有流式兼容语义同步给只读取 `message.content` 的客户端；已有正文、普通 `end_turn` 不受影响。
-- `relay/channel/claude/relay-claude.go#HandleClaudeResponseData`：OpenAI 格式调用上述转换；Claude 原生格式继续直接透传上游响应字节。
+- `relay/channel/claude/relay-claude.go#HandleClaudeResponseData`：OpenAI 格式调用上述转换；Claude 原生格式无减免配置时继续直接透传上游响应字节；配置固定输入减免时仅按下述公开 usage 规则同步计数，不修改正文或拒绝解释。
 - 回归入口：`service/relayconvert/internal/claude_messages/to_oai_chat_resp_test.go` 覆盖精确空拒绝、解释逐字保留且不重复、已有正文和普通结束；`relay/channel/claude/relay_claude_test.go` 从真实非流式 handler 覆盖 OpenAI 可见性与 Claude 原生字节不变。
 
 ### Auto 分组重试选择链路
@@ -129,7 +129,7 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - `model/channel.go#ValidateSettings`：拒绝默认值或分组值中的负数；设置沿现有渠道缓存和请求上下文传递，不新增请求级数据库查询。
 - `service/input_token_deduction.go`：从归一化计费用量创建独立副本，仅减文本输入；顺序为普通文本、cache read、cache write（5m 后 1h），下限为零，保持缓存明细一致，不改输出、图像或音频。`AdjustUsageForClient` / `AdjustClaudeUsageForClient` 将同一规则应用到独立的公开副本并移除内部 `billing_usage`，结算仍接收原始 usage，避免二次扣减。
 - `service/text_quota.go#PostTextConsumeQuota`：普通倍率、cache read/write、tiered 参数、最终结算和消费日志共用扣减后的计费用量；固定按次价格不因 token 减免消失。管理员日志 `admin_info` 保存原文本输入和实际减免，普通日志仅显示扣后输入。
-- 对外 usage：`relay/channel/claude/relay-claude.go` 覆盖 Claude 原生与 OpenAI 兼容的流/非流 usage；`relay/channel/openai/{relay-openai.go,helper.go,usage.go,relay_responses.go,responses_via_chat.go}` 覆盖 Chat Completions、Responses 及协议转换流/非流写出。公开 usage 的总量、`prompt_cache_hit_tokens`、`text_tokens`、cache read/write、`cached_creation_tokens`、Claude 5m/1h 别名和嵌套 cache creation 明细同步减免；Responses 在写出与结算前从完整 `input_tokens_details` 归一化独立副本。未知上游字段、`cost`、正常正文/拒绝语义保持不变，内部审计快照不外发。
+- 对外 usage：`relay/channel/claude/relay-claude.go` 覆盖 Claude 原生与 OpenAI 兼容的流/非流 usage；`relay/channel/openai/{relay-openai.go,helper.go,usage.go,relay_responses.go,responses_via_chat.go}` 覆盖 Chat Completions、Responses 及协议转换流/非流写出。公开 usage 的总量、`prompt_cache_hit_tokens`、`text_tokens`、cache read/write、`cached_creation_tokens`、Claude 5m/1h 别名和嵌套 cache creation 明细同步减免；Responses 在写出与结算前从完整 `input_tokens_details` 归一化独立副本。公开 JSON 使用 `json.RawMessage` 定点改写已支持的计数，顶层 `usage.cached_tokens/cache_write_tokens/cached_creation_tokens`、`choices[].usage.cached_tokens` 与 `timings.cache_n` 也同步；未知字段（包括超出 float64 精度的大整数和高精度 `cost`）、正常正文/拒绝语义保持不变，内部审计快照不外发。回归 `relay/channel/openai/input_token_deduction_usage_test.go`、`relay/channel/openai/relay_responses_test.go` 和 `relay/channel/claude/relay_claude_test.go` 覆盖真实流/非流写出、这些别名及精确数值保留。
 - 默认主题入口：`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 在高级设置中编辑渠道默认和当前分组减免，已有减免配置自动展开；`web/default/src/features/channels/lib/channel-form.ts` 负责完整加载、校验及保存，`web/default/src/features/channels/lib/input-token-deduction.ts` 保留未知 setting 字段并区分留空继承与显式 `0`。
 - 经典主题入口：`web/classic/src/components/table/channels/modals/EditChannelModal.jsx` 与同目录 `inputTokenDeduction.js` 提供同等编辑及加载保存语义，不更改已有配置结构。
 - 回归入口：`service/input_token_deduction_test.go`（含 SQLite 余额/消费日志、缓存与协议语义、最终分组、tiered/按次边界和 benchmark）、`model/channel_input_token_deduction_test.go`（配置验证）、`web/default/src/features/channels/lib/input-token-deduction.test.ts`（留空/零/未知配置保留和整数校验）。

@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/json"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -8,49 +9,106 @@ import (
 	"github.com/QuantumNous/new-api/service"
 )
 
-func patchOpenAIUsageMapForClient(raw map[string]interface{}, adjusted *dto.Usage) {
+func patchOpenAIUsageMapForClient(raw map[string]json.RawMessage, adjusted *dto.Usage) {
 	if raw == nil || adjusted == nil {
 		return
 	}
-	raw["prompt_tokens"] = adjusted.PromptTokens
-	raw["completion_tokens"] = adjusted.CompletionTokens
-	raw["total_tokens"] = adjusted.TotalTokens
+	setPublicUsageValue(raw, "prompt_tokens", adjusted.PromptTokens)
+	setPublicUsageValue(raw, "completion_tokens", adjusted.CompletionTokens)
+	setPublicUsageValue(raw, "total_tokens", adjusted.TotalTokens)
 	if _, ok := raw["input_tokens"]; ok || adjusted.InputTokens != 0 {
-		raw["input_tokens"] = adjusted.InputTokens
+		setPublicUsageValue(raw, "input_tokens", adjusted.InputTokens)
 	}
 	if _, ok := raw["output_tokens"]; ok || adjusted.OutputTokens != 0 {
-		raw["output_tokens"] = adjusted.OutputTokens
+		setPublicUsageValue(raw, "output_tokens", adjusted.OutputTokens)
 	}
 	if _, exists := raw["prompt_cache_hit_tokens"]; exists {
-		raw["prompt_cache_hit_tokens"] = adjusted.PromptTokensDetails.CachedTokens
+		setPublicUsageValue(raw, "prompt_cache_hit_tokens", adjusted.PromptTokensDetails.CachedTokens)
 	}
 	if _, exists := raw["claude_cache_creation_5_m_tokens"]; exists {
-		raw["claude_cache_creation_5_m_tokens"] = adjusted.ClaudeCacheCreation5mTokens
+		setPublicUsageValue(raw, "claude_cache_creation_5_m_tokens", adjusted.ClaudeCacheCreation5mTokens)
 	}
 	if _, exists := raw["claude_cache_creation_1_h_tokens"]; exists {
-		raw["claude_cache_creation_1_h_tokens"] = adjusted.ClaudeCacheCreation1hTokens
+		setPublicUsageValue(raw, "claude_cache_creation_1_h_tokens", adjusted.ClaudeCacheCreation1hTokens)
 	}
-	patchOpenAIInputTokenDetailsForClient(raw["prompt_tokens_details"], adjusted.PromptTokensDetails)
+	patchOpenAIInputTokenDetailsForClient(raw, "prompt_tokens_details", adjusted.PromptTokensDetails)
+	inputDetails := adjusted.PromptTokensDetails
 	if adjusted.InputTokensDetails != nil {
-		patchOpenAIInputTokenDetailsForClient(raw["input_tokens_details"], *adjusted.InputTokensDetails)
+		inputDetails = *adjusted.InputTokensDetails
+	}
+	patchOpenAIInputTokenDetailsForClient(raw, "input_tokens_details", inputDetails)
+	for key, value := range map[string]int{
+		"cached_tokens":          adjusted.PromptTokensDetails.CachedTokens,
+		"cache_write_tokens":     adjusted.PromptTokensDetails.CacheWriteTokens,
+		"cached_creation_tokens": adjusted.PromptTokensDetails.CachedCreationTokens,
+	} {
+		if _, exists := raw[key]; exists {
+			setPublicUsageValue(raw, key, value)
+		}
 	}
 	delete(raw, "billing_usage")
 }
 
-func patchOpenAIInputTokenDetailsForClient(raw interface{}, adjusted dto.InputTokenDetails) {
-	details, ok := raw.(map[string]interface{})
+// RawMessage preserves unrelated provider fields, including integers larger than
+// float64's exact range. Only recognized usage counters are replaced.
+func setPublicUsageValue(raw map[string]json.RawMessage, key string, value any) {
+	encoded, err := common.Marshal(value)
+	if err == nil {
+		raw[key] = encoded
+	}
+}
+
+func publicUsageObject(data json.RawMessage) (map[string]json.RawMessage, bool) {
+	var object map[string]json.RawMessage
+	if err := common.Unmarshal(data, &object); err != nil || object == nil {
+		return nil, false
+	}
+	return object, true
+}
+
+func patchOpenAIInputTokenDetailsForClient(parent map[string]json.RawMessage, key string, adjusted dto.InputTokenDetails) {
+	details, ok := publicUsageObject(parent[key])
 	if !ok {
 		return
 	}
-	details["cached_tokens"] = adjusted.CachedTokens
-	if _, exists := details["cache_write_tokens"]; exists {
-		details["cache_write_tokens"] = adjusted.CacheWriteTokens
+	setPublicUsageValue(details, "cached_tokens", adjusted.CachedTokens)
+	for name, value := range map[string]int{
+		"cache_write_tokens":     adjusted.CacheWriteTokens,
+		"cached_creation_tokens": adjusted.CachedCreationTokens,
+		"text_tokens":            adjusted.TextTokens,
+	} {
+		if _, exists := details[name]; exists {
+			setPublicUsageValue(details, name, value)
+		}
 	}
-	if _, exists := details["cached_creation_tokens"]; exists {
-		details["cached_creation_tokens"] = adjusted.CachedCreationTokens
+	setPublicUsageValue(parent, key, details)
+}
+
+// These non-standard counters are already supported for settlement. Synchronize
+// their public copies too, without modifying any other choice or timing field.
+func patchProviderCacheAliasesForClient(envelope map[string]json.RawMessage, cached int) {
+	if timings, ok := publicUsageObject(envelope["timings"]); ok {
+		if _, exists := timings["cache_n"]; exists {
+			setPublicUsageValue(timings, "cache_n", cached)
+			setPublicUsageValue(envelope, "timings", timings)
+		}
 	}
-	if _, exists := details["text_tokens"]; exists {
-		details["text_tokens"] = adjusted.TextTokens
+	var choices []map[string]json.RawMessage
+	if err := common.Unmarshal(envelope["choices"], &choices); err != nil {
+		return
+	}
+	changed := false
+	for _, choice := range choices {
+		if usage, ok := publicUsageObject(choice["usage"]); ok {
+			if _, exists := usage["cached_tokens"]; exists {
+				setPublicUsageValue(usage, "cached_tokens", cached)
+				setPublicUsageValue(choice, "usage", usage)
+				changed = true
+			}
+		}
+	}
+	if changed {
+		setPublicUsageValue(envelope, "choices", choices)
 	}
 }
 
@@ -88,15 +146,17 @@ func patchOpenAIResponseUsageForClient(data string, info *relaycommon.RelayInfo,
 	if adjusted == normalized {
 		return data
 	}
-	var envelope map[string]interface{}
+	var envelope map[string]json.RawMessage
 	if err := common.UnmarshalJsonStr(data, &envelope); err != nil {
 		return data
 	}
-	rawUsage, ok := envelope["usage"].(map[string]interface{})
+	rawUsage, ok := publicUsageObject(envelope["usage"])
 	if !ok {
 		return data
 	}
 	patchOpenAIUsageMapForClient(rawUsage, adjusted)
+	setPublicUsageValue(envelope, "usage", rawUsage)
+	patchProviderCacheAliasesForClient(envelope, adjusted.PromptTokensDetails.CachedTokens)
 	encoded, err := common.Marshal(envelope)
 	if err != nil {
 		return data
@@ -110,35 +170,32 @@ func patchResponsesUsageForClient(data string, info *relaycommon.RelayInfo, usag
 	if adjusted == normalized || adjusted == nil {
 		return data
 	}
-	var envelope map[string]interface{}
+	var envelope map[string]json.RawMessage
 	if err := common.UnmarshalJsonStr(data, &envelope); err != nil {
 		return data
 	}
 	target := envelope
 	if nestedResponse {
-		response, ok := envelope["response"].(map[string]interface{})
+		response, ok := publicUsageObject(envelope["response"])
 		if !ok {
 			return data
 		}
 		target = response
 	}
-	rawUsage, ok := target["usage"].(map[string]interface{})
+	rawUsage, ok := publicUsageObject(target["usage"])
 	if !ok {
 		return data
 	}
 	patchOpenAIUsageMapForClient(rawUsage, adjusted)
 	// Responses names its aggregate fields input_tokens/output_tokens. Keep the
 	// compatibility aliases coherent when an upstream also emits them.
-	rawUsage["input_tokens"] = adjusted.PromptTokens
-	rawUsage["output_tokens"] = adjusted.CompletionTokens
-	if adjusted.InputTokensDetails == nil {
-		adjusted.InputTokensDetails = &adjusted.PromptTokensDetails
-	}
-	if details, ok := rawUsage["input_tokens_details"].(map[string]interface{}); ok {
-		details["cached_tokens"] = adjusted.PromptTokensDetails.CachedTokens
-		if _, exists := details["cache_write_tokens"]; exists {
-			details["cache_write_tokens"] = adjusted.PromptTokensDetails.CacheWriteTokens
-		}
+	setPublicUsageValue(rawUsage, "input_tokens", adjusted.PromptTokens)
+	setPublicUsageValue(rawUsage, "output_tokens", adjusted.CompletionTokens)
+	patchOpenAIInputTokenDetailsForClient(rawUsage, "input_tokens_details", adjusted.PromptTokensDetails)
+	setPublicUsageValue(target, "usage", rawUsage)
+	patchProviderCacheAliasesForClient(target, adjusted.PromptTokensDetails.CachedTokens)
+	if nestedResponse {
+		setPublicUsageValue(envelope, "response", target)
 	}
 	encoded, err := common.Marshal(envelope)
 	if err != nil {

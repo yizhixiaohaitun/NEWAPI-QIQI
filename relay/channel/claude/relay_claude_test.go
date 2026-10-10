@@ -2,6 +2,7 @@ package claude
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -667,4 +668,33 @@ func TestOpenAIChatRequestToClaudeMessages_ClaudeOpus48ThinkingUsesAdaptiveHighE
 	require.Nil(t, claudeRequest.Temperature)
 	require.Nil(t, claudeRequest.TopP)
 	require.Nil(t, claudeRequest.TopK)
+}
+
+func TestClaudePublicUsagePatchPreservesExactProviderNumbers(t *testing.T) {
+	info := &relaycommon.RelayInfo{UsingGroup: "default", ChannelMeta: &relaycommon.ChannelMeta{ChannelSetting: dto.ChannelSettings{InputTokenDeduction: 490}}}
+	original := &dto.ClaudeUsage{InputTokens: 56, CacheReadInputTokens: 450}
+	for _, nested := range []bool{false, true} {
+		data := `{"id":9007199254740993123,"usage":{"input_tokens":56,"cache_read_input_tokens":450,"output_tokens":0,"unknown":9007199254740993123,"cost":1.234567890123456789,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0,"unknown":9007199254740993123}}}`
+		if nested {
+			data = `{"type":"message_start","message":` + data + "}"
+		}
+		patched := patchClaudeResponseUsageForClient(data, info, original, nested)
+		var envelope map[string]json.RawMessage
+		require.NoError(t, common.UnmarshalJsonStr(patched, &envelope))
+		if nested {
+			var message map[string]json.RawMessage
+			require.NoError(t, common.Unmarshal(envelope["message"], &message))
+			envelope = message
+		}
+		require.Equal(t, "9007199254740993123", string(envelope["id"]))
+		var usage map[string]json.RawMessage
+		require.NoError(t, common.Unmarshal(envelope["usage"], &usage))
+		require.Equal(t, "16", string(usage["cache_read_input_tokens"]))
+		require.Equal(t, "9007199254740993123", string(usage["unknown"]))
+		require.Equal(t, "1.234567890123456789", string(usage["cost"]))
+		var creation map[string]json.RawMessage
+		require.NoError(t, common.Unmarshal(usage["cache_creation"], &creation))
+		require.Equal(t, "9007199254740993123", string(creation["unknown"]))
+	}
+	require.Equal(t, 450, original.CacheReadInputTokens)
 }

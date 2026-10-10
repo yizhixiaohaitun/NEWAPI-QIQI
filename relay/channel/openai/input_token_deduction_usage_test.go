@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -94,7 +95,7 @@ func TestOaiStreamHandlerPublishesDeductedFinalUsageAliasesOnce(t *testing.T) {
 	stream := strings.Join([]string{
 		`data: {"id":"chat_stream","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[{"index":0,"delta":{"content":""}}]}`,
 		``,
-		`data: {"id":"chat_stream","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[],"usage":{"prompt_tokens":506,"completion_tokens":0,"total_tokens":506,"prompt_cache_hit_tokens":450,"prompt_tokens_details":{"cached_tokens":450,"text_tokens":506}}}`,
+		`data: {"id":"chat_stream","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[{"index":0,"delta":{},"usage":{"cached_tokens":450}}],"timings":{"cache_n":450},"usage":{"cached_tokens":450,"prompt_tokens":506,"completion_tokens":0,"total_tokens":506,"prompt_cache_hit_tokens":450,"prompt_tokens_details":{"cached_tokens":450,"text_tokens":506}}}`,
 		``,
 		`data: [DONE]`,
 		``,
@@ -110,7 +111,9 @@ func TestOaiStreamHandlerPublishesDeductedFinalUsageAliasesOnce(t *testing.T) {
 	require.Nil(t, apiErr)
 	require.Equal(t, 506, settlement.PromptTokens)
 	require.Equal(t, 450, settlement.PromptCacheHitTokens)
+	require.Equal(t, 450, settlement.PromptTokensDetails.CachedTokens)
 	output := recorder.Body.String()
+	assertDeductedProviderAliasesInSSE(t, output, false)
 	require.Contains(t, output, `"prompt_tokens":16`)
 	require.Contains(t, output, `"prompt_cache_hit_tokens":16`)
 	require.Contains(t, output, `"cached_tokens":16`)
@@ -215,7 +218,14 @@ func TestPatchOpenAIUsageMapForClientSynchronizesCacheWriteAndTextAliases(t *tes
 		ClaudeCacheCreation1hTokens: 15,
 	}
 
-	patchOpenAIUsageMapForClient(raw, adjusted)
+	encoded, err := common.Marshal(raw)
+	require.NoError(t, err)
+	var rawJSON map[string]json.RawMessage
+	require.NoError(t, common.Unmarshal(encoded, &rawJSON))
+	patchOpenAIUsageMapForClient(rawJSON, adjusted)
+	encoded, err = common.Marshal(rawJSON)
+	require.NoError(t, err)
+	require.NoError(t, common.Unmarshal(encoded, &raw))
 
 	require.EqualValues(t, 0, raw["prompt_cache_hit_tokens"])
 	require.EqualValues(t, 0, raw["claude_cache_creation_5_m_tokens"])
@@ -234,4 +244,84 @@ func TestPublicUsagePatchNoConfigurationKeepsBytes(t *testing.T) {
 	data := `{"usage":{"prompt_tokens":506,"completion_tokens":0,"total_tokens":506,"prompt_tokens_details":{"cached_tokens":450}}}`
 	usage := &dto.Usage{PromptTokens: 506, TotalTokens: 506, PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 450}}
 	require.Equal(t, data, patchOpenAIResponseUsageForClient(data, &relaycommon.RelayInfo{}, usage))
+}
+
+func TestPublicUsagePatchPreservesExactProviderNumbersAndCacheAliases(t *testing.T) {
+	const large = "9007199254740993123"
+	usage := &dto.Usage{PromptTokens: 506, TotalTokens: 506, PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 450, TextTokens: 506}}
+	for _, nested := range []bool{false, true} {
+		data := `{"id":9007199254740993123,"choices":[{"index":0,"usage":{"cached_tokens":450,"unknown":9007199254740993123}}],"timings":{"cache_n":450,"unknown":9007199254740993123},"usage":{"prompt_tokens":506,"input_tokens":506,"total_tokens":506,"cached_tokens":450,"prompt_cache_hit_tokens":450,"unknown":9007199254740993123,"cost":1.234567890123456789,"prompt_tokens_details":{"cached_tokens":450,"text_tokens":506,"unknown":9007199254740993123},"input_tokens_details":{"cached_tokens":450,"text_tokens":506,"unknown":9007199254740993123}}}`
+		var patched string
+		if nested {
+			data = `{"type":"response.completed","unknown":9007199254740993123,"response":` + data + "}"
+			patched = patchResponsesUsageForClient(data, deductionUsageTestInfo(), usage, true)
+		} else {
+			patched = patchOpenAIResponseUsageForClient(data, deductionUsageTestInfo(), usage)
+		}
+		var envelope map[string]json.RawMessage
+		require.NoError(t, common.UnmarshalJsonStr(patched, &envelope))
+		if nested {
+			require.Equal(t, large, string(envelope["unknown"]))
+			envelope, _ = publicUsageObject(envelope["response"])
+		}
+		require.Equal(t, large, string(envelope["id"]))
+		public, ok := publicUsageObject(envelope["usage"])
+		require.True(t, ok)
+		require.Equal(t, "16", string(public["cached_tokens"]))
+		require.Equal(t, large, string(public["unknown"]))
+		require.Equal(t, "1.234567890123456789", string(public["cost"]))
+		details, _ := publicUsageObject(public["prompt_tokens_details"])
+		require.Equal(t, large, string(details["unknown"]))
+		inputDetails, _ := publicUsageObject(public["input_tokens_details"])
+		require.Equal(t, "16", string(inputDetails["cached_tokens"]))
+		require.Equal(t, "16", string(inputDetails["text_tokens"]))
+		require.Equal(t, large, string(inputDetails["unknown"]))
+		timings, _ := publicUsageObject(envelope["timings"])
+		require.Equal(t, "16", string(timings["cache_n"]))
+		require.Equal(t, large, string(timings["unknown"]))
+		var choices []map[string]json.RawMessage
+		require.NoError(t, common.Unmarshal(envelope["choices"], &choices))
+		choiceUsage, _ := publicUsageObject(choices[0]["usage"])
+		require.Equal(t, "16", string(choiceUsage["cached_tokens"]))
+		require.Equal(t, large, string(choiceUsage["unknown"]))
+	}
+	require.Equal(t, 506, usage.PromptTokens)
+}
+
+// Exercise real handler output, not just the isolated JSON patch helper.
+func assertDeductedProviderAliasesInSSE(t *testing.T, output string, nested bool) {
+	t.Helper()
+	matched := 0
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var envelope map[string]json.RawMessage
+		if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &envelope) != nil {
+			continue
+		}
+		if nested {
+			var response map[string]json.RawMessage
+			if json.Unmarshal(envelope["response"], &response) != nil {
+				continue
+			}
+			envelope = response
+		}
+		if len(envelope["usage"]) == 0 {
+			continue
+		}
+		matched++
+		var usage, timings map[string]json.RawMessage
+		var choices []map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(envelope["usage"], &usage))
+		require.NoError(t, json.Unmarshal(envelope["timings"], &timings))
+		require.NoError(t, json.Unmarshal(envelope["choices"], &choices))
+		require.Equal(t, "16", string(usage["cached_tokens"]))
+		require.Equal(t, "16", string(timings["cache_n"]))
+		require.Len(t, choices, 1)
+		var choiceUsage map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(choices[0]["usage"], &choiceUsage))
+		require.Equal(t, "16", string(choiceUsage["cached_tokens"]))
+	}
+	require.Equal(t, 1, matched, "one public final usage event, not a second deduction")
 }

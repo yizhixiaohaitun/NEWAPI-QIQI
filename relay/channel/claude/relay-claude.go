@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -144,23 +145,31 @@ func patchClaudeMessageDeltaUsageData(data string, usage *dto.ClaudeUsage) strin
 	return relayconvert.PatchClaudeMessageDeltaUsageData(data, usage)
 }
 
-func patchClaudeUsageObjectForClient(raw map[string]interface{}, adjusted *dto.ClaudeUsage) {
+func patchClaudeUsageObjectForClient(raw map[string]json.RawMessage, adjusted *dto.ClaudeUsage) {
 	if raw == nil || adjusted == nil {
 		return
 	}
-	raw["input_tokens"] = adjusted.InputTokens
-	raw["cache_read_input_tokens"] = adjusted.CacheReadInputTokens
-	raw["cache_creation_input_tokens"] = adjusted.CacheCreationInputTokens
-	raw["output_tokens"] = adjusted.OutputTokens
-	if _, ok := raw["claude_cache_creation_5_m_tokens"]; ok {
-		raw["claude_cache_creation_5_m_tokens"] = adjusted.ClaudeCacheCreation5mTokens
+	for key, value := range map[string]int{
+		"input_tokens":                adjusted.InputTokens,
+		"cache_read_input_tokens":     adjusted.CacheReadInputTokens,
+		"cache_creation_input_tokens": adjusted.CacheCreationInputTokens,
+		"output_tokens":               adjusted.OutputTokens,
+	} {
+		raw[key], _ = common.Marshal(value)
 	}
-	if _, ok := raw["claude_cache_creation_1_h_tokens"]; ok {
-		raw["claude_cache_creation_1_h_tokens"] = adjusted.ClaudeCacheCreation1hTokens
+	for key, value := range map[string]int{
+		"claude_cache_creation_5_m_tokens": adjusted.ClaudeCacheCreation5mTokens,
+		"claude_cache_creation_1_h_tokens": adjusted.ClaudeCacheCreation1hTokens,
+	} {
+		if _, exists := raw[key]; exists {
+			raw[key], _ = common.Marshal(value)
+		}
 	}
-	if creation, ok := raw["cache_creation"].(map[string]interface{}); ok {
-		creation["ephemeral_5m_input_tokens"] = adjusted.GetCacheCreation5mTokens()
-		creation["ephemeral_1h_input_tokens"] = adjusted.GetCacheCreation1hTokens()
+	var creation map[string]json.RawMessage
+	if common.Unmarshal(raw["cache_creation"], &creation) == nil && creation != nil {
+		creation["ephemeral_5m_input_tokens"], _ = common.Marshal(adjusted.GetCacheCreation5mTokens())
+		creation["ephemeral_1h_input_tokens"], _ = common.Marshal(adjusted.GetCacheCreation1hTokens())
+		raw["cache_creation"], _ = common.Marshal(creation)
 	}
 	delete(raw, "billing_usage")
 }
@@ -170,23 +179,27 @@ func patchClaudeResponseUsageForClient(data string, info *relaycommon.RelayInfo,
 	if adjusted == usage {
 		return data
 	}
-	var envelope map[string]interface{}
+	var envelope map[string]json.RawMessage
 	if err := common.UnmarshalJsonStr(data, &envelope); err != nil {
 		return data
 	}
 	target := envelope
 	if nestedMessage {
-		message, ok := envelope["message"].(map[string]interface{})
-		if !ok {
+		var message map[string]json.RawMessage
+		if err := common.Unmarshal(envelope["message"], &message); err != nil || message == nil {
 			return data
 		}
 		target = message
 	}
-	rawUsage, ok := target["usage"].(map[string]interface{})
-	if !ok {
+	var rawUsage map[string]json.RawMessage
+	if err := common.Unmarshal(target["usage"], &rawUsage); err != nil || rawUsage == nil {
 		return data
 	}
 	patchClaudeUsageObjectForClient(rawUsage, adjusted)
+	target["usage"], _ = common.Marshal(rawUsage)
+	if nestedMessage {
+		envelope["message"], _ = common.Marshal(target)
+	}
 	encoded, err := common.Marshal(envelope)
 	if err != nil {
 		return data

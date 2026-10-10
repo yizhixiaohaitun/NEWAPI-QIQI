@@ -116,7 +116,7 @@ func TestOaiResponsesStreamHandlerPublishesDeductedUsageAliasesOnce(t *testing.T
 		`data: {"type":"response.output_text.delta","delta":""}`,
 		``,
 		`event: response.completed`,
-		`data: {"type":"response.completed","response":{"id":"resp_cache","status":"completed","usage":{"input_tokens":506,"output_tokens":0,"total_tokens":506,"prompt_cache_hit_tokens":450,"input_tokens_details":{"cached_tokens":450,"cached_creation_tokens":0,"cache_write_tokens":0,"text_tokens":506}}}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_cache","status":"completed","choices":[{"index":0,"usage":{"cached_tokens":450}}],"timings":{"cache_n":450},"usage":{"cached_tokens":450,"input_tokens":506,"output_tokens":0,"total_tokens":506,"prompt_cache_hit_tokens":450,"input_tokens_details":{"cached_tokens":450,"cached_creation_tokens":0,"cache_write_tokens":0,"text_tokens":506}}}}`,
 		``,
 	}, "\n")
 	c, recorder, resp, info := newResponsesStreamTestContext(t, body)
@@ -130,6 +130,7 @@ func TestOaiResponsesStreamHandlerPublishesDeductedUsageAliasesOnce(t *testing.T
 	require.Equal(t, 506, usage.PromptTokens, "settlement keeps the original usage")
 	require.Equal(t, 450, usage.PromptTokensDetails.CachedTokens)
 	output := recorder.Body.String()
+	assertDeductedProviderAliasesInSSE(t, output, true)
 	require.Contains(t, output, `"input_tokens":16`)
 	require.Contains(t, output, `"prompt_cache_hit_tokens":16`)
 	require.Contains(t, output, `"cached_tokens":16`)
