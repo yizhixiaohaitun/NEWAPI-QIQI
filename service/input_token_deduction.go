@@ -64,6 +64,9 @@ func applyInputTokenDeduction(relayInfo *relaycommon.RelayInfo, usage *dto.Usage
 	cacheReadDeduction := deductionMinInt(remaining, cacheReadTokens)
 	remaining -= cacheReadDeduction
 	adjusted.PromptTokensDetails.CachedTokens = nonNegative(cacheReadTokens - cacheReadDeduction)
+	if adjusted.PromptCacheHitTokens != 0 {
+		adjusted.PromptCacheHitTokens = adjusted.PromptTokensDetails.CachedTokens
+	}
 	if !cachesOutsidePrompt {
 		adjusted.PromptTokens = nonNegative(adjusted.PromptTokens - cacheReadDeduction)
 	}
@@ -139,6 +142,9 @@ func AdjustUsageForClient(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) *d
 	}
 	adjusted, _ := applyInputTokenDeduction(relayInfo, effectiveBillingUsage(usage), requested)
 	if adjusted != nil {
+		if usage.PromptCacheHitTokens != 0 {
+			adjusted.PromptCacheHitTokens = adjusted.PromptTokensDetails.CachedTokens
+		}
 		adjusted.BillingUsage = nil
 	}
 	return adjusted

@@ -21,25 +21,49 @@ func patchOpenAIUsageMapForClient(raw map[string]interface{}, adjusted *dto.Usag
 	if _, ok := raw["output_tokens"]; ok || adjusted.OutputTokens != 0 {
 		raw["output_tokens"] = adjusted.OutputTokens
 	}
-	if details, ok := raw["prompt_tokens_details"].(map[string]interface{}); ok {
-		details["cached_tokens"] = adjusted.PromptTokensDetails.CachedTokens
-		if _, exists := details["cache_write_tokens"]; exists {
-			details["cache_write_tokens"] = adjusted.PromptTokensDetails.CacheWriteTokens
-		}
-		if _, exists := details["cached_creation_tokens"]; exists {
-			details["cached_creation_tokens"] = adjusted.PromptTokensDetails.CachedCreationTokens
-		}
+	if _, exists := raw["prompt_cache_hit_tokens"]; exists {
+		raw["prompt_cache_hit_tokens"] = adjusted.PromptTokensDetails.CachedTokens
 	}
-	if details, ok := raw["input_tokens_details"].(map[string]interface{}); ok && adjusted.InputTokensDetails != nil {
-		details["cached_tokens"] = adjusted.InputTokensDetails.CachedTokens
-		if _, exists := details["cache_write_tokens"]; exists {
-			details["cache_write_tokens"] = adjusted.InputTokensDetails.CacheWriteTokens
-		}
-		if _, exists := details["cached_creation_tokens"]; exists {
-			details["cached_creation_tokens"] = adjusted.InputTokensDetails.CachedCreationTokens
-		}
+	if _, exists := raw["claude_cache_creation_5_m_tokens"]; exists {
+		raw["claude_cache_creation_5_m_tokens"] = adjusted.ClaudeCacheCreation5mTokens
+	}
+	if _, exists := raw["claude_cache_creation_1_h_tokens"]; exists {
+		raw["claude_cache_creation_1_h_tokens"] = adjusted.ClaudeCacheCreation1hTokens
+	}
+	patchOpenAIInputTokenDetailsForClient(raw["prompt_tokens_details"], adjusted.PromptTokensDetails)
+	if adjusted.InputTokensDetails != nil {
+		patchOpenAIInputTokenDetailsForClient(raw["input_tokens_details"], *adjusted.InputTokensDetails)
 	}
 	delete(raw, "billing_usage")
+}
+
+func patchOpenAIInputTokenDetailsForClient(raw interface{}, adjusted dto.InputTokenDetails) {
+	details, ok := raw.(map[string]interface{})
+	if !ok {
+		return
+	}
+	details["cached_tokens"] = adjusted.CachedTokens
+	if _, exists := details["cache_write_tokens"]; exists {
+		details["cache_write_tokens"] = adjusted.CacheWriteTokens
+	}
+	if _, exists := details["cached_creation_tokens"]; exists {
+		details["cached_creation_tokens"] = adjusted.CachedCreationTokens
+	}
+	if _, exists := details["text_tokens"]; exists {
+		details["text_tokens"] = adjusted.TextTokens
+	}
+}
+
+func normalizedResponsesUsage(usage *dto.Usage) dto.Usage {
+	if usage == nil {
+		return dto.Usage{}
+	}
+	clone := *usage
+	if usage.InputTokensDetails != nil {
+		details := *usage.InputTokensDetails
+		clone.InputTokensDetails = &details
+	}
+	return *normalizedClientUsage(&clone)
 }
 
 func normalizedClientUsage(usage *dto.Usage) *dto.Usage {

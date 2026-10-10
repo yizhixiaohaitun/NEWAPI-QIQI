@@ -81,12 +81,18 @@ func TestAdjustClaudeUsageForClientDeductsOrdinaryThenCacheRead(t *testing.T) {
 	require.Equal(t, 450, original.CacheReadInputTokens)
 	require.NotNil(t, original.BillingUsage)
 
-	openAI := AdjustUsageForClient(relayInfo, &dto.Usage{BillingUsage: dto.NewClaudeMessagesBillingUsage(original)})
+	openAIOriginal := &dto.Usage{
+		PromptCacheHitTokens: 450,
+		BillingUsage:         dto.NewClaudeMessagesBillingUsage(original),
+	}
+	openAI := AdjustUsageForClient(relayInfo, openAIOriginal)
 	require.Zero(t, openAI.PromptTokens)
 	require.Equal(t, 16, openAI.PromptTokensDetails.CachedTokens)
+	require.Equal(t, 16, openAI.PromptCacheHitTokens)
 	require.Equal(t, 16, openAI.InputTokens)
 	require.Zero(t, openAI.OutputTokens)
 	require.Nil(t, openAI.BillingUsage)
+	require.Equal(t, 450, openAIOriginal.PromptCacheHitTokens)
 }
 
 func TestAdjustClaudeUsageForClientKeepsExplicitZeroGroupOverride(t *testing.T) {
@@ -129,6 +135,46 @@ func TestApplyInputTokenDeductionCacheOrderAndClaudeSplitConsistency(t *testing.
 	require.Equal(t, 9, adjusted.TotalTokens)
 	require.Equal(t, 180, original.InputTokens)
 	require.Equal(t, 20, original.ClaudeCacheCreation5mTokens)
+}
+
+func TestApplyInputTokenDeductionSynchronizesCacheWriteAliasesAcrossBuckets(t *testing.T) {
+	original := &dto.Usage{
+		PromptTokens:         56,
+		InputTokens:          536,
+		PromptCacheHitTokens: 450,
+		UsageSemantic:        dto.BillingUsageSemanticAnthropic,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         450,
+			CachedCreationTokens: 30,
+			CacheWriteTokens:     30,
+			TextTokens:           536,
+		},
+		InputTokensDetails: &dto.InputTokenDetails{
+			CachedTokens:         450,
+			CachedCreationTokens: 30,
+			CacheWriteTokens:     30,
+			TextTokens:           536,
+		},
+		ClaudeCacheCreation5mTokens: 10,
+		ClaudeCacheCreation1hTokens: 20,
+	}
+
+	adjusted, audit := applyInputTokenDeduction(nil, original, 521)
+
+	require.Equal(t, 536, audit.OriginalTextInputTokens)
+	require.Equal(t, 521, audit.AppliedTokens)
+	require.Zero(t, adjusted.PromptTokens)
+	require.Zero(t, adjusted.PromptTokensDetails.CachedTokens)
+	require.Zero(t, adjusted.PromptCacheHitTokens)
+	require.Equal(t, 15, adjusted.PromptTokensDetails.CachedCreationTokens)
+	require.Equal(t, 15, adjusted.PromptTokensDetails.CacheWriteTokens)
+	require.Zero(t, adjusted.ClaudeCacheCreation5mTokens, "5m cache writes are deducted before 1h")
+	require.Equal(t, 15, adjusted.ClaudeCacheCreation1hTokens)
+	require.Equal(t, 15, adjusted.PromptTokensDetails.TextTokens)
+	require.Equal(t, 15, adjusted.InputTokensDetails.TextTokens)
+	require.Equal(t, adjusted.PromptTokensDetails, *adjusted.InputTokensDetails)
+	require.Equal(t, 450, original.PromptCacheHitTokens)
+	require.Equal(t, 10, original.ClaudeCacheCreation5mTokens)
 }
 
 func TestApplyInputTokenDeductionDoesNotDeductNonTextModalities(t *testing.T) {

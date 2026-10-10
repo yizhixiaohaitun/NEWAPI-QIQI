@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -106,6 +107,34 @@ func TestOaiResponsesStreamHandlerCommitsSuccessfulStreamAndUsage(t *testing.T) 
 	output := recorder.Body.String()
 	assert.Less(t, strings.Index(output, "event: response.created"), strings.Index(output, "event: response.output_text.delta"))
 	assert.Contains(t, output, `"delta":"hello"`)
+}
+
+func TestOaiResponsesStreamHandlerPublishesDeductedUsageAliasesOnce(t *testing.T) {
+	enableResponsesStreamRetryForTest(t)
+	body := strings.Join([]string{
+		`event: response.output_text.delta`,
+		`data: {"type":"response.output_text.delta","delta":""}`,
+		``,
+		`event: response.completed`,
+		`data: {"type":"response.completed","response":{"id":"resp_cache","status":"completed","usage":{"input_tokens":506,"output_tokens":0,"total_tokens":506,"prompt_cache_hit_tokens":450,"input_tokens_details":{"cached_tokens":450,"cached_creation_tokens":0,"cache_write_tokens":0,"text_tokens":506}}}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesStreamTestContext(t, body)
+	info.UsingGroup = "default"
+	info.ChannelMeta.ChannelSetting = dto.ChannelSettings{InputTokenDeduction: 490}
+
+	usage, newAPIError := OaiResponsesStreamHandler(c, info, resp)
+
+	require.Nil(t, newAPIError)
+	require.NotNil(t, usage)
+	require.Equal(t, 506, usage.PromptTokens, "settlement keeps the original usage")
+	require.Equal(t, 450, usage.PromptTokensDetails.CachedTokens)
+	output := recorder.Body.String()
+	require.Contains(t, output, `"input_tokens":16`)
+	require.Contains(t, output, `"prompt_cache_hit_tokens":16`)
+	require.Contains(t, output, `"cached_tokens":16`)
+	require.Contains(t, output, `"text_tokens":16`)
+	require.NotContains(t, output, `"input_tokens":506`)
 }
 
 func TestOaiResponsesStreamHandlerDoesNotRetryAfterOutputCommit(t *testing.T) {

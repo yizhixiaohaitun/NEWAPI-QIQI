@@ -495,6 +495,63 @@ func TestHandleClaudeResponseDataPublishesDeductedCacheUsageWithoutChangingSettl
 	}
 }
 
+func TestHandleClaudeResponseDataSynchronizesCacheCreationAliases(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{
+		RelayFormat:             types.RelayFormatClaude,
+		FinalRequestRelayFormat: types.RelayFormatClaude,
+		UsingGroup:              "default",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "claude-test",
+			ChannelSetting:    dto.ChannelSettings{InputTokenDeduction: 521},
+		},
+	}
+	claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
+	response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header)}
+	data := []byte(`{"id":"msg_cache_write","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":"end_turn","usage":{"input_tokens":56,"cache_read_input_tokens":450,"cache_creation_input_tokens":30,"output_tokens":0,"claude_cache_creation_5_m_tokens":10,"claude_cache_creation_1_h_tokens":20,"cache_creation":{"ephemeral_5m_input_tokens":10,"ephemeral_1h_input_tokens":20}}}`)
+
+	require.Nil(t, HandleClaudeResponseData(ctx, info, claudeInfo, response, data))
+	require.Equal(t, 56, claudeInfo.Usage.PromptTokens)
+	require.Equal(t, 450, claudeInfo.Usage.PromptTokensDetails.CachedTokens)
+	require.Equal(t, 30, claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens)
+	var public map[string]interface{}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &public))
+	usage := public["usage"].(map[string]interface{})
+	require.EqualValues(t, 0, usage["input_tokens"])
+	require.EqualValues(t, 0, usage["cache_read_input_tokens"])
+	require.EqualValues(t, 15, usage["cache_creation_input_tokens"])
+	require.EqualValues(t, 0, usage["claude_cache_creation_5_m_tokens"])
+	require.EqualValues(t, 15, usage["claude_cache_creation_1_h_tokens"])
+	creation := usage["cache_creation"].(map[string]interface{})
+	require.EqualValues(t, 0, creation["ephemeral_5m_input_tokens"])
+	require.EqualValues(t, 15, creation["ephemeral_1h_input_tokens"])
+}
+
+func TestHandleStreamResponseDataPublishesDeductedCacheAliases(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatClaude,
+		UsingGroup:  "default",
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelSetting: dto.ChannelSettings{InputTokenDeduction: 490}},
+	}
+	claudeInfo := &ClaudeResponseInfo{Usage: &dto.Usage{}}
+	data := `{"type":"message_start","message":{"id":"msg_stream_cache","type":"message","role":"assistant","model":"claude-test","content":[],"usage":{"input_tokens":56,"cache_read_input_tokens":450,"cache_creation_input_tokens":0,"output_tokens":0}}}`
+
+	require.Nil(t, HandleStreamResponseData(ctx, info, claudeInfo, data))
+
+	output := recorder.Body.String()
+	require.Contains(t, output, `"input_tokens":0`)
+	require.Contains(t, output, `"cache_read_input_tokens":16`)
+	require.NotContains(t, output, `"cache_read_input_tokens":450`)
+	require.Equal(t, 56, claudeInfo.Usage.PromptTokens)
+	require.Equal(t, 450, claudeInfo.Usage.PromptTokensDetails.CachedTokens)
+}
+
 func TestPatchClaudeStreamUsagePublishesDeductedCacheBuckets(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		UsingGroup:  "default",
