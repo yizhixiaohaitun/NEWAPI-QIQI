@@ -13,7 +13,7 @@ import (
 )
 
 func TestClaudeAndOpenAIErrorSSEFormatting(t *testing.T) {
-	message := `InvokeModel: operation error Bedrock Runtime: InvokeModel, https response error StatusCode: 400, RequestID: upstream, api error ValidationException: "thinking.type.enabled" not supported. Use "thinking.type.adaptive" and "output_config.effort". (request id: one) (request id: two) (request id: three)`
+	message := `InvokeModel: operation error Bedrock Runtime: InvokeModel, https response error StatusCode: 400, RequestID: upstream, ValidationException: "thinking.type.enabled" not supported. Use "thinking.type.adaptive" and "output_config.effort". (request id: one) (request id: two) (request id: three)`
 	data, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]any{"type": "<nil>", "message": message, "large": json.RawMessage(`9007199254740993`)}})
 	for _, mode := range []string{"claude", "oai", "responses"} {
 		t.Run(mode, func(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-var bedrockValidationWrapper = regexp.MustCompile(`(?s)^(?:InvokeModel(?:WithResponseStream)?: )?operation error Bedrock Runtime: InvokeModel(?:WithResponseStream)?, https response error StatusCode: 400, RequestID: [^,]*, api error ValidationException: (.*)$`)
+var bedrockValidationWrapper = regexp.MustCompile(`(?s)^(?:InvokeModel(?:WithResponseStream)?: )?operation error Bedrock Runtime: InvokeModel(?:WithResponseStream)?, https response error StatusCode: 400, RequestID: [^,]*, (?:api error )?ValidationException: (.*)$`)
 
 // PublicErrorMessage removes only a recognized SDK ValidationException
 // wrapper. Other provider messages (including normal refusals) aren't parsed.

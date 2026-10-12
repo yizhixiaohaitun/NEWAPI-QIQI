@@ -13,7 +13,7 @@ import (
 
 func TestRelayClaudeValidationErrorHTTPFormatting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	message := `InvokeModelWithResponseStream: operation error Bedrock Runtime: InvokeModelWithResponseStream, https response error StatusCode: 400, RequestID: upstream, api error ValidationException: "thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior. (request id: one) (request id: two) (request id: three)`
+	message := `InvokeModelWithResponseStream: operation error Bedrock Runtime: InvokeModelWithResponseStream, https response error StatusCode: 400, RequestID: upstream, ValidationException: "thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior. (request id: one) (request id: two) (request id: three)`
 	source := types.NewOpenAIError(errors.New(message), types.ErrorCodeAwsInvokeError, 400, types.ErrOptionWithSkipRetry())
 	before := source.Error()
 	w := httptest.NewRecorder()

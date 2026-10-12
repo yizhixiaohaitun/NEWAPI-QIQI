@@ -40,6 +40,43 @@ func TestPublicClaudeValidationErrorFormatting(t *testing.T) {
 	valid := WithClaudeError(ClaudeError{Type: "overloaded_error", Message: "busy"}, 529)
 	assert.Equal(t, "overloaded_error", PreparePublicError(valid, "id").ToClaudeError().Type)
 }
+func TestPublicErrorExactBedrockWrapperVariants(t *testing.T) {
+	const exactMessage = `InvokeModelWithResponseStream: operation error Bedrock Runtime: InvokeModelWithResponseStream, https response error StatusCode: 400, RequestID: b5e65650-65b3-42c9-b332-427377f0997f, ValidationException: "***.***.enabled" is not supported for this model. Use "***.***.adaptive" and "output_config.effort" to control thinking behavior. (request id: 202610121212427215037068268d9d6ml2pemJO) (request id: 202610121212426949872588268d9d6GWrLQuuw) (request id: 202610121212425334071308268d9d64UsvU1O2)`
+	for name, message := range map[string]string{
+		"without_sdk_api_prefix": exactMessage,
+		"with_sdk_api_prefix":    strings.Replace(exactMessage, ", ValidationException:", ", api error ValidationException:", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := WithOpenAIError(OpenAIError{Message: message}, http.StatusBadRequest)
+			public := PreparePublicError(raw, "local-id").ToClaudeError()
+			assert.Equal(t, "invalid_request_error", public.Type)
+			assert.True(t, strings.HasPrefix(public.Message, "ValidationException:"), public.Message)
+			assert.NotContains(t, public.Message, "InvokeModel")
+			assert.NotContains(t, public.Message, "b5e65650")
+			assert.Contains(t, public.Message, `"output_config.effort"`)
+			assert.Equal(t, 1, strings.Count(public.Message, "(request id:"))
+			assert.Equal(t, message, raw.Error())
+			data, err := json.Marshal(map[string]any{"type": "error", "error": map[string]any{"type": "<nil>", "message": message}})
+			require.NoError(t, err)
+			formatted, changed := FormatPublicErrorStreamData(string(data), "local-id")
+			require.True(t, changed)
+			var envelope struct {
+				Error ClaudeError `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(formatted), &envelope))
+			assert.Equal(t, public, envelope.Error)
+		})
+	}
+	for _, message := range []string{
+		strings.Replace(exactMessage, "StatusCode: 400", "StatusCode: 500", 1),
+		strings.Replace(exactMessage, "Bedrock Runtime:", "Other Runtime:", 1),
+		strings.Replace(exactMessage, "ValidationException:", "InternalServerException:", 1),
+		"normal content mentioning " + exactMessage,
+	} {
+		assert.True(t, strings.Contains(PublicErrorMessage(message), "operation error"))
+	}
+}
+
 func TestPublicErrorStreamFormattingDoesNotRewriteOrdinaryContent(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]any{"type": "<nil>", "message": validationMessage, "cost": json.RawMessage(`1.1234567890123456789`), "id": json.RawMessage(`9007199254740993`)}})
 	output, changed := FormatPublicErrorStreamData(string(raw), "local-id")
