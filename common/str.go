@@ -251,9 +251,22 @@ func MaskSensitiveInfo(str string) string {
 	})
 
 	// Mask domain names without protocol (like openai.com, www.openai.com)
-	str = maskDomainPattern.ReplaceAllStringFunc(str, func(domain string) string {
-		return maskHostForPlainDomain(domain)
-	})
+	// Protect only these exact protocol field/value paths, not arbitrary
+	// dot-separated identifiers or a matching substring of a real domain.
+	var masked strings.Builder
+	last := 0
+	for _, loc := range maskDomainPattern.FindAllStringIndex(str, -1) {
+		masked.WriteString(str[last:loc[0]])
+		domain := str[loc[0]:loc[1]]
+		if isProtectedProtocolPath(str, loc[0], loc[1]) {
+			masked.WriteString(domain)
+		} else {
+			masked.WriteString(maskHostForPlainDomain(domain))
+		}
+		last = loc[1]
+	}
+	masked.WriteString(str[last:])
+	str = masked.String()
 
 	// Mask IP addresses
 	str = maskIPPattern.ReplaceAllString(str, "***.***.***.***")

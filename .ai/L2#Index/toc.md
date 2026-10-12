@@ -187,4 +187,12 @@ API路径：/api/admin/users/config/levels
 
 ---
 
-**最后更新**：2026-04-26
+## Claude thinking 格式兼容与公开错误边界（2026-10-12）
+
+- 能力与格式单入口：`dto/claude_thinking.go`；仅明确 Opus 4.7/既有 4.8/5.5 名单及原生 Bedrock/Vertex 名称，旧 enabled+budget 转 adaptive+独立 output_config.effort。4096 采用项目 high 软引导，非硬预算等价；已有 effort/扩展、显式 disabled、未提供 thinking 保留，5.5 不猜采样/tool_choice/display 能力。
+- 请求链：`service/relayconvert/internal/oai_chat/to_claude_messages_req.go`、`service/relayconvert/internal/oai_responses/to_claude_messages_req.go` 与 Claude/AWS/Vertex adaptor；`relay/claude_thinking.go` 在 `relay/claude_handler.go`、`relay/compatible_handler.go`、`relay/responses_handler.go` 的最终 JSON 参数覆盖后保护。显式原始 passthrough 不改字节；Responses converter 已支持，不新增 Claude/AWS 的原生 /responses endpoint 支持。
+- 公开错误：`types/public_error_format.go` 保留原始诊断副本，仅识别 Bedrock SDK ValidationException 包装；`types/error.go` 按 HTTP status/有效 type 映射 Claude 协议类型，修复空 code 导致 <nil>。`controller/relay_error_format.go`、`controller/relay.go` 和 `relay/helper/common.go` 复用 HTTP/SSE 公开边界，不改正常正文/拒答或重试计费。
+- 可读参数与编号：`common/protocol_field_mask.go`、`common/str.go` 仅完整协议字段路径保守豁免，URL/域名/API key 继续脱敏；`common/request_id_message.go`、`common/utils.go` 清理已知尾部 request id 后加本层单一编号。
+- 回归：`dto/claude_thinking_test.go`、`relay/claude_thinking_test.go`（模型映射/override 后实际 loopback HTTP 捕获及可选 `NEWAPI_CLAUDE_ATTACHMENT` 附件回放）、`types/public_error_format_test.go`、`controller/relay_error_format_test.go`、`relay/helper/public_error_format_test.go`、`common/protocol_field_mask_test.go`。请求回放仅测试捕获端返回 400，不调用生产计费上游。同步运行 service/input 减免、Claude refusal、OpenAI、AWS、Vertex、relayconvert 包。
+
+**最后更新**：2026-10-12

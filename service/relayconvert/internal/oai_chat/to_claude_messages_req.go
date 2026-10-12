@@ -127,86 +127,122 @@ func OpenAIChatRequestToClaudeMessages(c *gin.Context, textRequest dto.GeneralOp
 		claudeRequest.MaxTokens = &defaultMaxTokens
 	}
 
-	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(textRequest.Model); ok && effortLevel != "" &&
-		(strings.HasPrefix(textRequest.Model, "claude-opus-4-6") ||
-			strings.HasPrefix(textRequest.Model, "claude-opus-4-7") ||
-			strings.HasPrefix(textRequest.Model, "claude-opus-4-8")) {
-		claudeRequest.Model = baseModel
-		claudeRequest.Thinking = &dto.Thinking{
-			Type: "adaptive",
+	if dto.ClaudeRequiresAdaptiveThinking(textRequest.Model) {
+		effort := textRequest.ReasoningEffort
+		var cfg struct {
+			Enabled   *bool  `json:"enabled"`
+			Effort    string `json:"effort"`
+			MaxTokens int    `json:"max_tokens"`
 		}
-		claudeRequest.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
-		if strings.HasPrefix(baseModel, "claude-opus-4-7") ||
-			strings.HasPrefix(baseModel, "claude-opus-4-8") {
-			claudeRequest.Thinking.Display = "summarized"
-			claudeRequest.Temperature = nil
-			claudeRequest.TopP = nil
-			claudeRequest.TopK = nil
+		if len(textRequest.Reasoning) > 0 {
+			if err := common.Unmarshal(textRequest.Reasoning, &cfg); err != nil {
+				return nil, err
+			}
+		}
+		if effort == "none" || (cfg.Enabled != nil && !*cfg.Enabled) {
+			claudeRequest.Thinking = &dto.Thinking{Type: "disabled"}
+		} else if cfg.MaxTokens > 0 {
+			claudeRequest.Thinking = &dto.Thinking{Type: "enabled", BudgetTokens: &cfg.MaxTokens}
+			if cfg.Effort != "" {
+				effort = cfg.Effort
+			}
 		} else {
-			claudeRequest.TopP = nil
-			claudeRequest.Temperature = common.GetPointer[float64](1.0)
-		}
-	} else if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
-		strings.HasSuffix(textRequest.Model, "-thinking") {
-
-		trimmedModel := strings.TrimSuffix(textRequest.Model, "-thinking")
-		if strings.HasPrefix(trimmedModel, "claude-opus-4-7") ||
-			strings.HasPrefix(trimmedModel, "claude-opus-4-8") {
-			claudeRequest.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
-			claudeRequest.OutputConfig = json.RawMessage(`{"effort":"high"}`)
-			claudeRequest.Temperature = nil
-			claudeRequest.TopP = nil
-			claudeRequest.TopK = nil
-		} else {
-			if claudeRequest.MaxTokens == nil || *claudeRequest.MaxTokens < 1280 {
-				claudeRequest.MaxTokens = common.GetPointer[uint](1280)
+			if cfg.Effort != "" {
+				effort = cfg.Effort
 			}
-
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](int(float64(*claudeRequest.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
+			if effort != "" && effort != "none" {
+				claudeRequest.Thinking = &dto.Thinking{Type: "adaptive"}
 			}
-			claudeRequest.TopP = nil
-			claudeRequest.Temperature = common.GetPointer[float64](1.0)
-		}
-		if !model_setting.ShouldPreserveThinkingSuffix(textRequest.Model) {
-			claudeRequest.Model = trimmedModel
-		}
-	}
-
-	if textRequest.ReasoningEffort != "" {
-		switch textRequest.ReasoningEffort {
-		case "low":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](1280),
-			}
-		case "medium":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](2048),
-			}
-		case "high":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: common.GetPointer[int](4096),
+			if effort == "none" {
+				claudeRequest.Thinking = &dto.Thinking{Type: "disabled"}
 			}
 		}
-	}
-
-	if textRequest.Reasoning != nil {
-		var reasoningConfig openRouterRequestReasoning
-		if err := common.Unmarshal(textRequest.Reasoning, &reasoningConfig); err != nil {
+		if err := dto.NormalizeClaudeAdaptiveThinking(&claudeRequest, effort); err != nil {
 			return nil, err
 		}
-
-		budgetTokens := reasoningConfig.MaxTokens
-		if budgetTokens > 0 {
+	} else {
+		if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(textRequest.Model); ok && effortLevel != "" &&
+			(strings.HasPrefix(textRequest.Model, "claude-opus-4-6") ||
+				strings.HasPrefix(textRequest.Model, "claude-opus-4-7") ||
+				strings.HasPrefix(textRequest.Model, "claude-opus-4-8")) {
+			claudeRequest.Model = baseModel
 			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: &budgetTokens,
+				Type: "adaptive",
+			}
+			claudeRequest.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
+			if strings.HasPrefix(baseModel, "claude-opus-4-7") ||
+				strings.HasPrefix(baseModel, "claude-opus-4-8") {
+				claudeRequest.Thinking.Display = "summarized"
+				claudeRequest.Temperature = nil
+				claudeRequest.TopP = nil
+				claudeRequest.TopK = nil
+			} else {
+				claudeRequest.TopP = nil
+				claudeRequest.Temperature = common.GetPointer[float64](1.0)
+			}
+		} else if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
+			strings.HasSuffix(textRequest.Model, "-thinking") {
+
+			trimmedModel := strings.TrimSuffix(textRequest.Model, "-thinking")
+			if strings.HasPrefix(trimmedModel, "claude-opus-4-7") ||
+				strings.HasPrefix(trimmedModel, "claude-opus-4-8") {
+				claudeRequest.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
+				claudeRequest.OutputConfig = json.RawMessage(`{"effort":"high"}`)
+				claudeRequest.Temperature = nil
+				claudeRequest.TopP = nil
+				claudeRequest.TopK = nil
+			} else {
+				if claudeRequest.MaxTokens == nil || *claudeRequest.MaxTokens < 1280 {
+					claudeRequest.MaxTokens = common.GetPointer[uint](1280)
+				}
+
+				claudeRequest.Thinking = &dto.Thinking{
+					Type:         "enabled",
+					BudgetTokens: common.GetPointer[int](int(float64(*claudeRequest.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
+				}
+				claudeRequest.TopP = nil
+				claudeRequest.Temperature = common.GetPointer[float64](1.0)
+			}
+			if !model_setting.ShouldPreserveThinkingSuffix(textRequest.Model) {
+				claudeRequest.Model = trimmedModel
 			}
 		}
+
+		if textRequest.ReasoningEffort != "" {
+			switch textRequest.ReasoningEffort {
+			case "low":
+				claudeRequest.Thinking = &dto.Thinking{
+					Type:         "enabled",
+					BudgetTokens: common.GetPointer[int](1280),
+				}
+			case "medium":
+				claudeRequest.Thinking = &dto.Thinking{
+					Type:         "enabled",
+					BudgetTokens: common.GetPointer[int](2048),
+				}
+			case "high":
+				claudeRequest.Thinking = &dto.Thinking{
+					Type:         "enabled",
+					BudgetTokens: common.GetPointer[int](4096),
+				}
+			}
+		}
+
+		if textRequest.Reasoning != nil {
+			var reasoningConfig openRouterRequestReasoning
+			if err := common.Unmarshal(textRequest.Reasoning, &reasoningConfig); err != nil {
+				return nil, err
+			}
+
+			budgetTokens := reasoningConfig.MaxTokens
+			if budgetTokens > 0 {
+				claudeRequest.Thinking = &dto.Thinking{
+					Type:         "enabled",
+					BudgetTokens: &budgetTokens,
+				}
+			}
+		}
+
 	}
 
 	if textRequest.Stop != nil {

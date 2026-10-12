@@ -220,7 +220,7 @@ func (e *NewAPIError) ToClaudeError() ClaudeError {
 		if openAIError, ok := e.RelayError.(OpenAIError); ok {
 			result = ClaudeError{
 				Message: e.Error(),
-				Type:    fmt.Sprintf("%v", openAIError.Code),
+				Type:    protocolClaudeErrorType(openAIError.Type, e.StatusCode),
 			}
 		}
 	case ErrorTypeClaudeError:
@@ -232,6 +232,9 @@ func (e *NewAPIError) ToClaudeError() ClaudeError {
 			Message: e.Error(),
 			Type:    string(e.errorType),
 		}
+	}
+	if invalidClaudeErrorType(result.Type) || result.Type == "upstream_error" || e.errorType != ErrorTypeClaudeError {
+		result.Type = protocolClaudeErrorType(result.Type, e.StatusCode)
 	}
 	if e.errorCode != ErrorCodeCountTokenFailed {
 		result.Message = common.MaskSensitiveInfo(result.Message)
