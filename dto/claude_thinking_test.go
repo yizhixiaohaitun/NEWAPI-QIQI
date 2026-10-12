@@ -22,7 +22,7 @@ func TestNormalizeClaudeAdaptiveThinking(t *testing.T) {
 	for _, kind := range []string{"adaptive", "disabled"} {
 		req := &ClaudeRequest{Model: "claude-opus-5-5", Thinking: &Thinking{Type: kind}, OutputConfig: []byte(`{"effort":"medium","unknown":true}`)}
 		require.NoError(t, NormalizeClaudeAdaptiveThinking(req, "high"))
-		assert.Equal(t, kind, req.Thinking.Type)
+		assert.Equal(t, "adaptive", req.Thinking.Type)
 		assert.JSONEq(t, `{"effort":"medium","unknown":true}`, string(req.OutputConfig))
 	}
 	for _, model := range []string{"claude-opus-4-5", "claude-opus-4-6", "claude-opus-6-0", "not-claude-opus-5-5", "claude-opus-5-50", "claude-opus-5-5-fable", "other.anthropic.claude-opus-5-5"} {

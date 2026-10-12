@@ -118,7 +118,7 @@ func TestClaudeAdaptiveAWSVertexAndConverters(t *testing.T) {
 		body, err = dto.NormalizeClaudeAdaptiveJSON(body, req.Model)
 		require.NoError(t, err)
 		if effort == "none" {
-			assert.Equal(t, "disabled", req.Thinking.Type)
+			assert.Equal(t, "adaptive", req.Thinking.Type)
 		} else {
 			assert.Equal(t, "adaptive", req.Thinking.Type)
 			assert.NotContains(t, string(body), "budget_tokens")
@@ -136,7 +136,7 @@ func TestClaudeAdaptiveAWSVertexAndConverters(t *testing.T) {
 	}
 	req, err := relayconvert.OpenAIChatRequestToClaudeMessages(nil, dto.GeneralOpenAIRequest{Model: "claude-opus-5-5-high", Reasoning: json.RawMessage(`{"enabled":false,"max_tokens":4096}`), MaxTokens: common.GetPointer[uint](16384)})
 	require.NoError(t, err)
-	assert.Equal(t, "disabled", req.Thinking.Type)
+	assert.Equal(t, "adaptive", req.Thinking.Type)
 }
 
 // Optional exact attachment replay. Content is untrusted data and is only
@@ -171,11 +171,18 @@ func TestClaudeAdaptiveAttachmentReplay(t *testing.T) {
 	require.NotEmpty(t, sent)
 	var output map[string]json.RawMessage
 	require.NoError(t, common.Unmarshal(sent, &output))
-	assert.JSONEq(t, `{"type":"adaptive"}`, string(output["thinking"]))
+	require.JSONEq(t, `{"type":"adaptive"}`, string(output["thinking"]))
 	assert.JSONEq(t, `{"effort":"high"}`, string(output["output_config"]))
-	assert.Equal(t, "16384", string(output["max_tokens"]))
+	assert.JSONEq(t, string(original["max_tokens"]), string(output["max_tokens"]))
 	for _, field := range []string{"messages", "system", "tools"} {
-		assert.JSONEq(t, string(original[field]), string(output[field]), field)
+		if len(original[field]) > 0 {
+			assert.JSONEq(t, string(original[field]), string(output[field]), field)
+		} else {
+			assert.True(t, len(output[field]) == 0 || string(output[field]) == "null", field)
+		}
 	}
-	t.Logf("local final HTTP capture: model=%s max_tokens=16384 thinking=adaptive effort=high; messages/system/tools preserved", request.Model)
+	if capture := os.Getenv("NEWAPI_CLAUDE_CAPTURE"); capture != "" {
+		require.NoError(t, os.WriteFile(capture, sent, 0600))
+	}
+	t.Logf("local final HTTP capture: model=%s max_tokens=%s thinking=adaptive effort=high; messages/system/tools preserved", request.Model, original["max_tokens"])
 }

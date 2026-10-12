@@ -9,23 +9,38 @@ import (
 	"github.com/QuantumNous/new-api/setting/reasoning"
 )
 
-var adaptiveClaudeModel = regexp.MustCompile(`^(?:us\.|eu\.|apac\.|global\.)?(?:anthropic\.)?claude-opus-(?:4-7|4-8|5-5)(?:-(?:[0-9]{8}|v[0-9]+))?(?:@(?:[0-9]{8}|[0-9]+)|:[0-9]+)?$`)
+var adaptiveClaudeModel = regexp.MustCompile(`^(?:us\.|eu\.|apac\.|global\.)?(?:anthropic\.)?claude-opus-(4-7|4-8|5-5)(?:-(?:[0-9]{8}|v[0-9]+))?(?:@(?:[0-9]{8}|[0-9]+)|:[0-9]+)?$`)
 
 // ClaudeRequiresAdaptiveThinking is an explicit compatibility list, not a
-// prediction about future model versions. Opus 5.5 is confirmed by Bedrock's
-// model table and its ValidationException; 4.7/4.8 retain existing support.
+// prediction about future model versions. Opus 5.5 enabled AND disabled are
+// rejected by the supplied Bedrock ValidationExceptions; 4.7/4.8 retain
+// their existing disabled support.
 func ClaudeRequiresAdaptiveThinking(model string) bool {
-	model = strings.TrimSuffix(model, "-thinking")
-	model, _, _ = reasoning.TrimEffortSuffix(model)
-	return adaptiveClaudeModel.MatchString(model)
+	return claudeAdaptiveVersion(model) != ""
 }
 
-// NormalizeClaudeAdaptiveThinking preserves explicit disabled/adaptive and
+func claudeAdaptiveVersion(model string) string {
+	model = strings.TrimSuffix(model, "-thinking")
+	model, _, _ = reasoning.TrimEffortSuffix(model)
+	if match := adaptiveClaudeModel.FindStringSubmatch(model); len(match) > 1 {
+		return match[1]
+	}
+	return ""
+}
+
+// NormalizeClaudeAdaptiveThinking preserves adaptive and 4.7/4.8 disabled, plus
 // existing output_config extensions. Effort is a soft hint, NOT an equivalent
 // token budget; thresholds reuse this project's legacy effort budgets.
 func NormalizeClaudeAdaptiveThinking(req *ClaudeRequest, effort string) error {
 	if req == nil || !ClaudeRequiresAdaptiveThinking(req.Model) {
 		return nil
+	}
+	// Disabled has no equivalent on 5.5. Low reuses this project's effort
+	// vocabulary to best preserve the less-thinking intent, NOT to turn it off.
+	// Choose it before suffix defaults; explicit effort hints remain authoritative.
+	migrateDisabled := req.Thinking != nil && req.Thinking.Type == "disabled" && claudeAdaptiveVersion(req.Model) == "5-5"
+	if migrateDisabled && (effort == "" || effort == "none") {
+		effort = "low"
 	}
 	base, suffixEffort, suffix := reasoning.TrimEffortSuffix(req.Model)
 	thinkingSuffix := strings.HasSuffix(req.Model, "-thinking")
@@ -54,10 +69,13 @@ func NormalizeClaudeAdaptiveThinking(req *ClaudeRequest, effort string) error {
 			}
 		}
 	}
-	if req.Thinking == nil || req.Thinking.Type == "disabled" {
+	if req.Thinking == nil {
 		return nil
 	}
-	if req.Thinking.Type != "enabled" && req.Thinking.Type != "adaptive" {
+	if req.Thinking.Type == "disabled" && !migrateDisabled {
+		return nil
+	}
+	if req.Thinking.Type != "enabled" && req.Thinking.Type != "adaptive" && !migrateDisabled {
 		return nil
 	}
 	migrated := req.Thinking.Type == "enabled"
@@ -126,7 +144,8 @@ func NormalizeClaudeAdaptiveJSON(body []byte, fallbackModel string) ([]byte, err
 	if err := common.Unmarshal(raw, &thinking); err != nil {
 		return nil, err
 	}
-	if thinking.Type != "enabled" && thinking.Type != "adaptive" {
+	if thinking.Type != "enabled" && thinking.Type != "adaptive" &&
+		!(thinking.Type == "disabled" && claudeAdaptiveVersion(model) == "5-5") {
 		return body, nil
 	}
 	req := &ClaudeRequest{Model: model, Thinking: &thinking, OutputConfig: fields["output_config"]}

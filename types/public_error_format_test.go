@@ -91,3 +91,24 @@ func TestPublicErrorStreamFormattingDoesNotRewriteOrdinaryContent(t *testing.T) 
 		assert.Equal(t, data, output)
 	}
 }
+
+// A status_code prefix received as message text belongs to an upstream wrapper,
+// not ErrorWithStatusCode's logging-only formatting. Don't guess masked paths.
+func TestPublicDisabledErrorExternalStatusPrefixBoundary(t *testing.T) {
+	message := `status_code=400, "***.***.disabled" is not supported for this model. Use "***.***.adaptive" and "output_config.effort" to control thinking behavior. (request id: upstream-one) (request id: upstream-two)`
+	raw := NewOpenAIError(errors.New(message), ErrorCodeAwsInvokeError, 400, ErrOptionWithSkipRetry())
+	public := PreparePublicError(raw, "local-disabled")
+	out := public.ToClaudeError()
+	assert.Equal(t, "invalid_request_error", out.Type)
+	assert.Contains(t, out.Message, "status_code=400")
+	assert.Contains(t, out.Message, "***.***.disabled")
+	assert.NotContains(t, out.Message, "thinking.type.disabled")
+	assert.Contains(t, out.Message, "output_config.effort")
+	assert.Equal(t, 1, strings.Count(out.Message, "(request id:"))
+	assert.Contains(t, out.Message, "local-disabled")
+	assert.Equal(t, message, raw.Error())
+	assert.Equal(t, raw.GetErrorCode(), public.GetErrorCode())
+	assert.Equal(t, IsSkipRetryError(raw), IsSkipRetryError(public))
+	assert.Equal(t, 400, public.StatusCode)
+	assert.Equal(t, "status_code=400, "+message, raw.ErrorWithStatusCode())
+}
