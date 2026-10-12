@@ -2564,7 +2564,7 @@ const EditChannelModal = (props) => {
                     </div>
                     <div>
                       <Text className='mb-1 block text-sm font-medium'>{t('按分组设置')}</Text>
-                      <Text type='tertiary' size='small' className='mb-2 block'>{t('留空使用渠道默认值；显式填写0表示不减免。仅影响普通文本输入，不改变按次、音频或图片费用。')}</Text>
+                      <Text type='tertiary' size='small' className='mb-2 block'>{t('留空使用渠道默认值；显式填写0表示不减免。同步影响普通文本结算、缓存读写计费、日志及对外 usage；不改变输出、按次、音频或图片费用。')}</Text>
                       <div className='grid grid-cols-1 gap-2 sm:grid-cols-2'>
                         {(inputs.groups || []).map((group) => (
                           <label key={group} className='block'>

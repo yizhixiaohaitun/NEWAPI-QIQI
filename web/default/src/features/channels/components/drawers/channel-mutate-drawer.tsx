@@ -4131,7 +4131,7 @@ export function ChannelMutateDrawer({
                                       <FormLabel>{t('按分组设置')}</FormLabel>
                                       <FormDescription>
                                         {t(
-                                          '留空使用渠道默认值；显式填写0表示不减免。仅影响普通文本输入，不改变按次、音频或图片费用。'
+                                          '留空使用渠道默认值；显式填写0表示不减免。同步影响普通文本结算、缓存读写计费、日志及对外 usage；不改变输出、按次、音频或图片费用。'
                                         )}
                                       </FormDescription>
                                       <div className='grid gap-3 sm:grid-cols-2'>

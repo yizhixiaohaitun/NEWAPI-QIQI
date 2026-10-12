@@ -94,6 +94,9 @@ func removeFunctionResponseID(request *dto.GeminiChatRequest) {
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
+	if err := dto.NormalizeClaudeAdaptiveThinking(request, ""); err != nil {
+		return nil, err
+	}
 	if v, ok := claudeModelMap[info.UpstreamModelName]; ok {
 		c.Set("request_model", v)
 	} else {

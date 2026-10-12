@@ -113,7 +113,7 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 
 - `dto/claude.go#ClaudeResponse` / `ClaudeStopDetails`：解析上游非流式 `stop_reason` 与可选 `stop_details.explanation`；缺少解释时不生成替代文案。
 - `service/relayconvert/internal/claude_messages/to_oai_chat_resp.go#ResponseClaude2OpenAI`：仅在明确 `refusal`、没有正常正文且解释非空时，将上游解释逐字写入 OpenAI `message.refusal`，并按既有流式兼容语义同步给只读取 `message.content` 的客户端；已有正文、普通 `end_turn` 不受影响。
-- `relay/channel/claude/relay-claude.go#HandleClaudeResponseData`：OpenAI 格式调用上述转换；Claude 原生格式继续直接透传上游响应字节。
+- `relay/channel/claude/relay-claude.go#HandleClaudeResponseData`：OpenAI 格式调用上述转换；Claude 原生格式无减免配置时继续直接透传上游响应字节；配置固定输入减免时仅按下述公开 usage 规则同步计数，不修改正文或拒绝解释。
 - 回归入口：`service/relayconvert/internal/claude_messages/to_oai_chat_resp_test.go` 覆盖精确空拒绝、解释逐字保留且不重复、已有正文和普通结束；`relay/channel/claude/relay_claude_test.go` 从真实非流式 handler 覆盖 OpenAI 可见性与 Claude 原生字节不变。
 
 ### 分组与渠道重试选择链路
@@ -128,8 +128,9 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 
 - `dto/channel_settings.go#ChannelSettings`：渠道设置保存 `input_token_deduction` 与可选 `input_token_deduction_by_group`；分组条目（包括显式 `0`）按成功请求最终 `RelayInfo.UsingGroup` 优先于渠道默认值。
 - `model/channel.go#ValidateSettings`：拒绝默认值或分组值中的负数；设置沿现有渠道缓存和请求上下文传递，不新增请求级数据库查询。
-- `service/input_token_deduction.go`：从归一化计费用量创建独立副本，仅减文本输入；顺序为普通文本、cache read、cache write（5m 后 1h），下限为零，保持缓存明细一致，不改客户端原始 usage、输出、图像或音频。
-- `service/text_quota.go#PostTextConsumeQuota`：普通倍率、tiered 参数、最终结算和消费日志共用扣减后的计费用量；固定按次价格不因 token 减免消失。管理员日志 `admin_info` 保存原文本输入和实际减免，普通日志仅显示扣后输入。
+- `service/input_token_deduction.go`：从归一化计费用量创建独立副本，仅减文本输入；顺序为普通文本、cache read、cache write（5m 后 1h），下限为零，保持缓存明细一致，不改输出、图像或音频。`AdjustUsageForClient` / `AdjustClaudeUsageForClient` 将同一规则应用到独立的公开副本并移除内部 `billing_usage`，结算仍接收原始 usage，避免二次扣减。
+- `service/text_quota.go#PostTextConsumeQuota`：普通倍率、cache read/write、tiered 参数、最终结算和消费日志共用扣减后的计费用量；固定按次价格不因 token 减免消失。管理员日志 `admin_info` 保存原文本输入和实际减免，普通日志仅显示扣后输入。
+- 对外 usage：`relay/channel/claude/relay-claude.go` 覆盖 Claude 原生与 OpenAI 兼容的流/非流 usage；`relay/channel/openai/{relay-openai.go,helper.go,usage.go,relay_responses.go,responses_via_chat.go}` 覆盖 Chat Completions、Responses 及协议转换流/非流写出。公开 usage 的总量、`prompt_cache_hit_tokens`、`text_tokens`、cache read/write、`cached_creation_tokens`、Claude 5m/1h 别名和嵌套 cache creation 明细同步减免；Responses 在写出与结算前从完整 `input_tokens_details` 归一化独立副本。公开 JSON 使用 `json.RawMessage` 定点改写已支持的计数，顶层 `usage.cached_tokens/cache_write_tokens/cached_creation_tokens`、`choices[].usage.cached_tokens` 与 `timings.cache_n` 也同步；未知字段（包括超出 float64 精度的大整数和高精度 `cost`）、正常正文/拒绝语义保持不变，内部审计快照不外发。回归 `relay/channel/openai/input_token_deduction_usage_test.go`、`relay/channel/openai/relay_responses_test.go` 和 `relay/channel/claude/relay_claude_test.go` 覆盖真实流/非流写出、这些别名及精确数值保留。
 - 默认主题入口：`web/default/src/features/channels/components/drawers/channel-mutate-drawer.tsx` 在高级设置中编辑渠道默认和当前分组减免，已有减免配置自动展开；`web/default/src/features/channels/lib/channel-form.ts` 负责完整加载、校验及保存，`web/default/src/features/channels/lib/input-token-deduction.ts` 保留未知 setting 字段并区分留空继承与显式 `0`。
 - 经典主题入口：`web/classic/src/components/table/channels/modals/EditChannelModal.jsx` 与同目录 `inputTokenDeduction.js` 提供同等编辑及加载保存语义，不更改已有配置结构。
 - 回归入口：`service/input_token_deduction_test.go`（含 SQLite 余额/消费日志、缓存与协议语义、最终分组、tiered/按次边界和 benchmark）、`model/channel_input_token_deduction_test.go`（配置验证）、`web/default/src/features/channels/lib/input-token-deduction.test.ts`（留空/零/未知配置保留和整数校验）。
@@ -187,4 +188,12 @@ API路径：/api/admin/users/config/levels
 
 ---
 
-**最后更新**：2026-04-26
+## Claude thinking 格式兼容与公开错误边界（2026-10-12）
+
+- 能力与格式单入口：`dto/claude_thinking.go`；仅明确 Opus 4.7/既有 4.8/5.5 名单及原生 Bedrock/Vertex 名称，旧 enabled+budget 转 adaptive+独立 output_config.effort。4096 采用项目 high 软引导，非硬预算等价；已有 effort/扩展、显式 disabled、未提供 thinking 保留，5.5 不猜采样/tool_choice/display 能力。
+- 请求链：`service/relayconvert/internal/oai_chat/to_claude_messages_req.go`、`service/relayconvert/internal/oai_responses/to_claude_messages_req.go` 与 Claude/AWS/Vertex adaptor；`relay/claude_thinking.go` 在 `relay/claude_handler.go`、`relay/compatible_handler.go`、`relay/responses_handler.go` 的最终 JSON 参数覆盖后保护。显式原始 passthrough 不改字节；Responses converter 已支持，不新增 Claude/AWS 的原生 /responses endpoint 支持。
+- 公开错误：`types/public_error_format.go` 保留原始诊断副本，仅识别 Bedrock SDK ValidationException 包装（含用户原报错无 `api error` 前缀及 SDK 带前缀两种形式）；`types/error.go` 按 HTTP status/有效 type 映射 Claude 协议类型，修复空 code 导致 <nil>。`controller/relay_error_format.go`、`controller/relay.go` 和 `relay/helper/common.go` 复用 HTTP/SSE 公开边界，不改正常正文/拒答或重试计费。
+- 可读参数与编号：`common/protocol_field_mask.go`、`common/str.go` 仅完整协议字段路径保守豁免，URL/域名/API key 继续脱敏；`common/request_id_message.go`、`common/utils.go` 清理已知尾部 request id 后加本层单一编号。
+- 回归：`dto/claude_thinking_test.go`、`relay/claude_thinking_test.go`（模型映射/override 后实际 loopback HTTP 捕获及可选 `NEWAPI_CLAUDE_ATTACHMENT` 附件回放）、`types/public_error_format_test.go`、`controller/relay_error_format_test.go`、`relay/helper/public_error_format_test.go`、`common/protocol_field_mask_test.go`。请求回放仅测试捕获端返回 400，不调用生产计费上游。同步运行 service/input 减免、Claude refusal、OpenAI、AWS、Vertex、relayconvert 包。
+
+**最后更新**：2026-10-12

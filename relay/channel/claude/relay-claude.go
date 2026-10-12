@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -144,6 +145,68 @@ func patchClaudeMessageDeltaUsageData(data string, usage *dto.ClaudeUsage) strin
 	return relayconvert.PatchClaudeMessageDeltaUsageData(data, usage)
 }
 
+func patchClaudeUsageObjectForClient(raw map[string]json.RawMessage, adjusted *dto.ClaudeUsage) {
+	if raw == nil || adjusted == nil {
+		return
+	}
+	for key, value := range map[string]int{
+		"input_tokens":                adjusted.InputTokens,
+		"cache_read_input_tokens":     adjusted.CacheReadInputTokens,
+		"cache_creation_input_tokens": adjusted.CacheCreationInputTokens,
+		"output_tokens":               adjusted.OutputTokens,
+	} {
+		raw[key], _ = common.Marshal(value)
+	}
+	for key, value := range map[string]int{
+		"claude_cache_creation_5_m_tokens": adjusted.ClaudeCacheCreation5mTokens,
+		"claude_cache_creation_1_h_tokens": adjusted.ClaudeCacheCreation1hTokens,
+	} {
+		if _, exists := raw[key]; exists {
+			raw[key], _ = common.Marshal(value)
+		}
+	}
+	var creation map[string]json.RawMessage
+	if common.Unmarshal(raw["cache_creation"], &creation) == nil && creation != nil {
+		creation["ephemeral_5m_input_tokens"], _ = common.Marshal(adjusted.GetCacheCreation5mTokens())
+		creation["ephemeral_1h_input_tokens"], _ = common.Marshal(adjusted.GetCacheCreation1hTokens())
+		raw["cache_creation"], _ = common.Marshal(creation)
+	}
+	delete(raw, "billing_usage")
+}
+
+func patchClaudeResponseUsageForClient(data string, info *relaycommon.RelayInfo, usage *dto.ClaudeUsage, nestedMessage bool) string {
+	adjusted := service.AdjustClaudeUsageForClient(info, usage)
+	if adjusted == usage {
+		return data
+	}
+	var envelope map[string]json.RawMessage
+	if err := common.UnmarshalJsonStr(data, &envelope); err != nil {
+		return data
+	}
+	target := envelope
+	if nestedMessage {
+		var message map[string]json.RawMessage
+		if err := common.Unmarshal(envelope["message"], &message); err != nil || message == nil {
+			return data
+		}
+		target = message
+	}
+	var rawUsage map[string]json.RawMessage
+	if err := common.Unmarshal(target["usage"], &rawUsage); err != nil || rawUsage == nil {
+		return data
+	}
+	patchClaudeUsageObjectForClient(rawUsage, adjusted)
+	target["usage"], _ = common.Marshal(rawUsage)
+	if nestedMessage {
+		envelope["message"], _ = common.Marshal(target)
+	}
+	encoded, err := common.Marshal(envelope)
+	if err != nil {
+		return data
+	}
+	return string(encoded)
+}
+
 func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *dto.ChatCompletionsStreamResponse, claudeInfo *ClaudeResponseInfo) bool {
 	return relayconvert.FormatClaudeResponseInfo(claudeResponse, oaiResponse, claudeInfo)
 }
@@ -184,6 +247,21 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			// 解决 AWS Bedrock 等上游返回的 message_delta 缺少这些字段的问题
 			if !shouldSkipClaudeMessageDeltaUsagePatch(info) {
 				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
+			}
+		}
+		// Settlement keeps the original accumulated usage. Only the public event
+		// receives the configured deduction, so retries and final billing cannot
+		// apply it twice.
+		switch claudeResponse.Type {
+		case "message_start":
+			if claudeResponse.Message != nil && claudeResponse.Message.Usage != nil {
+				data = patchClaudeResponseUsageForClient(data, info, claudeResponse.Message.Usage, true)
+			}
+		case "message_delta":
+			data = patchClaudeResponseUsageForClient(data, info, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo), false)
+		default:
+			if claudeResponse.Usage != nil {
+				data = patchClaudeResponseUsageForClient(data, info, claudeResponse.Usage, false)
 			}
 		}
 		// Native consumers may themselves convert Claude to content-only OpenAI.
@@ -256,7 +334,8 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 		//
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		if info.ShouldIncludeUsage {
-			openAIUsage := buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
+			publicUsage := service.AdjustUsageForClient(info, claudeInfo.Usage)
+			openAIUsage := buildOpenAIStyleUsageFromClaudeUsage(publicUsage)
 			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, openAIUsage)
 			err := helper.ObjectData(c, response)
 			if err != nil {
@@ -325,13 +404,14 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
 		openaiResponse := ResponseClaude2OpenAI(&claudeResponse)
-		openaiResponse.Usage = buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
+		publicUsage := service.AdjustUsageForClient(info, claudeInfo.Usage)
+		openaiResponse.Usage = buildOpenAIStyleUsageFromClaudeUsage(publicUsage)
 		responseData, err = common.Marshal(openaiResponse)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 	case types.RelayFormatClaude:
-		responseData = data
+		responseData = []byte(patchClaudeResponseUsageForClient(string(data), info, claudeResponse.Usage, false))
 	}
 
 	if claudeResponse.Usage != nil && claudeResponse.Usage.ServerToolUse != nil && claudeResponse.Usage.ServerToolUse.WebSearchRequests > 0 {

@@ -25,6 +25,13 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return nil
 	}
 
+	var usageEnvelope struct {
+		Usage *dto.Usage `json:"usage"`
+	}
+	if common.UnmarshalJsonStr(data, &usageEnvelope) == nil && usageEnvelope.Usage != nil {
+		data = patchOpenAIResponseUsageForClient(data, info, usageEnvelope.Usage)
+	}
+
 	if !forceFormat && !thinkToContent {
 		return helper.StringData(c, data)
 	}
@@ -256,6 +263,11 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	applyUsagePostProcessing(info, &simpleResponse.Usage, responseBody)
+	settlementUsage := simpleResponse.Usage
+	publicUsage := service.AdjustUsageForClient(info, &simpleResponse.Usage)
+	if publicUsage != &simpleResponse.Usage {
+		simpleResponse.Usage = *publicUsage
+	}
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
@@ -268,6 +280,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 			bodyMap["usage"] = simpleResponse.Usage
 			responseBody, _ = common.Marshal(bodyMap)
 		}
+		responseBody = []byte(patchOpenAIResponseUsageForClient(string(responseBody), info, &settlementUsage))
 		if forceFormat {
 			responseBody, err = common.Marshal(simpleResponse)
 			if err != nil {
@@ -300,5 +313,5 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
-	return &simpleResponse.Usage, nil
+	return &settlementUsage, nil
 }

@@ -62,6 +62,17 @@ func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIRespo
 		claudeRequest.ToolChoice = sharedclaude.MapOpenAIToolChoice(toolChoice, ParallelToolCalls(req.ParallelToolCalls))
 	}
 	applyResponsesReasoningToClaude(req, claudeRequest)
+	if dto.ClaudeRequiresAdaptiveThinking(req.Model) {
+		effort := ReasoningEffort(req)
+		if effort == "none" {
+			claudeRequest.Thinking = &dto.Thinking{Type: "disabled"}
+		} else if effort != "" {
+			claudeRequest.Thinking = &dto.Thinking{Type: "adaptive"}
+		}
+		if err := dto.NormalizeClaudeAdaptiveThinking(claudeRequest, effort); err != nil {
+			return nil, err
+		}
+	}
 
 	systemMessages := make([]dto.ClaudeMediaMessage, 0)
 	if RawJSONPresent(req.Instructions) {

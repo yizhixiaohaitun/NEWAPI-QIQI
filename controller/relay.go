@@ -96,22 +96,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 			// This is the single terminal HTTP/WS response boundary. Keep raw
 			// provider errors available to retries, channel health and logs above.
-			newAPIError = service.SanitizeFinalRelayError(newAPIError)
-			if newAPIError.GetErrorCode() != types.ErrorCodeUpstreamResourceInsufficient {
-				newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
-			}
+			newAPIError = prepareFinalRelayError(newAPIError, requestId)
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
-			case types.RelayFormatClaude:
-				c.JSON(newAPIError.StatusCode, gin.H{
-					"type":  "error",
-					"error": newAPIError.ToClaudeError(),
-				})
 			default:
-				c.JSON(newAPIError.StatusCode, gin.H{
-					"error": newAPIError.ToOpenAIError(),
-				})
+				writeRelayHTTPError(c, relayFormat, newAPIError)
 			}
 		}
 	}()

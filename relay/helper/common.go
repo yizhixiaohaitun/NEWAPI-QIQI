@@ -69,7 +69,10 @@ func sanitizePublicStreamData(c *gin.Context, data string) string {
 	sanitized, changed := types.SanitizeGroupErrorStreamData(data)
 	if changed {
 		logger.LogError(c, "upstream stream group error: "+common.LocalLogPreview(data))
-		return sanitized
+		data = sanitized
+	}
+	if formatted, changed := types.FormatPublicErrorStreamData(data, c.GetString(common.RequestIdKey)); changed {
+		return formatted
 	}
 	return data
 }
