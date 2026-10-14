@@ -21,7 +21,7 @@ const (
 )
 
 type openRouterRequestReasoning struct {
-	Enabled   bool   `json:"enabled"`
+	Enabled   *bool  `json:"enabled"`
 	Effort    string `json:"effort,omitempty"`
 	MaxTokens int    `json:"max_tokens,omitempty"`
 	Exclude   bool   `json:"exclude,omitempty"`
@@ -127,7 +127,8 @@ func OpenAIChatRequestToClaudeMessages(c *gin.Context, textRequest dto.GeneralOp
 		claudeRequest.MaxTokens = &defaultMaxTokens
 	}
 
-	if dto.ClaudeRequiresAdaptiveThinking(textRequest.Model) {
+	compatibility := dto.RequestCompatibilityEnabled(c)
+	if compatibility && dto.ClaudeRequiresAdaptiveThinking(textRequest.Model) {
 		effort := textRequest.ReasoningEffort
 		var cfg struct {
 			Enabled   *bool  `json:"enabled"`
@@ -161,7 +162,7 @@ func OpenAIChatRequestToClaudeMessages(c *gin.Context, textRequest dto.GeneralOp
 			return nil, err
 		}
 	} else {
-		if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(textRequest.Model); ok && effortLevel != "" &&
+		if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(textRequest.Model); compatibility && ok && effortLevel != "" &&
 			(strings.HasPrefix(textRequest.Model, "claude-opus-4-6") ||
 				strings.HasPrefix(textRequest.Model, "claude-opus-4-7") ||
 				strings.HasPrefix(textRequest.Model, "claude-opus-4-8")) {
@@ -180,7 +181,7 @@ func OpenAIChatRequestToClaudeMessages(c *gin.Context, textRequest dto.GeneralOp
 				claudeRequest.TopP = nil
 				claudeRequest.Temperature = common.GetPointer[float64](1.0)
 			}
-		} else if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
+		} else if compatibility && model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
 			strings.HasSuffix(textRequest.Model, "-thinking") {
 
 			trimmedModel := strings.TrimSuffix(textRequest.Model, "-thinking")
@@ -210,6 +211,10 @@ func OpenAIChatRequestToClaudeMessages(c *gin.Context, textRequest dto.GeneralOp
 
 		if textRequest.ReasoningEffort != "" {
 			switch textRequest.ReasoningEffort {
+			case "none":
+				if dto.ClaudeRequiresAdaptiveThinking(textRequest.Model) {
+					claudeRequest.Thinking = &dto.Thinking{Type: "disabled"}
+				}
 			case "low":
 				claudeRequest.Thinking = &dto.Thinking{
 					Type:         "enabled",
@@ -235,7 +240,10 @@ func OpenAIChatRequestToClaudeMessages(c *gin.Context, textRequest dto.GeneralOp
 			}
 
 			budgetTokens := reasoningConfig.MaxTokens
-			if budgetTokens > 0 {
+			if dto.ClaudeRequiresAdaptiveThinking(textRequest.Model) &&
+				((reasoningConfig.Enabled != nil && !*reasoningConfig.Enabled) || reasoningConfig.Effort == "none") {
+				claudeRequest.Thinking = &dto.Thinking{Type: "disabled"}
+			} else if budgetTokens > 0 {
 				claudeRequest.Thinking = &dto.Thinking{
 					Type:         "enabled",
 					BudgetTokens: &budgetTokens,
@@ -433,5 +441,10 @@ func OpenAIChatRequestToClaudeMessages(c *gin.Context, textRequest dto.GeneralOp
 
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
+	if compatibility {
+		if err := dto.NormalizeClaudeAdaptiveThinking(&claudeRequest, ""); err != nil {
+			return nil, err
+		}
+	}
 	return &claudeRequest, nil
 }

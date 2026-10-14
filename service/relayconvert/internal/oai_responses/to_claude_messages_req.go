@@ -62,7 +62,7 @@ func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIRespo
 		claudeRequest.ToolChoice = sharedclaude.MapOpenAIToolChoice(toolChoice, ParallelToolCalls(req.ParallelToolCalls))
 	}
 	applyResponsesReasoningToClaude(req, claudeRequest)
-	if dto.ClaudeRequiresAdaptiveThinking(req.Model) {
+	if dto.RequestCompatibilityEnabled(c) && dto.ClaudeRequiresAdaptiveThinking(req.Model) {
 		effort := ReasoningEffort(req)
 		if effort == "none" {
 			claudeRequest.Thinking = &dto.Thinking{Type: "disabled"}
@@ -172,6 +172,10 @@ func responsesFunctionParametersToClaudeInputSchema(parameters any) map[string]i
 func applyResponsesReasoningToClaude(req *dto.OpenAIResponsesRequest, claudeRequest *dto.ClaudeRequest) {
 	effort := ReasoningEffort(req)
 	switch effort {
+	case "none":
+		if dto.ClaudeRequiresAdaptiveThinking(req.Model) {
+			claudeRequest.Thinking = &dto.Thinking{Type: "disabled"}
+		}
 	case "low":
 		claudeRequest.Thinking = &dto.Thinking{
 			Type:         "enabled",

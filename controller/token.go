@@ -20,6 +20,7 @@ func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	}
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
+	maskedToken.RequestCompatibilityEnabled = common.GetPointer(token.IsRequestCompatibilityEnabled())
 	return &maskedToken
 }
 
@@ -237,21 +238,22 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	cleanToken := model.Token{
-		UserId:                   c.GetInt("id"),
-		Name:                     token.Name,
-		Key:                      key,
-		CreatedTime:              common.GetTimestamp(),
-		AccessedTime:             common.GetTimestamp(),
-		ExpiredTime:              token.ExpiredTime,
-		RemainQuota:              token.RemainQuota,
-		UnlimitedQuota:           token.UnlimitedQuota,
-		ModelLimitsEnabled:       token.ModelLimitsEnabled,
-		ModelLimits:              token.ModelLimits,
-		AllowIps:                 token.AllowIps,
-		Group:                    token.Group,
-		CrossGroupRetry:          token.CrossGroupRetry,
-		UpstreamTimeout:          token.UpstreamTimeout,
-		NonStreamUpstreamTimeout: token.NonStreamUpstreamTimeout,
+		UserId:                      c.GetInt("id"),
+		Name:                        token.Name,
+		Key:                         key,
+		CreatedTime:                 common.GetTimestamp(),
+		AccessedTime:                common.GetTimestamp(),
+		ExpiredTime:                 token.ExpiredTime,
+		RemainQuota:                 token.RemainQuota,
+		UnlimitedQuota:              token.UnlimitedQuota,
+		ModelLimitsEnabled:          token.ModelLimitsEnabled,
+		ModelLimits:                 token.ModelLimits,
+		AllowIps:                    token.AllowIps,
+		Group:                       token.Group,
+		CrossGroupRetry:             token.CrossGroupRetry,
+		UpstreamTimeout:             token.UpstreamTimeout,
+		NonStreamUpstreamTimeout:    token.NonStreamUpstreamTimeout,
+		RequestCompatibilityEnabled: common.GetPointer(token.IsRequestCompatibilityEnabled()),
 	}
 	if request.UpstreamTimeout != nil && *request.UpstreamTimeout == 0 {
 		err = cleanToken.InsertWithExplicitUnlimitedTimeout()
@@ -348,6 +350,9 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
+		if token.RequestCompatibilityEnabled != nil {
+			cleanToken.RequestCompatibilityEnabled = token.RequestCompatibilityEnabled
+		}
 		if request.UpstreamTimeout != nil {
 			cleanToken.UpstreamTimeout = token.UpstreamTimeout
 		}

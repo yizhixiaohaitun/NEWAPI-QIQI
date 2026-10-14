@@ -2,13 +2,36 @@ package model
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 )
 
-const tokenCacheVersion = 1
+// Version 1 hashes may predate request_compatibility_enabled. Reload once
+// rather than treating a missing field as on when SQL already stores false.
+const tokenCacheVersion = 2
+
+// Order this process's read-through fills against settings writes. In particular,
+// no delayed fill may overwrite the cache after an update API has succeeded.
+var tokenCacheMu sync.RWMutex
+
+// SQL has already committed. Never report success if Redis could still serve the
+// old settings: invalidate on refresh failure, and return an explicit partial
+// failure even when invalidation succeeds. No cross-store rollback is claimed.
+func refreshTokenCacheAfterUpdate(token Token) error {
+	if !common.RedisEnabled {
+		return nil
+	}
+	if err := cacheSetToken(token); err != nil {
+		if deleteErr := cacheDeleteToken(token.Key); deleteErr != nil {
+			return fmt.Errorf("token saved to database but cache refresh failed: %w; cache invalidation also failed: %v", err, deleteErr)
+		}
+		return fmt.Errorf("token saved to database but cache refresh failed (cache invalidated): %w", err)
+	}
+	return nil
+}
 
 func cacheSetToken(token Token) error {
 	key := common.GenerateHMAC(token.Key)

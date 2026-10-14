@@ -56,6 +56,8 @@ import {
 } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
 import { StatusContext } from '../../../../context/Status';
+import { withRequestCompatibility } from './requestCompatibility';
+import '../../../../i18n/token-request-compatibility';
 
 const { Text, Title } = Typography;
 
@@ -81,6 +83,7 @@ const EditTokenModal = (props) => {
     allow_ips: '',
     group: '',
     cross_group_retry: false,
+    request_compatibility_enabled: true,
     upstream_timeout: 0,
     non_stream_upstream_timeout: 0,
     tokenCount: 1,
@@ -178,7 +181,9 @@ const EditTokenModal = (props) => {
         data.non_stream_upstream_timeout = data.upstream_timeout || 0;
       }
       if (formApiRef.current) {
-        formApiRef.current.setValues({ ...getInitValues(), ...data });
+        formApiRef.current.setValues(
+          withRequestCompatibility({ ...getInitValues(), ...data }),
+        );
       }
     } else {
       showError(message);
@@ -223,7 +228,8 @@ const EditTokenModal = (props) => {
   const submit = async (values) => {
     setLoading(true);
     if (isEdit) {
-      let { tokenCount: _tc, ...localInputs } = values;
+      let { tokenCount: _tc, ...localInputs } =
+        withRequestCompatibility(values);
       localInputs.remain_quota = localInputs.unlimited_quota
         ? 0
         : displayAmountToQuota(localInputs.remain_amount);
@@ -259,7 +265,8 @@ const EditTokenModal = (props) => {
       const count = parseInt(values.tokenCount, 10) || 1;
       let successCount = 0;
       for (let i = 0; i < count; i++) {
-        let { tokenCount: _tc, ...localInputs } = values;
+        let { tokenCount: _tc, ...localInputs } =
+          withRequestCompatibility(values);
         const baseName =
           values.name.trim() === '' ? 'default' : values.name.trim();
         if (i !== 0 || values.name.trim() === '') {
@@ -428,6 +435,42 @@ const EditTokenModal = (props) => {
                       extraText={t(
                         '开启后，当前分组渠道失败时会按顺序尝试下一个分组的渠道',
                       )}
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.Switch
+                      field='request_compatibility_enabled'
+                      label={t('Request compatibility')}
+                      title={t(
+                        'Turning this off stops the adjustments above; normal protocol conversion remains.',
+                      )}
+                      size='default'
+                      extraText={
+                        <div className='space-y-1 break-words'>
+                          <div
+                            title={t(
+                              'Adapts Claude thinking only for proven model capabilities.',
+                            )}
+                          >
+                            • {t('Thinking format adaptation')}
+                          </div>
+                          <div
+                            title={t(
+                              'Removes temperature/top_p/top_k for Opus 4.7.',
+                            )}
+                          >
+                            • {t('Opus 4.7 sampling parameter adaptation')}
+                          </div>
+                          <div>
+                            {t('Enabled for new tokens; you can turn it off.')}
+                          </div>
+                          <div>
+                            {t(
+                              'Raw passthrough keeps the original request unchanged.',
+                            )}
+                          </div>
+                        </div>
+                      }
                     />
                   </Col>
                   <Col xs={24} sm={24} md={24} lg={10} xl={10}>

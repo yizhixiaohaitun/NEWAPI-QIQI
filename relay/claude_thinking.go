@@ -7,8 +7,12 @@ import (
 )
 
 // This guard belongs after disabled fields/ParamOverride and outside the raw
-// passthrough branches. Only actual Claude Messages bodies are adapted.
+// passthrough branches. Claude Messages gets the thinking/sampling collection;
+// OpenAI proxy protocols get only the confirmed 4.7 sampling rule.
 func normalizeClaudeOutboundJSON(body []byte, info *relaycommon.RelayInfo, request any) ([]byte, error) {
+	if !info.IsRequestCompatibilityEnabled() {
+		return body, nil
+	}
 	model := info.UpstreamModelName
 	switch req := request.(type) {
 	case *dto.ClaudeRequest:
@@ -28,6 +32,10 @@ func normalizeClaudeOutboundJSON(body []byte, info *relaycommon.RelayInfo, reque
 		if dto.ClaudeRequiresAdaptiveThinking(info.UpstreamModelName) {
 			info.UpstreamModelName = model
 		}
+	case *dto.GeneralOpenAIRequest, dto.GeneralOpenAIRequest, *dto.OpenAIResponsesRequest, dto.OpenAIResponsesRequest:
+		// OpenAI-protocol proxy channels keep their protocol; only the confirmed
+		// 4.7 sampling rule applies, never inject Claude thinking/output_config.
+		return dto.NormalizeClaudeSamplingJSON(body, model)
 	default:
 		return body, nil
 	}

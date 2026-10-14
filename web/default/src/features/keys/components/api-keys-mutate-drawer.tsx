@@ -82,6 +82,7 @@ import {
   type ApiKeyGroupOption,
 } from './api-key-group-combobox'
 import { useApiKeys } from './api-keys-provider'
+import '@/i18n/token-request-compatibility'
 
 type ApiKeyMutateDrawerProps = {
   open: boolean
@@ -345,6 +346,56 @@ export function ApiKeysMutateDrawer({
                   )}
                 />
               )}
+
+              <FormField
+                control={form.control}
+                name='request_compatibility_enabled'
+                render={({ field }) => (
+                  <FormItem className={sideDrawerSwitchItemClassName()}>
+                    <div className='min-w-0 flex-1 space-y-1'>
+                      <FormLabel className='text-sm'>
+                        {t('Request compatibility')}
+                      </FormLabel>
+                      <FormDescription className='text-xs break-words'>
+                        <span
+                          className='block'
+                          title={t(
+                            'Adapts Claude thinking only for proven model capabilities.'
+                          )}
+                        >
+                          • {t('Thinking format adaptation')}
+                        </span>
+                        <span
+                          className='block'
+                          title={t(
+                            'Removes temperature/top_p/top_k for Opus 4.7.'
+                          )}
+                        >
+                          • {t('Opus 4.7 sampling parameter adaptation')}
+                        </span>
+                        <span className='mt-1 block'>
+                          {t('Enabled for new tokens; you can turn it off.')}
+                        </span>
+                        <span className='mt-1 block'>
+                          {t(
+                            'Raw passthrough keeps the original request unchanged.'
+                          )}
+                        </span>
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        className='shrink-0'
+                        title={t(
+                          'Turning this off stops the adjustments above; normal protocol conversion remains.'
+                        )}
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
 
               <FormField
                 control={form.control}

@@ -12,32 +12,45 @@ import (
 )
 
 type Token struct {
-	Id                       int            `json:"id"`
-	UserId                   int            `json:"user_id" gorm:"index"`
-	Key                      string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`
-	Status                   int            `json:"status" gorm:"default:1"`
-	Name                     string         `json:"name" gorm:"index" `
-	CreatedTime              int64          `json:"created_time" gorm:"bigint"`
-	AccessedTime             int64          `json:"accessed_time" gorm:"bigint"`
-	ExpiredTime              int64          `json:"expired_time" gorm:"bigint;default:-1"` // -1 means never expired
-	RemainQuota              int            `json:"remain_quota" gorm:"default:0"`
-	UnlimitedQuota           bool           `json:"unlimited_quota"`
-	ModelLimitsEnabled       bool           `json:"model_limits_enabled"`
-	ModelLimits              string         `json:"model_limits" gorm:"type:text"`
-	AllowIps                 *string        `json:"allow_ips" gorm:"default:''"`
-	UsedQuota                int            `json:"used_quota" gorm:"default:0"` // used quota
-	Group                    string         `json:"group" gorm:"default:''"`
-	CrossGroupRetry          bool           `json:"cross_group_retry"`                          // 跨分组重试，仅auto分组有效
-	UpstreamTimeout          int            `json:"upstream_timeout" gorm:"not null;default:0"` // streaming/realtime total seconds; 0 disables the cutoff
-	NonStreamUpstreamTimeout *int           `json:"non_stream_upstream_timeout"`                // nil inherits UpstreamTimeout for legacy rows; 0 disables
-	CacheVersion             int            `json:"cache_version" gorm:"-"`
-	DeletedAt                gorm.DeletedAt `gorm:"index"`
+	Id                          int            `json:"id"`
+	UserId                      int            `json:"user_id" gorm:"index"`
+	Key                         string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`
+	Status                      int            `json:"status" gorm:"default:1"`
+	Name                        string         `json:"name" gorm:"index" `
+	CreatedTime                 int64          `json:"created_time" gorm:"bigint"`
+	AccessedTime                int64          `json:"accessed_time" gorm:"bigint"`
+	ExpiredTime                 int64          `json:"expired_time" gorm:"bigint;default:-1"` // -1 means never expired
+	RemainQuota                 int            `json:"remain_quota" gorm:"default:0"`
+	UnlimitedQuota              bool           `json:"unlimited_quota"`
+	ModelLimitsEnabled          bool           `json:"model_limits_enabled"`
+	ModelLimits                 string         `json:"model_limits" gorm:"type:text"`
+	AllowIps                    *string        `json:"allow_ips" gorm:"default:''"`
+	UsedQuota                   int            `json:"used_quota" gorm:"default:0"` // used quota
+	Group                       string         `json:"group" gorm:"default:''"`
+	CrossGroupRetry             bool           `json:"cross_group_retry"`                          // 跨分组重试，仅auto分组有效
+	UpstreamTimeout             int            `json:"upstream_timeout" gorm:"not null;default:0"` // streaming/realtime total seconds; 0 disables the cutoff
+	NonStreamUpstreamTimeout    *int           `json:"non_stream_upstream_timeout"`                // nil inherits UpstreamTimeout for legacy rows; 0 disables
+	RequestCompatibilityEnabled *bool          `json:"request_compatibility_enabled"`              // nil keeps legacy request compatibility enabled
+	CacheVersion                int            `json:"cache_version" gorm:"-"`
+	DeletedAt                   gorm.DeletedAt `gorm:"index"`
 }
 
 const (
 	DefaultTokenUpstreamTimeout          = 0
 	DefaultTokenNonStreamUpstreamTimeout = 0
 )
+
+// IsRequestCompatibilityEnabled preserves the historical on behavior for NULL rows.
+func (token *Token) IsRequestCompatibilityEnabled() bool {
+	return token.RequestCompatibilityEnabled == nil || *token.RequestCompatibilityEnabled
+}
+
+func (token *Token) BeforeCreate(_ *gorm.DB) error {
+	if token.RequestCompatibilityEnabled == nil {
+		token.RequestCompatibilityEnabled = common.GetPointer(true)
+	}
+	return nil
+}
 
 func ValidateTokenUpstreamTimeout(seconds int) error {
 	if seconds < 0 {
@@ -261,28 +274,28 @@ func GetTokenById(id int) (*Token, error) {
 	if id == 0 {
 		return nil, errors.New("id 为空！")
 	}
+	tokenCacheMu.RLock()
+	defer tokenCacheMu.RUnlock()
 	token := Token{Id: id}
 	var err error = nil
 	err = DB.First(&token, "id = ?", id).Error
 	if shouldUpdateRedis(true, err) {
-		gopool.Go(func() {
-			if err := cacheSetToken(token); err != nil {
-				common.SysLog("failed to update user status cache: " + err.Error())
-			}
-		})
+		if err := cacheSetToken(token); err != nil {
+			common.SysLog("failed to update token cache: " + err.Error())
+		}
 	}
 	return &token, err
 }
 
 func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
+	tokenCacheMu.RLock()
+	defer tokenCacheMu.RUnlock()
 	defer func() {
-		// Update Redis cache asynchronously on successful DB read
+		// Complete read-through writes before a settings update can publish new state.
 		if shouldUpdateRedis(fromDB, err) && token != nil {
-			gopool.Go(func() {
-				if err := cacheSetToken(*token); err != nil {
-					common.SysLog("failed to update user status cache: " + err.Error())
-				}
-			})
+			if err := cacheSetToken(*token); err != nil {
+				common.SysLog("failed to update token cache: " + err.Error())
+			}
 		}
 	}()
 	if !fromDB && common.RedisEnabled {
@@ -317,36 +330,31 @@ func (token *Token) InsertWithExplicitUnlimitedTimeout() error {
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
-func (token *Token) Update() (err error) {
-	defer func() {
-		if shouldUpdateRedis(true, err) {
-			gopool.Go(func() {
-				err := cacheSetToken(*token)
-				if err != nil {
-					common.SysLog("failed to update token cache: " + err.Error())
-				}
-			})
-		}
-	}()
-	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
+func (token *Token) Update() error {
+	tokenCacheMu.Lock()
+	defer tokenCacheMu.Unlock()
+	if err := DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "upstream_timeout",
-		"non_stream_upstream_timeout").Updates(token).Error
-	return err
+		"non_stream_upstream_timeout", "request_compatibility_enabled").Updates(token).Error; err != nil {
+		return err
+	}
+	return refreshTokenCacheAfterUpdate(*token)
 }
 
-func (token *Token) SelectUpdate() (err error) {
-	defer func() {
-		if shouldUpdateRedis(true, err) {
-			gopool.Go(func() {
-				err := cacheSetToken(*token)
-				if err != nil {
-					common.SysLog("failed to update token cache: " + err.Error())
-				}
-			})
+func (token *Token) SelectUpdate() error {
+	tokenCacheMu.Lock()
+	defer tokenCacheMu.Unlock()
+	// This can update zero values. Invalidate rather than publish potentially
+	// outdated settings from a token captured before a concurrent settings edit.
+	if err := DB.Model(token).Select("accessed_time", "status").Updates(token).Error; err != nil {
+		return err
+	}
+	if common.RedisEnabled {
+		if err := cacheDeleteToken(token.Key); err != nil {
+			return fmt.Errorf("token saved to database but cache invalidation failed: %w", err)
 		}
-	}()
-	// This can update zero values
-	return DB.Model(token).Select("accessed_time", "status").Updates(token).Error
+	}
+	return nil
 }
 
 func (token *Token) Delete() (err error) {

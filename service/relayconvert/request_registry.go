@@ -236,6 +236,13 @@ func executeRequestSpec(c *gin.Context, info *relaycommon.RelayInfo, from types.
 }
 
 func executeRequestSteps(c *gin.Context, info *relaycommon.RelayInfo, from types.RelayFormat, target types.RelayFormat, request any, converter string, quality RequestConverterQuality, specs []RequestConverterSpec) (*RequestResult, error) {
+	// All converter entry points share the token policy carried by RelayInfo.
+	if info != nil {
+		if c == nil {
+			c = &gin.Context{}
+		}
+		info.BindRequestCompatibility(c)
+	}
 	current := request
 	steps := make([]RequestStep, 0, len(specs))
 	for _, spec := range specs {

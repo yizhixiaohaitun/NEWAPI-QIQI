@@ -39,6 +39,7 @@ export function getApiKeyFormSchema(t: TFunction) {
       allow_ips: z.string().optional(),
       group: z.string().optional(),
       cross_group_retry: z.boolean().optional(),
+      request_compatibility_enabled: z.boolean(),
       upstream_timeout: z.number().min(0, t('流式总时长不能为负数')),
       non_stream_upstream_timeout: z
         .number()
@@ -78,6 +79,7 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   allow_ips: '',
   group: DEFAULT_GROUP,
   cross_group_retry: true,
+  request_compatibility_enabled: true,
   upstream_timeout: 0,
   non_stream_upstream_timeout: 0,
   tokenCount: 1,
@@ -117,6 +119,7 @@ export function transformFormDataToPayload(
     allow_ips: data.allow_ips || '',
     group: data.group || '',
     cross_group_retry: data.group === 'auto' ? !!data.cross_group_retry : false,
+    request_compatibility_enabled: data.request_compatibility_enabled,
     upstream_timeout: data.upstream_timeout,
     non_stream_upstream_timeout: data.non_stream_upstream_timeout,
   }
@@ -144,6 +147,8 @@ export function transformApiKeyToFormDefaults(
     allow_ips: apiKey.allow_ips || '',
     group: apiKey.group || DEFAULT_GROUP,
     cross_group_retry: !!apiKey.cross_group_retry,
+    // Missing/null is a legacy token; never replace an explicit false.
+    request_compatibility_enabled: apiKey.request_compatibility_enabled ?? true,
     upstream_timeout: apiKey.upstream_timeout,
     non_stream_upstream_timeout:
       apiKey.non_stream_upstream_timeout ?? apiKey.upstream_timeout,

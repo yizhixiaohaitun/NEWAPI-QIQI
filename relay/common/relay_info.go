@@ -111,6 +111,9 @@ type TokenCountMeta struct {
 }
 
 type RelayInfo struct {
+	// Nil keeps legacy SK requests compatible; explicit false disables the collection.
+	RequestCompatibilityEnabled *bool
+
 	TokenId                  int
 	TokenKey                 string
 	TokenGroup               string
@@ -517,6 +520,8 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		UserEmail:  common.GetContextKeyString(c, constant.ContextKeyUserEmail),
 
 		OriginModelName: common.GetContextKeyString(c, constant.ContextKeyOriginalModel),
+
+		RequestCompatibilityEnabled: dto.RequestCompatibilitySetting(c),
 
 		TokenId:         common.GetContextKeyInt(c, constant.ContextKeyTokenId),
 		TokenKey:        common.GetContextKeyString(c, constant.ContextKeyTokenKey),

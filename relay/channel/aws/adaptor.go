@@ -39,8 +39,10 @@ func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dt
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
-	if err := dto.NormalizeClaudeAdaptiveThinking(request, ""); err != nil {
-		return nil, err
+	if info.IsRequestCompatibilityEnabled() && dto.RequestCompatibilityEnabled(c) {
+		if err := dto.NormalizeClaudeAdaptiveThinking(request, ""); err != nil {
+			return nil, err
+		}
 	}
 	for i, message := range request.Messages {
 		updated := false
