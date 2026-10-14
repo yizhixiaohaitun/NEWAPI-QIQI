@@ -363,7 +363,11 @@ func UpdateToken(c *gin.Context) {
 		// NULL row continues to inherit UpstreamTimeout at request time; an
 		// already-independent value must not be overwritten by old clients.
 	}
-	err = cleanToken.Update()
+	if statusOnly != "" {
+		err = cleanToken.UpdateStatus()
+	} else {
+		err = cleanToken.Update()
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return

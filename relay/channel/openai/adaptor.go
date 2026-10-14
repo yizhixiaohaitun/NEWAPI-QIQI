@@ -270,6 +270,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		}
 		// 适配 OpenRouter 的 thinking 后缀
 		if !model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName) &&
+			(info.IsRequestCompatibilityEnabled() && dto.RequestCompatibilityEnabled(c) || !strings.Contains(info.UpstreamModelName, "claude")) &&
 			strings.HasSuffix(info.UpstreamModelName, "-thinking") {
 			info.UpstreamModelName = strings.TrimSuffix(info.UpstreamModelName, "-thinking")
 			request.Model = info.UpstreamModelName
@@ -379,6 +380,11 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		}
 	}
 
+	if info.IsRequestCompatibilityEnabled() && dto.RequestCompatibilityEnabled(c) && dto.ClaudeOmitsSamplingParameters(request.Model) {
+		request.Model = dto.ClaudeSamplingBaseModel(request.Model)
+		request.Temperature, request.TopP, request.TopK = nil, nil, nil
+		info.UpstreamModelName = request.Model
+	}
 	return request, nil
 }
 
@@ -640,7 +646,7 @@ func detectImageMimeType(filename string) string {
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
 	//  转换模型推理力度后缀
 	effort, originModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(request.Model)
-	if effort != "" {
+	if effort != "" && (info.IsRequestCompatibilityEnabled() && dto.RequestCompatibilityEnabled(c) || !strings.Contains(request.Model, "claude")) {
 		if request.Reasoning == nil {
 			request.Reasoning = &dto.Reasoning{
 				Effort: effort,
@@ -652,6 +658,13 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	}
 	if info != nil && request.Reasoning != nil && request.Reasoning.Effort != "" {
 		info.ReasoningEffort = request.Reasoning.Effort
+	}
+	if info.IsRequestCompatibilityEnabled() && dto.RequestCompatibilityEnabled(c) && dto.ClaudeOmitsSamplingParameters(request.Model) {
+		request.Model = dto.ClaudeSamplingBaseModel(request.Model)
+		request.Temperature, request.TopP = nil, nil
+		if info != nil {
+			info.UpstreamModelName = request.Model
+		}
 	}
 	return request, nil
 }

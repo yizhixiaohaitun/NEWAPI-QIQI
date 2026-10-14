@@ -66,7 +66,7 @@ func ClaudeMessagesRequestToOpenAIChat(claudeRequest dto.ClaudeRequest, info *re
 			}
 			openAIRequest.Reasoning = reasoningJSON
 		}
-	} else if info != nil {
+	} else if info != nil && info.IsRequestCompatibilityEnabled() {
 		thinkingSuffix := "-thinking"
 		if strings.HasSuffix(info.OriginModelName, thinkingSuffix) &&
 			!strings.HasSuffix(openAIRequest.Model, thinkingSuffix) {

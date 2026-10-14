@@ -200,6 +200,11 @@ API路径：/api/admin/users/config/levels
 
 ### SK 请求兼容集合（2026-10-14）
 
+- 补审短链：`controller/token.go` status-only → `model/token.go` `UpdateStatus()` 只持久化 status、锁内重读提交态再同步刷新 cache；controller 旧读 true/保存 false/迟到 status 写屏障在 `controller/token_request_compatibility_close_test.go`。
+- raw gate 在 `relay/claude_handler.go` normalizer/后缀及协议转换之前；`relay/request_compatibility_close_test.go` 捕获 global/channel raw 的 Anthropic/Vertex 原字节及 AWS SDK 既有封装（移走 model/stream，集合不改字段或 ModelId）。raw 不关闭计费、错误处理或隐私链。
+- OpenAI 代理入口 `relay/channel/openai/adaptor.go` gate 仅限 Claude 集合后缀与已确认 4.7 sampling，不整体关闭协议转换；OpenRouter 非 Claude 后缀/显式 reasoning 保持。`dto/claude_sampling.go` 末端 override 同规则。`service/relayconvert/internal/claude_messages/to_oai_chat_req.go` gate 反向合成后缀，不 gate messages/tools/reasoning 映射。
+- 补审 HTTP 矩阵 `relay/request_compatibility_close_test.go`：普通 OpenAI Chat/Responses、advanced none、mapped 显式 Claude→Chat、on/off、裸/effort/thinking 后缀、末端 override；penalty 仍属 OpenAI 协议字段，不根据 temperature 废弃错误扩大删除范围。`relay/channel/openai/request_compatibility_test.go` 与 `relay/request_compatibility_policy_test.go` 保证关闭仍保留非目标 reasoning 协议。
+
 - 持久化与 API：`model/token.go` 的 `Token.RequestCompatibilityEnabled *bool`，无 GORM default；`BeforeCreate` 补 true，历史 NULL 有效值为 on；`controller/token.go` 支持后端缺省/批量多次创建 on 和显式 false，公开 masked token 输出有效 bool；更新省略/null 保留，status_only 不修改兼容设置。数据库迁移及重开不会把 false 改回 true。
 - 缓存：`model/token_cache.go` 版本 2，v1（可能缺字段）回源 SQL 一次重建；正常命中不新增请求 SQL。设置更新同步刷新，刷新失败同步失效并返回 SQL 已提交的部分失败；刷新/删除均失败时旧缓存可能保留至恢复/TTL，不承诺跨 SQL/Redis 原子回滚。进程内读穿填充与更新有序，避免迟到填充覆盖设置更新；不引入跨实例分布式事务。
 - 开关链：`constant/context_key.go`、`middleware/auth.go` 的 `SetupContextForToken` 经 `common.SetContextKey` 写入 `*bool`；`dto/request_compatibility.go` 提供 request-local 读取，`relay/common/relay_info.go` 持有 token 策略，`relay/common/request_compatibility.go` 及 `service/relayconvert/request_registry.go` 将其传给既有转换器。nil 为兼容旧 token/caller 的 on，false 在 converter、Claude/AWS/Vertex adaptor 以及末端参数覆盖 guard 均保留，不用进程全局开关隔离 SK。

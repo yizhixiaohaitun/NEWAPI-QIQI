@@ -341,6 +341,23 @@ func (token *Token) Update() error {
 	return refreshTokenCacheAfterUpdate(*token)
 }
 
+// UpdateStatus never republishes settings from the controller's earlier read.
+// Reload the committed row under the cache write lock before refreshing Redis.
+func (token *Token) UpdateStatus() error {
+	tokenCacheMu.Lock()
+	defer tokenCacheMu.Unlock()
+	if err := DB.Model(token).Select("status").Updates(token).Error; err != nil {
+		return err
+	}
+	if err := DB.First(token, "id = ?", token.Id).Error; err != nil {
+		if common.RedisEnabled {
+			_ = cacheDeleteToken(token.Key)
+		}
+		return err
+	}
+	return refreshTokenCacheAfterUpdate(*token)
+}
+
 func (token *Token) SelectUpdate() error {
 	tokenCacheMu.Lock()
 	defer tokenCacheMu.Unlock()

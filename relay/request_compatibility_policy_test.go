@@ -16,6 +16,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRequestCompatibilityExplicitReverseReasoningPreserved(t *testing.T) {
+	off := false
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(c, constant.ContextKeyTokenRequestCompatibilityEnabled, &off)
+	info := &relaycommon.RelayInfo{RequestCompatibilityEnabled: &off, OriginModelName: "alias-thinking", ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeOpenRouter, UpstreamModelName: "claude-opus-4-7"}}
+	result, err := relayconvert.ConvertRequestByID(c, info, relayconvert.ConverterClaudeMessagesToOpenAIChat, &dto.ClaudeRequest{Model: "claude-opus-4-7", MaxTokens: common.GetPointer[uint](30000), System: "system kept", Thinking: &dto.Thinking{Type: "enabled", BudgetTokens: common.GetPointer(4096)}, Messages: []dto.ClaudeMessage{{Role: "user", Content: "Hi"}}, Tools: []dto.Tool{{Name: "probe", InputSchema: map[string]any{"type": "object"}}}})
+	require.NoError(t, err)
+	r := result.Value.(*dto.GeneralOpenAIRequest)
+	require.Equal(t, "claude-opus-4-7", r.Model)
+	require.JSONEq(t, `{"enabled":true,"max_tokens":4096}`, string(r.Reasoning))
+	require.Len(t, r.Messages, 2)
+	require.Equal(t, "system kept", r.Messages[0].StringContent())
+	require.Equal(t, "Hi", r.Messages[1].StringContent())
+	require.Len(t, r.Tools, 1)
+	require.Equal(t, "probe", r.Tools[0].Function.Name)
+}
+
 func TestRequestCompatibilityThinkingPolicy(t *testing.T) {
 	for _, model := range []string{"claude-opus-4-7", "claude-opus-4-8", "claude-opus-5-5"} {
 		for _, enabled := range []bool{true, false} {
