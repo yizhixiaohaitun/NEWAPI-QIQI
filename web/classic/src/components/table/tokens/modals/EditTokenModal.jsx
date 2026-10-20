@@ -462,6 +462,9 @@ const EditTokenModal = (props) => {
                             • {t('Opus 4.7 sampling parameter adaptation')}
                           </div>
                           <div>
+                            {t('Omits non-default temperature for gpt-6-luna; keeps 1.')}
+                          </div>
+                          <div>
                             {t('Enabled for new tokens; you can turn it off.')}
                           </div>
                           <div>

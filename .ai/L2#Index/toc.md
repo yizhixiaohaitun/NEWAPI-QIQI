@@ -200,6 +200,8 @@ API路径：/api/admin/users/config/levels
 
 ### SK 请求兼容集合（2026-10-14）
 
+- 2026-10-20 温度补充：`dto/luna_temperature.go` 精确匹配映射及末端覆盖后的 `gpt-6-luna`，只移除非默认 temperature（含 0/0.3），保留 1、缺省及其他采样参数；不泛化 gpt-6 系列/后缀、不做错误后重发。`relay/claude_thinking.go` 的既有 SK 末端 gate 在 OpenAI Chat/Responses DTO 分支调用，普通 OpenAI、Chat→Responses 与高级 none/Chat↔Responses/Claude→Chat 共享；`relay/gemini_handler.go` 仅在高级 Gemini→Chat 出站 DTO 应用同一 Luna 规则，不改变原生 Gemini 请求；关闭不动、raw 分支不进入。`dto/luna_temperature_test.go` 与 `relay/luna_temperature_test.go` 捕获本地实际 HTTP，覆盖开关、流式、映射进出、末端覆盖、system/messages/tools 与 global/channel 原字节；两主题独立翻译模块和表单说明同步增补；经典主题初始化注册用既有 i18next 23 支持的 on/off，确保初始化前加载也能显示新增说明。
+
 - 补审短链：`controller/token.go` status-only → `model/token.go` `UpdateStatus()` 只持久化 status、锁内重读提交态再同步刷新 cache；controller 旧读 true/保存 false/迟到 status 写屏障在 `controller/token_request_compatibility_close_test.go`。
 - raw gate 在 `relay/claude_handler.go` normalizer/后缀及协议转换之前；`relay/request_compatibility_close_test.go` 捕获 global/channel raw 的 Anthropic/Vertex 原字节及 AWS SDK 既有封装（移走 model/stream，集合不改字段或 ModelId）。raw 不关闭计费、错误处理或隐私链。
 - OpenAI 代理入口 `relay/channel/openai/adaptor.go` gate 仅限 Claude 集合后缀与已确认 4.7 sampling，不整体关闭协议转换；OpenRouter 非 Claude 后缀/显式 reasoning 保持。`dto/claude_sampling.go` 末端 override 同规则。`service/relayconvert/internal/claude_messages/to_oai_chat_req.go` gate 反向合成后缀，不 gate messages/tools/reasoning 映射。

@@ -33,6 +33,8 @@ export const tokenRequestCompatibilityTranslations = {
       'Raw passthrough keeps the original request unchanged.',
     'Adapts Claude thinking only for proven model capabilities.':
       'Adapts Claude thinking only for proven model capabilities.',
+    'Omits non-default temperature for gpt-6-luna; keeps 1.':
+      'Omits non-default temperature for gpt-6-luna; keeps 1.',
     'Removes temperature/top_p/top_k for Opus 4.7.':
       'Removes temperature/top_p/top_k for Opus 4.7.',
   },
@@ -48,6 +50,8 @@ export const tokenRequestCompatibilityTranslations = {
       '原始透传保持请求原样，不修改字节。',
     'Adapts Claude thinking only for proven model capabilities.':
       '仅针对已证实的模型能力适配 Claude 思考格式。',
+    'Omits non-default temperature for gpt-6-luna; keeps 1.':
+      '省略 gpt-6-luna 的非默认 temperature；保留 1。',
     'Removes temperature/top_p/top_k for Opus 4.7.':
       '移除 Opus 4.7 的 temperature/top_p/top_k 参数。',
   },
@@ -63,6 +67,8 @@ export const tokenRequestCompatibilityTranslations = {
       '原始透傳保持請求原樣，不修改位元組。',
     'Adapts Claude thinking only for proven model capabilities.':
       '僅針對已證實的模型能力適配 Claude 思考格式。',
+    'Omits non-default temperature for gpt-6-luna; keeps 1.':
+      '省略 gpt-6-luna 的非預設 temperature；保留 1。',
     'Removes temperature/top_p/top_k for Opus 4.7.':
       '移除 Opus 4.7 的 temperature/top_p/top_k 參數。',
   },
@@ -79,6 +85,8 @@ export const tokenRequestCompatibilityTranslations = {
       'Le passthrough brut conserve la requête originale sans modification.',
     'Adapts Claude thinking only for proven model capabilities.':
       'Adapte Claude thinking uniquement aux capacités confirmées du modèle.',
+    'Omits non-default temperature for gpt-6-luna; keeps 1.':
+      'Omet temperature non standard pour gpt-6-luna ; conserve 1.',
     'Removes temperature/top_p/top_k for Opus 4.7.':
       'Supprime temperature/top_p/top_k pour Opus 4.7.',
   },
@@ -94,6 +102,8 @@ export const tokenRequestCompatibilityTranslations = {
       'Исходный passthrough не меняет запрос и его байты.',
     'Adapts Claude thinking only for proven model capabilities.':
       'Адаптирует Claude thinking только для подтверждённых возможностей модели.',
+    'Omits non-default temperature for gpt-6-luna; keeps 1.':
+      'Для gpt-6-luna удаляет нестандартную temperature; сохраняет 1.',
     'Removes temperature/top_p/top_k for Opus 4.7.':
       'Удаляет temperature/top_p/top_k для Opus 4.7.',
   },
@@ -109,6 +119,8 @@ export const tokenRequestCompatibilityTranslations = {
       '生のパススルーでは元のリクエストとバイト列を変更しません。',
     'Adapts Claude thinking only for proven model capabilities.':
       '確認済みのモデル能力にのみ Claude thinking を適応します。',
+    'Omits non-default temperature for gpt-6-luna; keeps 1.':
+      'gpt-6-luna の既定値以外の temperature を省略し、1 は保持します。',
     'Removes temperature/top_p/top_k for Opus 4.7.':
       'Opus 4.7 の temperature/top_p/top_k を除去します。',
   },
@@ -125,6 +137,8 @@ export const tokenRequestCompatibilityTranslations = {
       'Truyền thẳng thô giữ nguyên yêu cầu và byte gốc.',
     'Adapts Claude thinking only for proven model capabilities.':
       'Chỉ điều chỉnh Claude thinking cho khả năng mô hình đã được xác nhận.',
+    'Omits non-default temperature for gpt-6-luna; keeps 1.':
+      'Bỏ temperature khác mặc định cho gpt-6-luna; giữ nguyên 1.',
     'Removes temperature/top_p/top_k for Opus 4.7.':
       'Loại bỏ temperature/top_p/top_k cho Opus 4.7.',
   },
@@ -139,7 +153,14 @@ export function registerTokenRequestCompatibility(instance) {
     }
   };
   if (instance.isInitialized) register();
-  else instance.once('initialized', register);
+  else {
+    // The classic theme's i18next 23 supports on/off, not once.
+    const onInitialized = () => {
+      instance.off('initialized', onInitialized);
+      register();
+    };
+    instance.on('initialized', onInitialized);
+  }
 }
 
 registerTokenRequestCompatibility(i18n);

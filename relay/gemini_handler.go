@@ -162,6 +162,15 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			}
 		}
 
+		// Advanced Gemini-to-Chat routes share the confirmed Luna rule, not
+		// assumptions about Gemini sampling. Raw passthrough never enters here.
+		if _, isOpenAI := convertedRequest.(*dto.GeneralOpenAIRequest); isOpenAI && info.IsRequestCompatibilityEnabled() {
+			jsonData, err = dto.NormalizeLunaTemperatureJSON(jsonData, info.UpstreamModelName)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+		}
+
 		logger.LogDebug(c, "Gemini request body: %s", jsonData)
 
 		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)

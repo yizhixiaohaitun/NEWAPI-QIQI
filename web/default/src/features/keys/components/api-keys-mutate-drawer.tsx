@@ -373,6 +373,9 @@ export function ApiKeysMutateDrawer({
                         >
                           • {t('Opus 4.7 sampling parameter adaptation')}
                         </span>
+                        <span className='block'>
+                          {t('Omits non-default temperature for gpt-6-luna; keeps 1.')}
+                        </span>
                         <span className='mt-1 block'>
                           {t('Enabled for new tokens; you can turn it off.')}
                         </span>

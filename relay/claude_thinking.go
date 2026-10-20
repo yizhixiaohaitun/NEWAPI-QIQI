@@ -8,7 +8,7 @@ import (
 
 // This guard belongs after disabled fields/ParamOverride and outside the raw
 // passthrough branches. Claude Messages gets the thinking/sampling collection;
-// OpenAI proxy protocols get only the confirmed 4.7 sampling rule.
+// OpenAI proxy protocols get only the confirmed model-specific sampling rules.
 func normalizeClaudeOutboundJSON(body []byte, info *relaycommon.RelayInfo, request any) ([]byte, error) {
 	if !info.IsRequestCompatibilityEnabled() {
 		return body, nil
@@ -33,9 +33,13 @@ func normalizeClaudeOutboundJSON(body []byte, info *relaycommon.RelayInfo, reque
 			info.UpstreamModelName = model
 		}
 	case *dto.GeneralOpenAIRequest, dto.GeneralOpenAIRequest, *dto.OpenAIResponsesRequest, dto.OpenAIResponsesRequest:
-		// OpenAI-protocol proxy channels keep their protocol; only the confirmed
-		// 4.7 sampling rule applies, never inject Claude thinking/output_config.
-		return dto.NormalizeClaudeSamplingJSON(body, model)
+		// Keep the OpenAI protocol and normal message/tool conversion. Apply only
+		// confirmed sampling restrictions, after mapping and parameter overrides.
+		normalized, err := dto.NormalizeClaudeSamplingJSON(body, model)
+		if err != nil {
+			return nil, err
+		}
+		return dto.NormalizeLunaTemperatureJSON(normalized, model)
 	default:
 		return body, nil
 	}

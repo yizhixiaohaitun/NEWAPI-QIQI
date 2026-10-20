@@ -33,6 +33,10 @@ test('actual classic instance registers dedicated Chinese token strings', async 
     'Opus 4.7 采样参数适配',
   );
   assert.equal(
+    i18n.t('Omits non-default temperature for gpt-6-luna; keeps 1.'),
+    '省略 gpt-6-luna 的非默认 temperature；保留 1。',
+  );
+  assert.equal(
     i18n.t('Enabled for new tokens; you can turn it off.'),
     '新建默认开启，可手动关闭。',
   );
