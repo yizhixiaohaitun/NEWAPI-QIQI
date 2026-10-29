@@ -414,6 +414,11 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if types.IsChannelError(openaiErr) {
 		return true
 	}
+	// Admin-configured error text (e.g. the intermittent 400 "prompt was
+	// flagged") retries on another channel regardless of status code rules.
+	if operation_setting.ShouldRetryByErrorMessage(openaiErr.Error(), openaiErr.ToOpenAIError().Message) {
+		return true
+	}
 	// Upstream NEWAPI-compatible services can report their own pre-consume
 	// exhaustion as HTTP 403. Retry the marked provider resource failure while
 	// leaving ordinary 403 errors under the configured status-code policy.
@@ -807,6 +812,13 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 		return false
 	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {
+		return true
+	}
+	taskErrText := ""
+	if taskErr.Error != nil {
+		taskErrText = taskErr.Error.Error()
+	}
+	if operation_setting.ShouldRetryByErrorMessage(taskErr.Message, taskErrText) {
 		return true
 	}
 	if taskErr.StatusCode == 307 {

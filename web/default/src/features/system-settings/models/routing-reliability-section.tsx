@@ -75,6 +75,7 @@ const routingReliabilitySchema = z
     AutomaticDisableKeywords: z.string(),
     AutomaticDisableStatusCodes: z.string(),
     AutomaticRetryStatusCodes: z.string(),
+    AutomaticRetryKeywords: z.string(),
     monitor_setting: z.object({
       auto_test_channel_enabled: z.boolean(),
       auto_test_channel_minutes: z.coerce
@@ -124,6 +125,7 @@ type RoutingReliabilitySectionProps = {
     AutomaticDisableKeywords: string
     AutomaticDisableStatusCodes: string
     AutomaticRetryStatusCodes: string
+    AutomaticRetryKeywords: string
     'monitor_setting.auto_test_channel_enabled': boolean
     'monitor_setting.auto_test_channel_minutes': number
     'monitor_setting.channel_test_mode': ChannelTestMode
@@ -147,6 +149,14 @@ type NormalizedRoutingReliabilityValues = {
   'monitor_setting.channel_test_mode': ChannelTestMode
 }
 
+function normalizeKeywordLines(value: string) {
+  return normalizeLineEndings(value)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
 function normalizeChannelTestMode(value?: string): ChannelTestMode {
   return value === 'passive_recovery' ? 'passive_recovery' : 'scheduled_all'
 }
@@ -163,6 +173,9 @@ const buildFormDefaults = (
   ),
   AutomaticDisableStatusCodes: defaults.AutomaticDisableStatusCodes ?? '',
   AutomaticRetryStatusCodes: defaults.AutomaticRetryStatusCodes ?? '',
+  AutomaticRetryKeywords: normalizeLineEndings(
+    defaults.AutomaticRetryKeywords ?? ''
+  ),
   monitor_setting: {
     auto_test_channel_enabled:
       defaults['monitor_setting.auto_test_channel_enabled'],
@@ -190,6 +203,9 @@ const normalizeDefaults = (
   AutomaticRetryStatusCodes: parseHttpStatusCodeRules(
     defaults.AutomaticRetryStatusCodes ?? ''
   ).normalized,
+  AutomaticRetryKeywords: normalizeKeywordLines(
+    defaults.AutomaticRetryKeywords ?? ''
+  ),
   'monitor_setting.auto_test_channel_enabled':
     defaults['monitor_setting.auto_test_channel_enabled'],
   'monitor_setting.auto_test_channel_minutes':
@@ -215,6 +231,7 @@ const normalizeFormValues = (
   AutomaticRetryStatusCodes: parseHttpStatusCodeRules(
     values.AutomaticRetryStatusCodes
   ).normalized,
+  AutomaticRetryKeywords: normalizeKeywordLines(values.AutomaticRetryKeywords),
   'monitor_setting.auto_test_channel_enabled':
     values.monitor_setting.auto_test_channel_enabled,
   'monitor_setting.auto_test_channel_minutes':
@@ -349,6 +366,29 @@ export function RoutingReliabilitySection({
                 )}
               />
             </div>
+            <FormField
+              control={form.control}
+              name='AutomaticRetryKeywords'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Auto-retry error keywords')}</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      rows={4}
+                      placeholder={t('one keyword per line')}
+                      {...field}
+                      onChange={(event) => field.onChange(event.target.value)}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'If an upstream error contains any of these lines (case insensitive), the request is retried on another channel regardless of its status code.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           </div>
 
           <Separator />

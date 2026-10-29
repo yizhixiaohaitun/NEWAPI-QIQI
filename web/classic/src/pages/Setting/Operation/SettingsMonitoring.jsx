@@ -42,6 +42,8 @@ export default function SettingsMonitoring(props) {
     AutomaticDisableStatusCodes: '401',
     AutomaticRetryStatusCodes:
       '100-199,300-399,401-407,409-499,500-503,505-523,525-599',
+    AutomaticRetryKeywords:
+      'your prompt was flagged as potentially violating our usage policy',
     'monitor_setting.auto_test_channel_enabled': false,
     'monitor_setting.auto_test_channel_minutes': 10,
   });
@@ -262,6 +264,18 @@ export default function SettingsMonitoring(props) {
                   }
                   parsed={parsedAutoRetryStatusCodes}
                   invalidText={t('自动重试状态码格式不正确')}
+                />
+                <Form.TextArea
+                  label={t('自动重试报错关键词')}
+                  placeholder={t('一行一个，不区分大小写')}
+                  extraText={t(
+                    '上游报错包含任意一行内容时（不区分大小写），不论状态码都会换渠道重试',
+                  )}
+                  field={'AutomaticRetryKeywords'}
+                  autosize={{ minRows: 4, maxRows: 12 }}
+                  onChange={(value) =>
+                    setInputs({ ...inputs, AutomaticRetryKeywords: value })
+                  }
                 />
                 <Form.TextArea
                   label={t('自动禁用关键词')}

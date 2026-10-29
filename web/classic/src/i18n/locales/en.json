@@ -2913,6 +2913,8 @@
     "自动测试所有通道间隔时间": "Auto test interval for all channels",
     "自动生成：": "Auto-generated: ",
     "自动禁用": "Auto disabled",
+    "自动重试报错关键词": "Auto-retry error keywords",
+    "上游报错包含任意一行内容时（不区分大小写），不论状态码都会换渠道重试": "If an upstream error contains any of these lines (case insensitive), the request is retried on another channel regardless of its status code",
     "自动禁用关键词": "Automatic disable keywords",
     "自动禁用状态码": "Auto-disable status codes",
     "自动禁用状态码格式不正确": "Invalid auto-disable status code format",
