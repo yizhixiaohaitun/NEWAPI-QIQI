@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/relayconvert"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -116,6 +117,17 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 	defer service.CloseResponseBodyGracefully(resp)
 
+	// Hold role/empty preamble frames until real output, so an HTTP-200 SSE
+	// error can return to channel retry without leaking a failed attempt.
+	var retryWriter *upstreamStreamRetryWriter
+	if operation_setting.IsResponsesStreamErrorRetryEnabled() {
+		originalWriter := c.Writer
+		retryWriter = newUpstreamStreamRetryWriter(originalWriter)
+		c.Writer = retryWriter
+		defer func() { c.Writer = originalWriter }()
+	}
+	var streamErr *types.NewAPIError
+
 	model := info.UpstreamModelName
 	var responseId string
 	var createAt int64 = 0
@@ -131,6 +143,32 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	isAudioModel := strings.Contains(strings.ToLower(model), "audio")
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		var envelope dto.GeneralErrorResponse
+		if common.UnmarshalJsonStr(data, &envelope) == nil {
+			if upstreamError := envelope.TryToOpenAIError(); upstreamError != nil {
+				if retryWriter != nil && !retryWriter.committed {
+					streamErr = types.WithOpenAIError(*upstreamError, responsesStreamErrorStatus(upstreamError))
+					markResponsesStreamErrorBeforeCommit(c, info)
+					sr.Stop(streamErr)
+					return
+				}
+				// Once output is visible, keep the original partial stream contract.
+				// It must never be replayed on another channel.
+				sr.Error(types.WithOpenAIError(*upstreamError, responsesStreamErrorStatus(upstreamError)))
+			}
+		}
+		if retryWriter != nil && !retryWriter.committed && chatStreamDataCommitsOutput(data) {
+			// Commit time is the real first byte; keep the scanner's received count.
+			received := info.ReceivedResponseCount
+			info.ResetFirstResponseTime()
+			info.ReceivedResponseCount = received
+			info.SetFirstResponseTime()
+			if err := retryWriter.Commit(); err != nil {
+				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+				sr.Stop(streamErr)
+				return
+			}
+		}
 		if lastStreamData != "" {
 			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
 				common.SysLog("error handling stream format: " + err.Error())
@@ -150,6 +188,10 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			}
 		}
 	})
+
+	if streamErr != nil {
+		return nil, streamErr
+	}
 
 	// 流异常结束且 0 上游数据：按失败处理，不走本地估算计费兜底
 	if emptyErr := helper.StreamAbnormalEmptyError(c, info); emptyErr != nil {
@@ -196,6 +238,11 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
+	if retryWriter != nil {
+		if err := retryWriter.Commit(); err != nil {
+			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+		}
+	}
 	return usage, nil
 }
 

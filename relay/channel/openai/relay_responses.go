@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,115 +17,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
-
-const responsesStreamRetryBufferLimit = 4 << 20
-
-type responsesStreamRetryWriter struct {
-	gin.ResponseWriter
-	header        http.Header
-	buffer        bytes.Buffer
-	pendingStatus int
-	committed     bool
-}
-
-func newResponsesStreamRetryWriter(writer gin.ResponseWriter) *responsesStreamRetryWriter {
-	return &responsesStreamRetryWriter{
-		ResponseWriter: writer,
-		header:         writer.Header().Clone(),
-	}
-}
-
-func (w *responsesStreamRetryWriter) Header() http.Header {
-	return w.header
-}
-
-func (w *responsesStreamRetryWriter) WriteHeader(code int) {
-	if w.committed {
-		w.ResponseWriter.WriteHeader(code)
-		return
-	}
-	if w.pendingStatus == 0 {
-		w.pendingStatus = code
-	}
-}
-
-func (w *responsesStreamRetryWriter) WriteHeaderNow() {
-	if w.committed {
-		w.ResponseWriter.WriteHeaderNow()
-		return
-	}
-	if w.pendingStatus == 0 {
-		w.pendingStatus = http.StatusOK
-	}
-}
-
-func (w *responsesStreamRetryWriter) Write(data []byte) (int, error) {
-	if w.committed {
-		return w.ResponseWriter.Write(data)
-	}
-	if w.buffer.Len()+len(data) > responsesStreamRetryBufferLimit {
-		if err := w.Commit(); err != nil {
-			return 0, err
-		}
-		return w.ResponseWriter.Write(data)
-	}
-	return w.buffer.Write(data)
-}
-
-func (w *responsesStreamRetryWriter) WriteString(data string) (int, error) {
-	if w.committed {
-		return w.ResponseWriter.WriteString(data)
-	}
-	if w.buffer.Len()+len(data) > responsesStreamRetryBufferLimit {
-		if err := w.Commit(); err != nil {
-			return 0, err
-		}
-		return w.ResponseWriter.WriteString(data)
-	}
-	return w.buffer.WriteString(data)
-}
-
-func (w *responsesStreamRetryWriter) Flush() {
-	if w.committed {
-		w.ResponseWriter.Flush()
-	}
-}
-
-func (w *responsesStreamRetryWriter) Written() bool {
-	return w.committed && w.ResponseWriter.Written()
-}
-
-func (w *responsesStreamRetryWriter) Status() int {
-	if w.pendingStatus != 0 {
-		return w.pendingStatus
-	}
-	return w.ResponseWriter.Status()
-}
-
-func (w *responsesStreamRetryWriter) Size() int {
-	if w.committed {
-		return w.ResponseWriter.Size()
-	}
-	return w.buffer.Len()
-}
-
-func (w *responsesStreamRetryWriter) Commit() error {
-	if w.committed {
-		return nil
-	}
-	for key, values := range w.header {
-		w.ResponseWriter.Header()[key] = append([]string(nil), values...)
-	}
-	if w.pendingStatus != 0 {
-		w.ResponseWriter.WriteHeader(w.pendingStatus)
-	}
-	w.committed = true
-	if w.buffer.Len() == 0 {
-		return nil
-	}
-	_, err := w.ResponseWriter.Write(w.buffer.Bytes())
-	return err
-}
 
 func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
@@ -184,10 +74,10 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var responseTextBuilder strings.Builder
 	var streamErr *types.NewAPIError
 	retryEnabled := operation_setting.IsResponsesStreamErrorRetryEnabled()
-	var retryWriter *responsesStreamRetryWriter
+	var retryWriter *upstreamStreamRetryWriter
 	if retryEnabled {
 		originalWriter := c.Writer
-		retryWriter = newResponsesStreamRetryWriter(originalWriter)
+		retryWriter = newUpstreamStreamRetryWriter(originalWriter)
 		c.Writer = retryWriter
 		defer func() {
 			c.Writer = originalWriter
@@ -228,8 +118,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 
-		if retryWriter != nil && !retryWriter.committed && responsesStreamEventCommitsOutput(streamResponse.Type) {
+		if retryWriter != nil && !retryWriter.committed && responsesStreamEventCommitsOutput(&streamResponse) {
+			// Commit time is the real first byte; keep the scanner's received count.
+			received := info.ReceivedResponseCount
 			info.ResetFirstResponseTime()
+			info.ReceivedResponseCount = received
 			info.SetFirstResponseTime()
 			if err := retryWriter.Commit(); err != nil {
 				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
@@ -338,7 +231,11 @@ func responsesStreamErrorStatus(openAIError *types.OpenAIError) int {
 	errorType := strings.ToLower(strings.TrimSpace(openAIError.Type))
 	errorCode := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", openAIError.Code)))
 	switch {
-	case errorType == "too_many_requests", errorCode == "rate_limit_exceeded":
+	case errorType == "too_many_requests", errorType == "rate_limit_error", errorType == "rate_limit_exceeded",
+		errorCode == "rate_limit_exceeded", errorCode == "429",
+		strings.Contains(strings.ToLower(openAIError.Message), "exceeded token rate limit"),
+		strings.Contains(strings.ToLower(openAIError.Message), "exceeded request rate limit"):
+
 		return http.StatusTooManyRequests
 	case errorType == "invalid_request", errorType == "invalid_request_error":
 		return http.StatusBadRequest
@@ -349,13 +246,37 @@ func responsesStreamErrorStatus(openAIError *types.OpenAIError) int {
 	}
 }
 
-func responsesStreamEventCommitsOutput(eventType string) bool {
-	switch strings.ToLower(strings.TrimSpace(eventType)) {
+func responsesStreamEventCommitsOutput(event *dto.ResponsesStreamResponse) bool {
+	switch strings.ToLower(strings.TrimSpace(event.Type)) {
 	case "response.created", "response.queued", "response.in_progress", "keepalive", "ping":
 		return false
+	case "response.output_item.added":
+		// Empty message/reasoning/tool containers carry no visible output yet.
+		// Azure can send them before an in-stream token rate-limit error.
+		return !responsesOutputItemIsEmpty(event.Item)
+	case "response.content_part.added", "response.reasoning_summary_part.added":
+		return event.Part == nil || event.Part.Text != ""
 	default:
 		return true
 	}
+}
+
+func responsesOutputItemIsEmpty(item *dto.ResponsesOutput) bool {
+	if item == nil {
+		return false
+	}
+	switch item.Type {
+	case "message", "reasoning", "function_call", "custom_tool_call":
+	default:
+		return false
+	}
+	for _, content := range item.Content {
+		if content.Text != "" {
+			return false
+		}
+	}
+	arguments := strings.TrimSpace(string(item.Arguments))
+	return arguments == "" || arguments == `""` || arguments == "null"
 }
 
 func responsesStreamPrematureEndError(info *relaycommon.RelayInfo) *types.NewAPIError {

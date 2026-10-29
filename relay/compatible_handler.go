@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/samber/lo"
@@ -190,8 +191,15 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		requestBody = body
 	}
 
+	// OpenAI Chat SSE can carry a rate-limit error with HTTP 200. Do not let
+	// pre-request keepalive commit the downstream before its handler can retry.
+	originalDeferStreamHeaders := info.DeferStreamHeadersUntilResponse
+	if info.IsStream && info.ApiType == constant.APITypeOpenAI && operation_setting.IsResponsesStreamErrorRetryEnabled() {
+		info.DeferStreamHeadersUntilResponse = true
+	}
 	var httpResp *http.Response
 	resp, err := adaptor.DoRequest(c, info, requestBody)
+	info.DeferStreamHeadersUntilResponse = originalDeferStreamHeaders
 	if err != nil {
 		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
