@@ -229,3 +229,9 @@ API路径：/api/admin/users/config/levels
 
 - 报错关键词：`setting/operation_setting/retry_keywords.go` 保存 `AutomaticRetryKeywords`（每行一条、忽略大小写子串，默认含 prompt 被判违规文案），`model/option.go` 落库加载，`controller/relay.go` 在状态码规则之外命中关键词即换渠道；两套后台设置页均为多行输入框。回归 `setting/operation_setting/retry_keywords_test.go`、`controller/relay_retry_keyword_http_test.go`。
 - HTTP 200 流内限流错误：`relay/channel/openai/stream_retry.go` 缓冲尚无可见输出的 Chat 帧，`relay-openai.go`/`relay_responses.go` 在输出前遇到 error envelope 时不外泄前导帧并返回可重试错误，已有正文后保持原流不换渠道；`relay/compatible_handler.go` 开启时延迟流头。复用 Responses 流错误重试开关。回归 `relay/channel/openai/stream_retry_test.go`、`controller/relay_chat_stream_rate_limit_retry_test.go`、`controller/relay_stream_rate_limit_http_test.go`。
+
+### 看板消耗分布金额饼图
+
+- `web/default/src/features/dashboard/lib/charts.ts` 生成 `spec_quota_pie`，按模型汇总金额，前 15 项之外合为其他；百分比和 tooltip 复用原始 quota 汇总。
+- `components/models/consumption-distribution-chart.tsx` 在柱状图、面积图与饼图间切换；`constants.ts` / `types.ts` / `lib/filters.ts` 维护默认偏好。
+- 直接验证：default 前端 `tsgo -b`、`rsbuild build`，确认消耗分布三种视图及金额总量保持一致。
