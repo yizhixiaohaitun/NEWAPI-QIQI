@@ -218,6 +218,12 @@ API路径：/api/admin/users/config/levels
 - 出口回归：`dto/request_compatibility_test.go`、`relay/request_compatibility_test.go`（用户精确 JSON 开关 on/off、流/非流、Claude 与 OAI/Responses、mapping/末端 override/raw passthrough、AWS/Vertex marshal）、`relay/request_compatibility_policy_test.go`（Chat/Responses thinking/effort/旧4.6后缀）、`relay/request_compatibility_concurrent_test.go`（真实并发 16 个不同 SK，两渠道 on/off，先初始化全局客户端、独立 ctx/server/info、主 goroutine 收集断言）。`NEWAPI_COMPAT_CAPTURE_DIR` 可保存 HTTP 出站；捕获服务器返回本地 400，不调用真实模型。
 - 前端回归：`web/default/src/features/keys/lib/api-key-request-compatibility.test.ts`、`web/default/src/i18n/token-request-compatibility.test.ts`、`web/classic/src/components/table/tokens/modals/requestCompatibility.test.js`、`web/classic/src/i18n/token-request-compatibility.test.js`；两主题需 production build，生成 routeTree 不属于产品增量。隔离表单 Playwright 验证创建 on、编辑 false/null/缺字段、保存和批量 payload；不操作用户会话或线上实例。
 
+### Gemini 原生工具签名历史保真
+
+- `dto/gemini.go`：原生 `FunctionCall` 保留服务端 `id`，接收的 `args` 使用 `json.RawMessage`，不经 float64 往返而改写大整数或高精度小数；程序化协议转换仍可使用 map 构造参数。`GeminiPart.UnmarshalJSON` 同时识别 `function_call/function_response/thought_signature` 与驼峰写法，统一输出驼峰；签名值和所在 part、思考/并行调用顺序不重排，不为缺失签名补伪值。
+- `relay/gemini_handler.go#GeminiHelper` 的既有原生转换链继续处理模型映射、思考配置及渠道参数；不强行开启全局 raw passthrough，不绕过参数覆盖。`GeminiFunctionResponse.response` 仍是既有 map 解码，工具结果的任意精度数值不在本次保证范围。
+- 回归：`dto/gemini_native_history_test.go` 覆盖 ID、精确参数、缺省/null/空参数及下划线签名历史；`relay/gemini_native_history_test.go#TestGeminiNativeHistory` 经真实 Helper/Adaptor/DeepCopy 向 localhost HTTP 捕获 JSON/SSE × camel/snake 四条出站链，逐项核对两个调用与响应 ID、签名位置/仅一次、思考与参数精度。mock 返回固定 400 在计费前停止，不调用真实模型；通过不等于现场 `Corrupted thought signature` 根因已确认或线上续轮已恢复。
+
 ### 上游错误换渠道重试（2026-10-29）
 
 - 报错关键词：`setting/operation_setting/retry_keywords.go` 保存 `AutomaticRetryKeywords`（每行一条、忽略大小写子串，默认含 prompt 被判违规文案），`model/option.go` 落库加载，`controller/relay.go` 在状态码规则之外命中关键词即换渠道；两套后台设置页均为多行输入框。回归 `setting/operation_setting/retry_keywords_test.go`、`controller/relay_retry_keyword_http_test.go`。

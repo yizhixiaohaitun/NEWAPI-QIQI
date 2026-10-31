@@ -238,8 +238,29 @@ func (g *GeminiInlineData) UnmarshalJSON(data []byte) error {
 }
 
 type FunctionCall struct {
-	FunctionName string `json:"name"`
-	Arguments    any    `json:"args"`
+	FunctionName string          `json:"name"`
+	Arguments    any             `json:"args,omitempty"`
+	ID           json.RawMessage `json:"id,omitempty"`
+}
+
+// UnmarshalJSON keeps native arguments as JSON rather than decoding numbers to
+// float64. A signed function call must survive a relay round trip without losing
+// its server-issued ID or changing large integers and precise decimal values.
+// Programmatic protocol converters can still construct Arguments with maps.
+func (f *FunctionCall) UnmarshalJSON(data []byte) error {
+	type Alias FunctionCall
+	var aux struct {
+		Alias
+		Arguments json.RawMessage `json:"args"`
+	}
+	if err := common.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*f = FunctionCall(aux.Alias)
+	if len(aux.Arguments) > 0 {
+		f.Arguments = aux.Arguments
+	}
+	return nil
 }
 
 type GeminiFunctionResponse struct {
@@ -281,13 +302,16 @@ type GeminiPart struct {
 	CodeExecutionResult *GeminiPartCodeExecutionResult `json:"codeExecutionResult,omitempty"`
 }
 
-// UnmarshalJSON custom unmarshaler for GeminiPart to support snake_case and camelCase for InlineData
+// UnmarshalJSON accepts native camelCase and SDK snake_case part fields.
 func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	// Alias to avoid recursion during unmarshalling
 	type Alias GeminiPart
 	var aux struct {
 		Alias
-		InlineDataSnake *GeminiInlineData `json:"inline_data,omitempty"` // snake_case variant
+		InlineDataSnake       *GeminiInlineData       `json:"inline_data,omitempty"`
+		FunctionCallSnake     *FunctionCall           `json:"function_call,omitempty"`
+		ThoughtSignatureSnake json.RawMessage         `json:"thought_signature,omitempty"`
+		FunctionResponseSnake *GeminiFunctionResponse `json:"function_response,omitempty"`
 	}
 
 	if err := common.Unmarshal(data, &aux); err != nil {
@@ -303,7 +327,15 @@ func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	} else if aux.InlineData != nil { // Fallback to camelCase from Alias
 		p.InlineData = aux.InlineData
 	}
-	// Other fields like Text, FunctionCall etc. are already populated via aux.Alias
+	if aux.FunctionCallSnake != nil {
+		p.FunctionCall = aux.FunctionCallSnake
+	}
+	if len(aux.ThoughtSignatureSnake) > 0 {
+		p.ThoughtSignature = aux.ThoughtSignatureSnake
+	}
+	if aux.FunctionResponseSnake != nil {
+		p.FunctionResponse = aux.FunctionResponseSnake
+	}
 
 	return nil
 }
