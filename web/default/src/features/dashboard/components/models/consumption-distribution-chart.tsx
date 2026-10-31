@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { VChart } from '@visactor/react-vchart'
-import { AreaChart, BarChart3, WalletCards } from 'lucide-react'
+import { AreaChart, BarChart3, PieChart, WalletCards } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -54,6 +54,7 @@ const CHART_TYPE_ICONS: Record<
 > = {
   bar: BarChart3,
   area: AreaChart,
+  pie: PieChart,
 }
 
 export function ConsumptionDistributionChart(
@@ -108,7 +109,12 @@ export function ConsumptionDistributionChart(
       ),
     [props.data, props.loading, timeGranularity, t, chartRadius]
   )
-  const spec = chartType === 'bar' ? chartData.spec_line : chartData.spec_area
+  const specByType: Record<ConsumptionDistributionChartType, typeof chartData.spec_line> = {
+    bar: chartData.spec_line,
+    area: chartData.spec_area,
+    pie: chartData.spec_quota_pie,
+  }
+  const spec = specByType[chartType]
   const specType = typeof spec?.type === 'string' ? spec.type : chartType
   const chartKey = [
     chartType,

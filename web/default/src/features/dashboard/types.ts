@@ -191,7 +191,7 @@ export interface DashboardFilters {
   username?: string
 }
 
-export type ConsumptionDistributionChartType = 'bar' | 'area'
+export type ConsumptionDistributionChartType = 'bar' | 'area' | 'pie'
 
 export type ModelAnalyticsChartTab = 'trend' | 'proportion' | 'top'
 
@@ -240,6 +240,7 @@ export interface ProcessedChartData {
   spec_pie: VChartSpec
   spec_line: VChartSpec
   spec_area: VChartSpec
+  spec_quota_pie: VChartSpec
   spec_model_line: VChartSpec
   spec_rank_bar: VChartSpec
   totalQuotaDisplay: string

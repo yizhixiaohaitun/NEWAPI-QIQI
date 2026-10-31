@@ -46,7 +46,7 @@ function getLegacySavedGranularity(): TimeGranularity {
 function isConsumptionDistributionChartType(
   value: unknown
 ): value is ConsumptionDistributionChartType {
-  return value === 'bar' || value === 'area'
+  return value === 'bar' || value === 'area' || value === 'pie'
 }
 
 function isModelAnalyticsChartTab(

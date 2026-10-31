@@ -183,6 +183,16 @@ export function processChartData(
         stack: true,
         legends: { visible: true, selectMode: 'single' },
       },
+      spec_quota_pie: {
+        type: 'pie',
+        data: [{ id: 'quotaPieData', values: [] }],
+        outerRadius: 0.8,
+        innerRadius: 0.5,
+        valueField: 'Usage',
+        categoryField: 'Model',
+        legends: { visible: false },
+        label: { visible: false },
+      },
       spec_model_line: {
         type: 'area',
         data: [{ id: 'lineData', values: [] }],
@@ -386,6 +396,25 @@ export function processChartData(
   })
   areaValues.sort((a, b) => a.Time.localeCompare(b.Time))
 
+  // Quota pie: total spend per model (top models + "Other" bucket)
+  const MAX_QUOTA_PIE_MODELS = 15
+  const positiveQuotaModels = rankedQuotaModels.filter((m) => m.Quota > 0)
+  const quotaPieRaw = positiveQuotaModels.slice(0, MAX_QUOTA_PIE_MODELS)
+  const quotaPieOther = positiveQuotaModels
+    .slice(MAX_QUOTA_PIE_MODELS)
+    .reduce((sum, m) => sum + m.Quota, 0)
+  if (quotaPieOther > 0) {
+    quotaPieRaw.push({ Model: otherLabel, Quota: quotaPieOther })
+  }
+  const quotaPieValues = quotaPieRaw.map((m) => ({
+    Model: m.Model,
+    rawQuota: m.Quota,
+    Usage: Number((m.Quota / quotaPerUnit).toFixed(4)),
+    Percent: totalQuotaRaw > 0 ? (m.Quota / totalQuotaRaw) * 100 : 0,
+  }))
+  const formatPercent = (value: unknown) =>
+    `${(Number(value) || 0).toFixed(2)}%`
+
   // Line chart: model call trend (top models + "Other" bucket)
   const MAX_TREND_MODELS = 20
   const rankedTrendModels = Array.from(modelTotalsMap.entries())
@@ -571,6 +600,45 @@ export function processChartData(
         },
       },
       point: { visible: false },
+      background: { fill: 'transparent' },
+      animation: true,
+    },
+    spec_quota_pie: {
+      type: 'pie',
+      data: [{ id: 'quotaPieData', values: quotaPieValues }],
+      outerRadius: 0.8,
+      innerRadius: 0.5,
+      padAngle: 0.6,
+      valueField: 'Usage',
+      categoryField: 'Model',
+      pie: {
+        style:
+          chartCornerRadius == null ? {} : { cornerRadius: chartCornerRadius },
+        state: {
+          hover: { outerRadius: 0.85, stroke: '#000', lineWidth: 1 },
+          selected: { outerRadius: 0.85, stroke: '#000', lineWidth: 1 },
+        },
+      },
+      legends: { visible: true, orient: 'right' },
+      label: {
+        visible: true,
+        formatMethod: (_text: unknown, datum: Record<string, unknown>) =>
+          Number(datum?.Percent) >= 2
+            ? `${datum?.Model} ${formatPercent(datum?.Percent)}`
+            : '',
+      },
+      color: modelColor,
+      tooltip: {
+        mark: {
+          content: [
+            {
+              key: (datum: Record<string, unknown>) => datum?.Model,
+              value: (datum: Record<string, unknown>) =>
+                `${formatQuotaValue(Number(datum?.rawQuota) || 0)} (${formatPercent(datum?.Percent)})`,
+            },
+          ],
+        },
+      },
       background: { fill: 'transparent' },
       animation: true,
     },
