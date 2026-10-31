@@ -10,6 +10,17 @@ func Unmarshal(data []byte, v any) error {
 	return json.Unmarshal(data, v)
 }
 
+// UnmarshalUseNumber preserves JSON numbers when decoding into interface values.
+// Like Unmarshal, it rejects trailing data before changing the destination.
+func UnmarshalUseNumber(data []byte, v any) error {
+	if !json.Valid(data) {
+		return json.Unmarshal(data, v)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return decoder.Decode(v)
+}
+
 func UnmarshalJsonStr(data string, v any) error {
 	return json.Unmarshal(StringToByteSlice(data), v)
 }

@@ -24,11 +24,23 @@ import (
 )
 
 type geminiHistoryPart struct {
-	Text             string                     `json:"text"`
+	Text             json.RawMessage            `json:"text"`
+	FuturePart       json.RawMessage            `json:"futurePart"`
 	Thought          bool                       `json:"thought"`
 	ThoughtSignature json.RawMessage            `json:"thoughtSignature"`
 	FunctionCall     map[string]json.RawMessage `json:"functionCall"`
 	FunctionResponse map[string]json.RawMessage `json:"functionResponse"`
+}
+
+// Compare object fields without converting numeric tokens to float64 or depending on key order.
+func assertGeminiHistoryObject(t *testing.T, expected string, actual json.RawMessage, message string) {
+	t.Helper()
+	var want, got map[string]json.RawMessage
+	require.NoError(t, common.Unmarshal([]byte(expected), &want))
+	if !assert.NoError(t, common.Unmarshal(actual, &got), message) {
+		return
+	}
+	assert.Equal(t, want, got, message)
 }
 
 // Local HTTP capture only: the mock upstream returns 400 before billing and no tool is executed.
@@ -39,8 +51,9 @@ func TestGeminiNativeHistory(t *testing.T) {
 		decArg  = `1.234567890123456789`
 		args1   = `{"big":` + bigArg + `,"dec":` + decArg + `,"city":"Paris"}`
 		args2   = `{"second":` + bigArg + `}`
-		resp1   = `{"city":"Paris","temp":"20C"}`
+		resp1   = `{"big":` + bigArg + `,"city":"Paris","dec":` + decArg + `,"temp":"20C"}`
 		resp2   = `{"ok":true}`
+		future  = `{"big":` + bigArg + `,"dec":` + decArg + `}`
 		sigCall = `"sig-first-call"`
 		sigText = `"sig-empty-text"`
 	)
@@ -76,8 +89,8 @@ func TestGeminiNativeHistory(t *testing.T) {
 				body := `{
 "contents":[
  {"role":"user","parts":[{"text":"weather?"}]},
- {"role":"model","parts":[
-  {"text":"thinking","thought":true},
+ {"role":"model","futureContent":` + future + `,"parts":[
+  {"text":"thinking","thought":true,"futurePart":` + future + `},
   {"` + keys["call"] + `":{"id":"call-1","name":"get_weather","args":` + args1 + `},"` + keys["sig"] + `":` + sigCall + `},
   {"` + keys["call"] + `":{"id":"call-2","name":"get_time","args":` + args2 + `}},
   {"text":"","` + keys["sig"] + `":` + sigText + `}
@@ -87,7 +100,8 @@ func TestGeminiNativeHistory(t *testing.T) {
   {"` + keys["resp"] + `":{"id":"call-2","name":"get_time","response":` + resp2 + `}}
  ]}
 ],
-"generationConfig":{"thinkingConfig":{"includeThoughts":true,"thinkingLevel":"high"}}
+"systemInstruction":{"role":"user","futureContent":` + future + `,"parts":[{"text":"original system","futurePart":` + future + `}]},
+"generationConfig":{"temperature":0.8,"thinkingConfig":{"includeThoughts":true,"thinkingLevel":"high"}}
 }`
 				action := "generateContent"
 				if stream {
@@ -105,6 +119,15 @@ func TestGeminiNativeHistory(t *testing.T) {
 				common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
 				common.SetContextKey(c, constant.ContextKeyChannelKey, "local-test-key")
 				common.SetContextKey(c, constant.ContextKeyOriginalModel, "gemini-3-pro-preview")
+				common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{
+					SystemPrompt: "channel system", SystemPromptOverride: true,
+				})
+				common.SetContextKey(c, constant.ContextKeyChannelParamOverride, map[string]interface{}{
+					"operations": []interface{}{map[string]interface{}{
+						"mode": "set", "path": "generationConfig.temperature", "value": 0.25,
+					}},
+				})
+				c.Set("model_mapping", `{"gemini-3-pro-preview":"gemini-3-pro-upstream"}`)
 				info, err := relaycommon.GenRelayInfo(c, types.RelayFormatGemini, &req, nil)
 				require.NoError(t, err)
 				info.RequestURLPath, info.StartTime = path, time.Now()
@@ -113,17 +136,23 @@ func TestGeminiNativeHistory(t *testing.T) {
 				require.NotNil(t, result, "local upstream returns 400")
 				require.NotEmpty(t, sent, "must reach HTTP transport")
 				assert.Equal(t, 1, calls)
-				assert.Contains(t, sentPath, ":"+action)
+				assert.Contains(t, sentPath, "gemini-3-pro-upstream:"+action, "model mapping must still apply")
 				if stream {
 					assert.Contains(t, sentQuery, "alt=sse")
 				}
 
 				var out struct {
 					Contents []struct {
-						Role  string              `json:"role"`
-						Parts []geminiHistoryPart `json:"parts"`
+						Role          string              `json:"role"`
+						Parts         []geminiHistoryPart `json:"parts"`
+						FutureContent json.RawMessage     `json:"futureContent"`
 					} `json:"contents"`
+					SystemInstruction struct {
+						Parts         []geminiHistoryPart `json:"parts"`
+						FutureContent json.RawMessage     `json:"futureContent"`
+					} `json:"systemInstruction"`
 					GenerationConfig struct {
+						Temperature    json.RawMessage `json:"temperature"`
 						ThinkingConfig struct {
 							IncludeThoughts bool   `json:"includeThoughts"`
 							ThinkingLevel   string `json:"thinkingLevel"`
@@ -134,12 +163,19 @@ func TestGeminiNativeHistory(t *testing.T) {
 				require.Len(t, out.Contents, 3)
 				assert.True(t, out.GenerationConfig.ThinkingConfig.IncludeThoughts)
 				assert.Equal(t, "high", out.GenerationConfig.ThinkingConfig.ThinkingLevel)
+				assert.Equal(t, `0.25`, string(out.GenerationConfig.Temperature), "channel parameter override must still apply")
+				require.Len(t, out.SystemInstruction.Parts, 1, string(sent))
+				assert.Equal(t, `"channel system\noriginal system"`, string(out.SystemInstruction.Parts[0].Text), "channel system prompt must still merge")
+				assertGeminiHistoryObject(t, future, out.SystemInstruction.FutureContent, "system instruction content extension must survive")
+				assertGeminiHistoryObject(t, future, out.SystemInstruction.Parts[0].FuturePart, "system instruction part extension must survive")
 
 				model := out.Contents[1]
 				assert.Equal(t, "model", model.Role)
+				assertGeminiHistoryObject(t, future, model.FutureContent, "unknown content field must retain exact numbers")
 				require.Len(t, model.Parts, 4, string(sent))
 				assert.True(t, model.Parts[0].Thought)
-				assert.Equal(t, "thinking", model.Parts[0].Text)
+				assert.Equal(t, `"thinking"`, string(model.Parts[0].Text))
+				assertGeminiHistoryObject(t, future, model.Parts[0].FuturePart, "unknown part field must retain exact numbers")
 				assert.Nil(t, model.Parts[0].FunctionCall)
 
 				first, second := model.Parts[1], model.Parts[2]
@@ -153,7 +189,7 @@ func TestGeminiNativeHistory(t *testing.T) {
 				assert.Equal(t, `"get_time"`, string(second.FunctionCall["name"]))
 				assert.Equal(t, args2, string(second.FunctionCall["args"]))
 				assert.Empty(t, string(second.ThoughtSignature), "no signature may be invented for the second call")
-				assert.Equal(t, "", model.Parts[3].Text)
+				assert.Equal(t, `""`, string(model.Parts[3].Text), "explicit empty text must remain present")
 				assert.Equal(t, sigText, string(model.Parts[3].ThoughtSignature))
 				assert.Equal(t, 1, strings.Count(string(sent), sigCall), "signature must not be duplicated")
 				assert.Equal(t, 1, strings.Count(string(sent), sigText), "signature must not be duplicated")
@@ -165,7 +201,7 @@ func TestGeminiNativeHistory(t *testing.T) {
 				require.NotNil(t, user.Parts[1].FunctionResponse, string(sent))
 				assert.Equal(t, `"call-1"`, string(user.Parts[0].FunctionResponse["id"]))
 				assert.Equal(t, `"get_weather"`, string(user.Parts[0].FunctionResponse["name"]))
-				assert.Equal(t, resp1, string(user.Parts[0].FunctionResponse["response"]))
+				assertGeminiHistoryObject(t, resp1, user.Parts[0].FunctionResponse["response"], "tool response must retain exact numbers")
 				assert.Equal(t, `"call-2"`, string(user.Parts[1].FunctionResponse["id"]))
 				assert.Equal(t, `"get_time"`, string(user.Parts[1].FunctionResponse["name"]))
 				assert.Equal(t, resp2, string(user.Parts[1].FunctionResponse["response"]))

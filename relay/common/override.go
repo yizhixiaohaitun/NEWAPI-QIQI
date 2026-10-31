@@ -1797,7 +1797,7 @@ func pruneObjects(data []byte, path, contextJSON string, value interface{}) ([]b
 
 	if path == "" {
 		var root interface{}
-		if err := common.Unmarshal(data, &root); err != nil {
+		if err := common.UnmarshalUseNumber(data, &root); err != nil {
 			return nil, err
 		}
 		cleaned, _, err := pruneObjectsNode(root, options, contextJSON, true)
@@ -1813,12 +1813,8 @@ func pruneObjects(data []byte, path, contextJSON string, value interface{}) ([]b
 	}
 
 	var targetNode interface{}
-	if target.Type == gjson.JSON {
-		if err := common.UnmarshalJsonStr(target.Raw, &targetNode); err != nil {
-			return nil, err
-		}
-	} else {
-		targetNode = target.Value()
+	if err := common.UnmarshalUseNumber([]byte(target.Raw), &targetNode); err != nil {
+		return nil, err
 	}
 
 	cleaned, _, err := pruneObjectsNode(targetNode, options, contextJSON, true)

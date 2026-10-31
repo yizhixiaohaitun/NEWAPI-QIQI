@@ -287,13 +287,36 @@ type GeminiFileData struct {
 	FileUri  string `json:"fileUri,omitempty"`
 }
 
+// UnmarshalJSON accepts SDK spelling for nested file metadata.
+func (f *GeminiFileData) UnmarshalJSON(data []byte) error {
+	type Alias GeminiFileData
+	var aux struct {
+		Alias
+		MimeTypeSnake *string `json:"mime_type"`
+		FileUriSnake  *string `json:"file_uri"`
+	}
+	if err := common.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*f = GeminiFileData(aux.Alias)
+	if aux.MimeTypeSnake != nil {
+		f.MimeType = *aux.MimeTypeSnake
+	}
+	if aux.FileUriSnake != nil {
+		f.FileUri = *aux.FileUriSnake
+	}
+	return nil
+}
+
 type GeminiPart struct {
-	Text             string                  `json:"text,omitempty"`
-	Thought          bool                    `json:"thought,omitempty"`
-	InlineData       *GeminiInlineData       `json:"inlineData,omitempty"`
-	FunctionCall     *FunctionCall           `json:"functionCall,omitempty"`
-	ThoughtSignature json.RawMessage         `json:"thoughtSignature,omitempty"`
-	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"`
+	// Exported so the relay's existing deep copy retains native extensions.
+	NativeFields     map[string]json.RawMessage `json:"-"`
+	Text             string                     `json:"text,omitempty"`
+	Thought          bool                       `json:"thought,omitempty"`
+	InlineData       *GeminiInlineData          `json:"inlineData,omitempty"`
+	FunctionCall     *FunctionCall              `json:"functionCall,omitempty"`
+	ThoughtSignature json.RawMessage            `json:"thoughtSignature,omitempty"`
+	FunctionResponse *GeminiFunctionResponse    `json:"functionResponse,omitempty"`
 	// Optional. Media resolution for the input media.
 	MediaResolution     json.RawMessage                `json:"mediaResolution,omitempty"`
 	VideoMetadata       json.RawMessage                `json:"videoMetadata,omitempty"`
@@ -308,10 +331,15 @@ func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	type Alias GeminiPart
 	var aux struct {
 		Alias
-		InlineDataSnake       *GeminiInlineData       `json:"inline_data,omitempty"`
-		FunctionCallSnake     *FunctionCall           `json:"function_call,omitempty"`
-		ThoughtSignatureSnake json.RawMessage         `json:"thought_signature,omitempty"`
-		FunctionResponseSnake *GeminiFunctionResponse `json:"function_response,omitempty"`
+		InlineDataSnake          *GeminiInlineData              `json:"inline_data,omitempty"`
+		FunctionCallSnake        *FunctionCall                  `json:"function_call,omitempty"`
+		ThoughtSignatureSnake    json.RawMessage                `json:"thought_signature,omitempty"`
+		FunctionResponseSnake    *GeminiFunctionResponse        `json:"function_response,omitempty"`
+		MediaResolutionSnake     json.RawMessage                `json:"media_resolution,omitempty"`
+		VideoMetadataSnake       json.RawMessage                `json:"video_metadata,omitempty"`
+		FileDataSnake            *GeminiFileData                `json:"file_data,omitempty"`
+		ExecutableCodeSnake      *GeminiPartExecutableCode      `json:"executable_code,omitempty"`
+		CodeExecutionResultSnake *GeminiPartCodeExecutionResult `json:"code_execution_result,omitempty"`
 	}
 
 	if err := common.Unmarshal(data, &aux); err != nil {
@@ -336,13 +364,32 @@ func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	if aux.FunctionResponseSnake != nil {
 		p.FunctionResponse = aux.FunctionResponseSnake
 	}
+	if len(aux.MediaResolutionSnake) > 0 {
+		p.MediaResolution = aux.MediaResolutionSnake
+	}
+	if len(aux.VideoMetadataSnake) > 0 {
+		p.VideoMetadata = aux.VideoMetadataSnake
+	}
+	if aux.FileDataSnake != nil {
+		p.FileData = aux.FileDataSnake
+	}
+	if aux.ExecutableCodeSnake != nil {
+		p.ExecutableCode = aux.ExecutableCodeSnake
+	}
+	if aux.CodeExecutionResultSnake != nil {
+		p.CodeExecutionResult = aux.CodeExecutionResultSnake
+	}
 
-	return nil
+	var err error
+	p.NativeFields, err = geminiNativeFields(data, Alias(*p), geminiPartFields, true)
+	return err
 }
 
 type GeminiChatContent struct {
-	Role  string       `json:"role,omitempty"`
-	Parts []GeminiPart `json:"parts"`
+	// Exported so the relay's existing deep copy retains native extensions.
+	NativeFields map[string]json.RawMessage `json:"-"`
+	Role         string                     `json:"role,omitempty"`
+	Parts        []GeminiPart               `json:"parts"`
 }
 
 type GeminiChatSafetySettings struct {
