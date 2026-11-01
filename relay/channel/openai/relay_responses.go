@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -97,10 +98,16 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		var streamResponse dto.ResponsesStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
+			if retryWriter != nil && !retryWriter.committed {
+				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+				markResponsesStreamErrorBeforeCommit(c, info)
+				sr.Stop(streamErr)
+				return
+			}
 			sr.Error(err)
 			return
 		}
-		upstreamStreamErr := responsesStreamEventError(&streamResponse)
+		upstreamStreamErr := responsesStreamEventError(&streamResponse, data)
 		if upstreamStreamErr != nil {
 			if !retryEnabled {
 				recordResponsesStreamRetryRecommendation(c)
@@ -118,7 +125,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 
-		if retryWriter != nil && !retryWriter.committed && responsesStreamEventCommitsOutput(&streamResponse) {
+		if retryWriter != nil && !retryWriter.committed && responsesStreamDataCommitsOutput(&streamResponse, data) {
 			// Commit time is the real first byte; keep the scanner's received count.
 			received := info.ReceivedResponseCount
 			info.ResetFirstResponseTime()
@@ -198,12 +205,12 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	return usage, nil
 }
 
-func responsesStreamEventError(streamResponse *dto.ResponsesStreamResponse) *types.NewAPIError {
+func responsesStreamEventError(streamResponse *dto.ResponsesStreamResponse, rawData ...string) *types.NewAPIError {
 	if streamResponse == nil {
 		return nil
 	}
 	eventType := strings.ToLower(strings.TrimSpace(streamResponse.Type))
-	if eventType != "error" && eventType != "response.error" && eventType != "response.failed" && streamResponse.Error == nil {
+	if eventType != "error" && eventType != "response.error" && eventType != "response.failed" && streamResponse.Error == nil && (streamResponse.Response == nil || streamResponse.Response.GetOpenAIError() == nil) {
 		return nil
 	}
 
@@ -213,6 +220,14 @@ func responsesStreamEventError(streamResponse *dto.ResponsesStreamResponse) *typ
 	}
 	if openAIError == nil {
 		openAIError = dto.GetOpenAIError(streamResponse.Error)
+	}
+	// Responses error events also carry code/message directly on the event.
+	// Keep that original error instead of replacing it with a generic message.
+	if (openAIError == nil || (openAIError.Type == "" && openAIError.Message == "")) && len(rawData) > 0 {
+		var direct types.OpenAIError
+		if common.UnmarshalJsonStr(rawData[0], &direct) == nil && direct.Message != "" {
+			openAIError = &direct
+		}
 	}
 	if openAIError == nil || (openAIError.Type == "" && openAIError.Message == "") {
 		return types.NewOpenAIError(
@@ -237,7 +252,8 @@ func responsesStreamErrorStatus(openAIError *types.OpenAIError) int {
 		strings.Contains(strings.ToLower(openAIError.Message), "exceeded request rate limit"):
 
 		return http.StatusTooManyRequests
-	case errorType == "invalid_request", errorType == "invalid_request_error":
+	case errorType == "invalid_request", errorType == "invalid_request_error",
+		errorCode == "context_length_exceeded", errorCode == "context_window_exceeded":
 		return http.StatusBadRequest
 	case errorType == "server_error", errorType == "model_error", errorCode == "server_error":
 		return http.StatusInternalServerError
@@ -246,37 +262,105 @@ func responsesStreamErrorStatus(openAIError *types.OpenAIError) int {
 	}
 }
 
-func responsesStreamEventCommitsOutput(event *dto.ResponsesStreamResponse) bool {
+// Classify the original event JSON, not just the DTO: refusal, reasoning
+// summaries, audio/image and future tool fields must never be silently dropped
+// when deciding whether an already delivered result can be replayed.
+func responsesStreamDataCommitsOutput(event *dto.ResponsesStreamResponse, data string) bool {
+	var raw map[string]json.RawMessage
+	if common.UnmarshalJsonStr(data, &raw) != nil {
+		return true
+	}
 	switch strings.ToLower(strings.TrimSpace(event.Type)) {
 	case "response.created", "response.queued", "response.in_progress", "keepalive", "ping":
 		return false
-	case "response.output_item.added":
-		// Empty message/reasoning/tool containers carry no visible output yet.
-		// Azure can send them before an in-stream token rate-limit error.
-		return !responsesOutputItemIsEmpty(event.Item)
-	case "response.content_part.added", "response.reasoning_summary_part.added":
-		return event.Part == nil || event.Part.Text != ""
+	case "response.output_item.added", "response.output_item.done":
+		return responsesRawItemHasOutput(raw["item"], event.Type == "response.output_item.done")
+	case "response.content_part.added", "response.content_part.done",
+		"response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
+		return responsesRawPartHasOutput(raw["part"])
+	case "response.output_text.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta",
+		"response.refusal.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
+		return responsesRawValueHasOutput(raw["delta"])
+	case "response.output_text.done", "response.reasoning_text.done", "response.reasoning_summary_text.done":
+		return responsesRawValueHasOutput(raw["text"])
+	case "response.refusal.done":
+		return responsesRawValueHasOutput(raw["refusal"])
+	case "response.function_call_arguments.done":
+		// A complete tool call is actionable even with an empty argument string.
+		return true
+	case "response.custom_tool_call_input.done":
+		return true
+	case "response.completed", "response.incomplete":
+		var response struct {
+			Output []json.RawMessage `json:"output"`
+		}
+		if common.Unmarshal(raw["response"], &response) != nil {
+			return true
+		}
+		for _, item := range response.Output {
+			if responsesRawItemHasOutput(item, true) {
+				return true
+			}
+		}
+		return false
 	default:
+		// Unknown events may represent real tool/multimodal output. Preserve
+		// the conservative no-replay boundary rather than guessing them empty.
 		return true
 	}
 }
 
-func responsesOutputItemIsEmpty(item *dto.ResponsesOutput) bool {
-	if item == nil {
-		return false
+func responsesRawValueHasOutput(raw json.RawMessage) bool {
+	value := strings.TrimSpace(string(raw))
+	return value != "" && value != "null" && value != `""` && value != "[]"
+}
+
+func responsesRawPartHasOutput(raw json.RawMessage) bool {
+	var part map[string]json.RawMessage
+	if common.Unmarshal(raw, &part) != nil || part == nil {
+		return true
 	}
-	switch item.Type {
-	case "message", "reasoning", "function_call", "custom_tool_call":
-	default:
-		return false
-	}
-	for _, content := range item.Content {
-		if content.Text != "" {
-			return false
+	for key, value := range part {
+		switch key {
+		case "type", "annotations":
+			continue
+		default:
+			if responsesRawValueHasOutput(value) {
+				return true
+			}
 		}
 	}
-	arguments := strings.TrimSpace(string(item.Arguments))
-	return arguments == "" || arguments == `""` || arguments == "null"
+	return false
+}
+
+func responsesRawItemHasOutput(raw json.RawMessage, done bool) bool {
+	var item map[string]json.RawMessage
+	if common.Unmarshal(raw, &item) != nil || item == nil {
+		return true
+	}
+	var kind string
+	_ = common.Unmarshal(item["type"], &kind)
+	switch kind {
+	case "message", "reasoning":
+		for _, key := range []string{"content", "summary"} {
+			var parts []json.RawMessage
+			if value := item[key]; len(value) > 0 && string(value) != "null" {
+				if common.Unmarshal(value, &parts) != nil {
+					return true
+				}
+				for _, part := range parts {
+					if responsesRawPartHasOutput(part) {
+						return true
+					}
+				}
+			}
+		}
+		return responsesRawValueHasOutput(item["encrypted_content"])
+	case "function_call", "custom_tool_call":
+		return done || responsesRawValueHasOutput(item["arguments"]) || responsesRawValueHasOutput(item["input"])
+	default:
+		return true
+	}
 }
 
 func responsesStreamPrematureEndError(info *relaycommon.RelayInfo) *types.NewAPIError {
@@ -305,6 +389,7 @@ func responsesStreamPrematureEndError(info *relaycommon.RelayInfo) *types.NewAPI
 }
 
 func markResponsesStreamErrorBeforeCommit(c *gin.Context, info *relaycommon.RelayInfo) {
+	c.Set("upstream_stream_error_before_commit", true)
 	if info != nil {
 		info.ResponsesStreamErrorBeforeCommit = true
 		info.ResetFirstResponseTime()

@@ -113,7 +113,7 @@ func TestOaiResponsesStreamHandlerPublishesDeductedUsageAliasesOnce(t *testing.T
 	enableResponsesStreamRetryForTest(t)
 	body := strings.Join([]string{
 		`event: response.output_text.delta`,
-		`data: {"type":"response.output_text.delta","delta":""}`,
+		`data: {"type":"response.output_text.delta","delta":"hello"}`,
 		``,
 		`event: response.completed`,
 		`data: {"type":"response.completed","response":{"id":"resp_cache","status":"completed","choices":[{"index":0,"usage":{"cached_tokens":450}}],"timings":{"cache_n":450},"usage":{"cached_tokens":450,"input_tokens":506,"output_tokens":0,"total_tokens":506,"prompt_cache_hit_tokens":450,"input_tokens_details":{"cached_tokens":450,"cached_creation_tokens":0,"cache_write_tokens":0,"text_tokens":506}}}}`,

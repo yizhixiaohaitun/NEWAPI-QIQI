@@ -28,7 +28,7 @@ import (
 // though HTTP 400 is deliberately excluded from status-code retry policy.
 func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 	service.InitTokenEncoders()
-	for _, scenario := range []string{"before_output", "after_output", "budget_exhausted"} {
+	for _, scenario := range []string{"before_output", "after_output", "after_tool", "after_reasoning", "empty_delta_done", "empty_completed", "empty_eof", "malformed", "flat_error", "unmatched_error", "budget_exhausted"} {
 		t.Run(scenario, func(t *testing.T) {
 			oldMode := gin.Mode()
 			gin.SetMode(gin.TestMode)
@@ -67,7 +67,7 @@ func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 			operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = false
 			operation_setting.GetGeneralSetting().PingIntervalEnabled = false
 			operation_setting.AutomaticRetryStatusCodeRanges = []operation_setting.StatusCodeRange{{Start: 429, End: 429}}
-			operation_setting.AutomaticRetryKeywordsFromString(oldKeywords + "\nyour input exceeds the context window of this model")
+			operation_setting.AutomaticRetryKeywordsFromString("") // Stream failures must not depend on configured error text.
 			qiqi.ResponsesStreamErrorRetryEnabled = true
 			qiqi.ResponsesStreamErrorRetryTimes = 1
 			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"context-window-http":1}`))
@@ -94,6 +94,28 @@ func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 					if fails {
 						if scenario == "after_output" {
 							_, _ = fmt.Fprint(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+						}
+						switch scenario {
+						case "after_tool":
+							_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"name\":\"lookup\",\"call_id\":\"call_1\",\"arguments\":\"{}\"}}\n\n")
+						case "after_reasoning":
+							_, _ = fmt.Fprint(w, "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"thinking\"}\n\n")
+						case "empty_delta_done":
+							_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"\"}\n\ndata: {\"type\":\"response.output_text.done\",\"text\":\"\"}\n\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"content\":[]}}\n\n")
+						case "empty_completed":
+							_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n")
+							return
+						case "empty_eof":
+							return
+						case "malformed":
+							_, _ = fmt.Fprint(w, "data: {invalid-json}\n\n")
+							return
+						case "flat_error":
+							_, _ = fmt.Fprintf(w, "data: {\"type\":\"error\",\"code\":\"context_length_exceeded\",\"message\":%q}\n\n", errorMessage)
+							return
+						case "unmatched_error":
+							_, _ = fmt.Fprint(w, "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"upstream could not produce output\"}}}\n\n")
+							return
 						}
 						_, _ = fmt.Fprintf(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":%q}}\n\n", errorMessage)
 					} else {
@@ -156,11 +178,18 @@ func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 			for _, actual := range actualBodies {
 				assert.JSONEq(t, requestBody, actual, "failover must preserve the original input")
 			}
-			if scenario == "after_output" {
+			if scenario == "after_output" || scenario == "after_tool" || scenario == "after_reasoning" {
 				assert.Equal(t, http.StatusOK, response.StatusCode, body)
 				assert.Equal(t, []string{"A"}, actualCalls)
 				assert.Equal(t, []string{"893"}, used)
-				assert.Contains(t, body, "partial")
+				switch scenario {
+				case "after_output":
+					assert.Contains(t, body, "partial")
+				case "after_tool":
+					assert.Contains(t, body, "call_1")
+				case "after_reasoning":
+					assert.Contains(t, body, "thinking")
+				}
 				assert.Contains(t, body, errorMessage)
 				assert.NotContains(t, body, "hello")
 				return

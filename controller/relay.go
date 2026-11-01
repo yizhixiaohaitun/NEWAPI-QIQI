@@ -206,6 +206,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		relayInfo.ResponsesStreamErrorBeforeCommit = false
+		c.Set("upstream_stream_error_before_commit", false)
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
@@ -410,6 +411,13 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		if _, ok := c.Get("specific_channel_id"); ok {
 			return false
 		}
+	}
+	// A stream failure caught before any downstream output is safe to retry
+	// under the dedicated switch/budget, regardless of provider status/text.
+	// All cancellation, affinity, explicit-channel and budget stops above win.
+	if c != nil && c.GetBool("upstream_stream_error_before_commit") &&
+		operation_setting.IsResponsesStreamErrorRetryEnabled() && c.Writer != nil && !c.Writer.Written() {
+		return true
 	}
 	if types.IsChannelError(openaiErr) {
 		return true
