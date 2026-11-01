@@ -228,7 +228,7 @@ API路径：/api/admin/users/config/levels
 ### 上游错误换渠道重试（2026-10-29）
 
 - 报错关键词：`setting/operation_setting/retry_keywords.go` 保存 `AutomaticRetryKeywords`（每行一条、忽略大小写子串，默认含 prompt 被判违规文案），`model/option.go` 落库加载，`controller/relay.go` 在状态码规则之外命中关键词即换渠道；两套后台设置页均为多行输入框。回归 `setting/operation_setting/retry_keywords_test.go`、`controller/relay_retry_keyword_http_test.go`。
-- HTTP 200 流内限流错误：`relay/channel/openai/stream_retry.go` 缓冲尚无可见输出的 Chat 帧，`relay-openai.go`/`relay_responses.go` 在输出前遇到 error envelope 时不外泄前导帧并返回可重试错误，已有正文后保持原流不换渠道；`relay/compatible_handler.go` 开启时延迟流头。复用 Responses 流错误重试开关。回归 `relay/channel/openai/stream_retry_test.go`、`controller/relay_chat_stream_rate_limit_retry_test.go`、`controller/relay_stream_rate_limit_http_test.go`。
+- HTTP 200 流内限流错误：`relay/channel/openai/stream_retry.go` 缓冲尚无可见输出的 Chat 帧，`relay-openai.go`/`relay_responses.go` 在输出前遇到 error envelope 时不外泄前导帧并返回可重试错误，已有正文后保持原流不换渠道；`relay/compatible_handler.go` 开启时延迟流头。复用 Responses 流错误重试开关。回归 `relay/channel/openai/stream_retry_test.go`、`controller/relay_chat_stream_rate_limit_retry_test.go`、`controller/relay_stream_rate_limit_http_test.go`。HTTP 200 Responses 流内上下文窗口报错可将 `your input exceeds the context window of this model` 加入 `AutomaticRetryKeywords`，无需将所有 400 设为可重试；`controller/relay_responses_context_window_retry_test.go` 覆盖同一客户端连接切换渠道、原输入保留、正文后不重放和独立重试预算耗尽。
 
 ### 看板消耗分布金额饼图
 
