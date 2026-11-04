@@ -27,6 +27,9 @@ test('actual classic instance registers dedicated Chinese token strings', async 
   await import('./token-request-compatibility.js');
   await i18n.changeLanguage('zh-CN');
   assert.equal(i18n.t('Request compatibility'), '请求兼容');
+  assert.equal(i18n.t('历史思考签名兼容'), '历史思考签名兼容');
+  assert.equal(i18n.t('历史思考签名兼容', { lng: 'zh-TW' }), '歷史思考簽名相容');
+  assert.equal(i18n.t('兼容处理', { lng: 'en' }), 'Compatibility action');
   assert.equal(i18n.t('Thinking format adaptation'), '思考格式适配');
   assert.equal(
     i18n.t('Opus 4.7 sampling parameter adaptation'),

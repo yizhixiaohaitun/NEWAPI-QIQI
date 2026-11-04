@@ -44,6 +44,9 @@ export const tokenRequestCompatibilityTranslations = {
       'Removes temperature/top_p/top_k for Opus 4.7.',
   },
   'zh-CN': {
+    '历史思考签名兼容': '历史思考签名兼容',
+    '已清理历史思考块，并在同渠道重试 1 次。': '已清理历史思考块，并在同渠道重试 1 次。',
+    '兼容处理': '兼容处理',
     'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.':
       '仅在输出前遇到精确的历史思考签名错误时，移除已结束轮次的历史思考块并在同渠道重试一次；不关闭思考，也不保证成功。',
     'Request compatibility': '请求兼容',
@@ -63,6 +66,9 @@ export const tokenRequestCompatibilityTranslations = {
       '移除 Opus 4.7 的 temperature/top_p/top_k 参数。',
   },
   'zh-TW': {
+    '历史思考签名兼容': '歷史思考簽名相容',
+    '已清理历史思考块，并在同渠道重试 1 次。': '已清理歷史思考區塊，並在同渠道重試 1 次。',
+    '兼容处理': '相容處理',
     'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.':
       '僅在輸出前遇到精確的歷史思考簽名錯誤時，移除已結束輪次的歷史思考區塊並在同渠道重試一次；不關閉思考，也不保證成功。',
     'Request compatibility': '請求相容',
