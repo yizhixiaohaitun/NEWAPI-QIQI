@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -165,6 +166,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	var requestBody io.Reader
+	var retrySource []byte
 	if rawPassThrough {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
@@ -202,6 +204,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
+		if info.IsRequestCompatibilityEnabled() {
+			retrySource = bytes.Clone(jsonData)
+		}
 		logger.LogDebug(c, "requestBody: %s", jsonData)
 		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 		if err != nil {
@@ -214,26 +219,38 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
-	var httpResp *http.Response
-	resp, err := adaptor.DoRequest(c, info, requestBody)
-	if err != nil {
-		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
-	}
-
-	if resp != nil {
-		httpResp = resp.(*http.Response)
-		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
-		if httpResp.StatusCode != http.StatusOK {
-			newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
-			// reset status code 重置状态码
-			service.ResetStatusCode(newAPIError, statusCodeMappingStr)
-			return newAPIError
+	var usage any
+	// Bedrock prepares its SDK request in DoRequest but invokes upstream in
+	// DoResponse. Keep both stages inside the same single-retry boundary.
+	for attempt := 0; ; attempt++ {
+		var httpResp *http.Response
+		resp, requestErr := adaptor.DoRequest(c, info, requestBody)
+		if requestErr != nil {
+			return types.NewOpenAIError(requestErr, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 		}
-	}
-
-	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
-	if newAPIError != nil {
-		// reset status code 重置状态码
+		if resp != nil {
+			httpResp = resp.(*http.Response)
+			info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
+			if httpResp.StatusCode != http.StatusOK {
+				newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+			} else {
+				usage, newAPIError = adaptor.DoResponse(c, httpResp, info)
+			}
+		} else {
+			usage, newAPIError = adaptor.DoResponse(c, nil, info)
+		}
+		if newAPIError == nil {
+			break
+		}
+		if attempt == 0 && len(retrySource) > 0 && !c.Writer.Written() &&
+			c.Request.Context().Err() == nil && (info.UpstreamContext == nil || info.UpstreamContext.Err() == nil) &&
+			newAPIError.StatusCode == http.StatusBadRequest && strings.Contains(newAPIError.Error(), "Invalid `signature` in `thinking` block") {
+			if body, changed := stripHistoricalClaudeThinking(retrySource); changed {
+				requestBody = bytes.NewReader(body)
+				info.UpstreamRequestBodySize = int64(len(body))
+				continue
+			}
+		}
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 		return newAPIError
 	}

@@ -196,7 +196,14 @@ API路径：/api/admin/users/config/levels
 - 可读参数与编号：`common/protocol_field_mask.go`、`common/str.go` 仅完整协议字段路径保守豁免，URL/域名/API key 继续脱敏；`common/request_id_message.go`、`common/utils.go` 清理已知尾部 request id 后加本层单一编号。
 - 回归：`dto/claude_thinking_test.go`、`relay/claude_thinking_test.go`（模型映射/override 后实际 loopback HTTP 捕获及可选 `NEWAPI_CLAUDE_ATTACHMENT` 附件回放）、`types/public_error_format_test.go`、`controller/relay_error_format_test.go`、`relay/helper/public_error_format_test.go`、`common/protocol_field_mask_test.go`。请求回放仅测试捕获端返回 400，不调用生产计费上游。同步运行 service/input 减免、Claude refusal、OpenAI、AWS、Vertex、relayconvert 包。新增 `dto/claude_disabled_test.go`（5.5 与 4.7/4.8 disabled 能力边界、effort/别名/精确数值/幂等）、`relay/claude_disabled_test.go`（流/非流 Claude/Chat 实际 loopback 出站、AWS/Vertex 参数覆盖后 marshal、Responses/Chat 转换）；精确附件回放按原 max_tokens 与可选字段断言，`NEWAPI_CLAUDE_CAPTURE` 可保存本地出站证据。错误回放验证 masked disabled+双 ID 的 HTTP/SSE 公开副本仅单一本层 ID、effort 可读、raw 不变；`status_code=%d` 在 `types/error.go` 本层只作日志包装，不逆向还原外部已脱敏路径、不扩大公开错误正则。
 
-**最后更新**：2026-10-14
+### Claude 历史 thinking 签名精确 400 兼容（2026-11-04）
+
+- `relay/claude_handler.go#ClaudeHelper`：仅 SK 请求兼容开启、非原始透传、客户端尚未写入或 Flush、请求与上游总上下文均未取消/超时，且状态码映射前确为 HTTP 400、错误含完整 ``Invalid `signature` in `thinking` block`` 时，同渠道最多重发一次。普通成功和其他错误不改；同时接住常规 `DoRequest` HTTP 错误与 AWS 在 `DoResponse` 中真正调用 SDK 后的错误。每次都重新 `DoRequest`，刷新 AWS 已组装请求；二次失败按真实错误走原有状态映射，不覆盖成首次签名错误，不关闭 thinking。
+- `relay/claude_signature_history.go#stripHistoricalClaudeThinking`：从最终转换/覆盖后的首次 JSON 保存副本，仅删除最后一个非纯 `tool_result` 用户输入之前的历史 assistant `thinking/redacted_thinking`，不转文本，不动消息数量、正文、工具调用与结果顺序、当前工具续轮或顶层 thinking/output_config。用 `json.RawMessage` 保留未知字段与数字文本；用户内容不明、工具结果与普通输入混合时不尝试，移除后会成为空消息的历史块保守保留。本轮不修已有 Claude/AWS `any` 首次序列化的数字边界，只保证首次实际出站到二次不新增改写。
+- 回归：`relay/claude_signature_history_test.go` 验证保守裁剪、活动工具轮次、未知字段及精确数值；`relay/claude_signature_http_test.go#TestClaudeSignatureRetryHTTP` 经 localhost mock 覆盖 Claude 与真实 AWS SDK 流/非流、成功不改、仅重发一次、第二次不同错误、开关关闭/raw/非目标400/非400/映射前状态/已输出/Flush/PING/开始帧/取消/上游总上下文终止不重发，比较首次实际出站与二次只有历史块差异。成功路径使用隔离内存库并关闭消费日志与 Redis，不触碰用户状态。
+- 本轮附件独立可选入口：设置 `NEWAPI_CLAUDE_SIGNATURE_ATTACHMENT` 后仅运行 `TestClaudeSignatureAttachmentReplay`，不复用旧 `TestClaudeAdaptiveAttachmentReplay` 的 high/无 display 断言；核对 54 条消息、12 个历史 thinking、`adaptive/display=summarized/effort=medium`，Claude/AWS 流式均只向 localhost 回放，附件内容不写进仓库或输出。
+
+**最后更新**：2026-11-04
 
 ### SK 请求兼容集合（2026-10-14）
 
