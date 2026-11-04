@@ -40,6 +40,9 @@ export function CompatibilityReference({
   t: TranslationFunction
 }) {
   const rule = findEnhancedCompatibilityRule(event)
+  const isSignatureRetry =
+    rule?.key === 'claude_historical_thinking_signature_retry' &&
+    event.outcome === 'retry_started'
   const isRecommendation =
     event.event_type === 'recommendation' || event.outcome === 'disabled'
   const isRecovered =
@@ -52,7 +55,13 @@ export function CompatibilityReference({
     label: string
     variant: StatusBadgeProps['variant']
   }
-  if (isRecommendation) {
+  if (isSignatureRetry) {
+    status = {
+      icon: Wrench,
+      label: t('兼容处理'),
+      variant: 'info',
+    }
+  } else if (isRecommendation) {
     status = {
       icon: Lightbulb,
       label: t('Enable suggested'),
@@ -73,7 +82,11 @@ export function CompatibilityReference({
   }
 
   let messageKey: string
-  if (rule) {
+  if (isSignatureRetry) {
+    messageKey = typeof event.count === 'number'
+      ? '已清理 {{referenceCount}} 个历史思考块，并在同渠道重试 1 次。'
+      : '已清理历史思考块，并在同渠道重试 1 次。'
+  } else if (rule) {
     if (isRecommendation) {
       messageKey = rule.referenceKeys.recommended
     } else if (isRecovered) {

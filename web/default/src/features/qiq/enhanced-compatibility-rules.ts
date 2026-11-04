@@ -20,7 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 export interface EnhancedCompatibilityRuleDefinition {
   id: string
   key: string
-  settingKey: `qiqi_setting.${string}`
+  settingKey: `qiqi_setting.${string}` | 'request_compatibility_enabled'
   retryTimesSettingKey?: `qiqi_setting.${string}`
   shortNameKey: string
   descriptionKey: string
@@ -83,6 +83,19 @@ export const AZURE_RESPONSES_RESOURCE_AFFINITY_RULE = {
   },
 } as const satisfies EnhancedCompatibilityRuleDefinition
 
+export const CLAUDE_HISTORICAL_THINKING_SIGNATURE_RULE = {
+  id: 'QIQI-EC-005',
+  key: 'claude_historical_thinking_signature_retry',
+  settingKey: 'request_compatibility_enabled',
+  shortNameKey: '历史思考签名兼容',
+  descriptionKey: '遇到特定历史思考签名错误时，清理历史思考块并在同渠道重试一次。',
+  referenceKeys: {
+    recovered: '已清理历史思考块，并在同渠道重试 1 次。',
+    recommended: '已清理历史思考块，并在同渠道重试 1 次。',
+    attempted: '已清理历史思考块，并在同渠道重试 1 次。',
+  },
+} as const satisfies EnhancedCompatibilityRuleDefinition
+
 export const ENHANCED_COMPATIBILITY_RULES = [
   RESPONSES_MISSING_REASONING_ITEM_RULE,
   RESPONSES_STREAM_ERROR_RETRY_RULE,
@@ -93,7 +106,7 @@ export function findEnhancedCompatibilityRule(event: {
   rule_id?: string
   key?: string
 }): EnhancedCompatibilityRuleDefinition | undefined {
-  return ENHANCED_COMPATIBILITY_RULES.find(
+  return [...ENHANCED_COMPATIBILITY_RULES, CLAUDE_HISTORICAL_THINKING_SIGNATURE_RULE].find(
     (rule) => rule.id === event.rule_id || rule.key === event.key
   )
 }
