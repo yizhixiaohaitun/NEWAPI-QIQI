@@ -465,6 +465,9 @@ const EditTokenModal = (props) => {
                             {t('Omits non-default temperature for gpt-6-luna; keeps 1.')}
                           </div>
                           <div>
+                            {t('Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.')}
+                          </div>
+                          <div>
                             {t('Enabled for new tokens; you can turn it off.')}
                           </div>
                           <div>

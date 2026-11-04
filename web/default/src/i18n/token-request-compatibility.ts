@@ -23,6 +23,8 @@ import i18n from './config'
 // Dedicated token strings; never rewrite shared locale JSON. Register after init as well.
 export const tokenRequestCompatibilityTranslations = {
   en: {
+    'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.':
+      'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.',
     'Request compatibility': 'Request compatibility',
     'Thinking format adaptation': 'Thinking format adaptation',
     'Opus 4.7 sampling parameter adaptation':
@@ -41,6 +43,8 @@ export const tokenRequestCompatibilityTranslations = {
       'Removes temperature/top_p/top_k for Opus 4.7.',
   },
   zhCN: {
+    'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.':
+      '仅在输出前遇到精确的历史思考签名错误时，移除已结束轮次的历史思考块并在同渠道重试一次；不关闭思考，也不保证成功。',
     'Request compatibility': '请求兼容',
     'Thinking format adaptation': '思考格式适配',
     'Opus 4.7 sampling parameter adaptation': 'Opus 4.7 采样参数适配',
@@ -58,6 +62,8 @@ export const tokenRequestCompatibilityTranslations = {
       '移除 Opus 4.7 的 temperature/top_p/top_k 参数。',
   },
   zhTW: {
+    'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.':
+      '僅在輸出前遇到精確的歷史思考簽名錯誤時，移除已結束輪次的歷史思考區塊並在同渠道重試一次；不關閉思考，也不保證成功。',
     'Request compatibility': '請求相容',
     'Thinking format adaptation': '思考格式適配',
     'Opus 4.7 sampling parameter adaptation': 'Opus 4.7 取樣參數適配',

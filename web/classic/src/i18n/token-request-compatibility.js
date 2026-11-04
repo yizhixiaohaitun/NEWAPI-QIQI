@@ -21,6 +21,11 @@ import i18n from './i18n';
 // Dedicated token strings; register once initialization completes, without shared locale edits.
 export const tokenRequestCompatibilityTranslations = {
   en: {
+    "历史思考签名兼容": "Historical thinking signature compatibility",
+    "已清理历史思考块，并在同渠道重试 1 次。": "Historical thinking blocks removed; retried once on the same channel.",
+    "兼容处理": "Compatibility action",
+    'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.':
+      'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.',
     'Request compatibility': 'Request compatibility',
     'Thinking format adaptation': 'Thinking format adaptation',
     'Opus 4.7 sampling parameter adaptation':
@@ -39,6 +44,8 @@ export const tokenRequestCompatibilityTranslations = {
       'Removes temperature/top_p/top_k for Opus 4.7.',
   },
   'zh-CN': {
+    'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.':
+      '仅在输出前遇到精确的历史思考签名错误时，移除已结束轮次的历史思考块并在同渠道重试一次；不关闭思考，也不保证成功。',
     'Request compatibility': '请求兼容',
     'Thinking format adaptation': '思考格式适配',
     'Opus 4.7 sampling parameter adaptation': 'Opus 4.7 采样参数适配',
@@ -56,6 +63,8 @@ export const tokenRequestCompatibilityTranslations = {
       '移除 Opus 4.7 的 temperature/top_p/top_k 参数。',
   },
   'zh-TW': {
+    'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.':
+      '僅在輸出前遇到精確的歷史思考簽名錯誤時，移除已結束輪次的歷史思考區塊並在同渠道重試一次；不關閉思考，也不保證成功。',
     'Request compatibility': '請求相容',
     'Thinking format adaptation': '思考格式適配',
     'Opus 4.7 sampling parameter adaptation': 'Opus 4.7 取樣參數適配',
@@ -73,6 +82,9 @@ export const tokenRequestCompatibilityTranslations = {
       '移除 Opus 4.7 的 temperature/top_p/top_k 參數。',
   },
   fr: {
+    "历史思考签名兼容": "Compatibilité des signatures de réflexion historiques",
+    "已清理历史思考块，并在同渠道重试 1 次。": "Blocs de réflexion historiques supprimés ; une nouvelle tentative sur le même canal.",
+    "兼容处理": "Action de compatibilité",
     'Request compatibility': 'Compatibilité des requêtes',
     'Thinking format adaptation': 'Adaptation du format de réflexion',
     'Opus 4.7 sampling parameter adaptation':
@@ -91,6 +103,9 @@ export const tokenRequestCompatibilityTranslations = {
       'Supprime temperature/top_p/top_k pour Opus 4.7.',
   },
   ru: {
+    "历史思考签名兼容": "Совместимость исторических подписей размышлений",
+    "已清理历史思考块，并在同渠道重试 1 次。": "Исторические блоки размышлений удалены; повторено один раз по тому же каналу.",
+    "兼容处理": "Действие совместимости",
     'Request compatibility': 'Совместимость запросов',
     'Thinking format adaptation': 'Адаптация формата размышлений',
     'Opus 4.7 sampling parameter adaptation': 'Адаптация параметров Opus 4.7',
@@ -108,6 +123,9 @@ export const tokenRequestCompatibilityTranslations = {
       'Удаляет temperature/top_p/top_k для Opus 4.7.',
   },
   ja: {
+    "历史思考签名兼容": "過去の思考署名の互換性",
+    "已清理历史思考块，并在同渠道重试 1 次。": "過去の思考ブロックを除去し、同じチャネルで一度再試行しました。",
+    "兼容处理": "互換処理",
     'Request compatibility': 'リクエスト互換性',
     'Thinking format adaptation': '思考形式の適応',
     'Opus 4.7 sampling parameter adaptation': 'Opus 4.7 サンプリング設定の適応',
@@ -125,6 +143,9 @@ export const tokenRequestCompatibilityTranslations = {
       'Opus 4.7 の temperature/top_p/top_k を除去します。',
   },
   vi: {
+    "历史思考签名兼容": "Tương thích chữ ký suy nghĩ cũ",
+    "已清理历史思考块，并在同渠道重试 1 次。": "Đã xóa các khối suy nghĩ cũ và thử lại một lần trên cùng kênh.",
+    "兼容处理": "Xử lý tương thích",
     'Request compatibility': 'Tương thích yêu cầu',
     'Thinking format adaptation': 'Điều chỉnh định dạng suy nghĩ',
     'Opus 4.7 sampling parameter adaptation':

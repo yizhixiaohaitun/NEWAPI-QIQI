@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import '../../i18n/token-request-compatibility';
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Modal } from '@douyinfe/semi-ui';
@@ -42,6 +43,7 @@ import {
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
+import { signatureRetryReferences } from './compatibility-reference';
 
 export const useLogsData = () => {
   const { t } = useTranslation();
@@ -647,6 +649,7 @@ export const useLogsData = () => {
           ),
         });
       }
+      expandDataLocal.push(...signatureRetryReferences(isAdminUser, other, t));
       if (isAdminUser && logs[i].type !== 6 && logs[i].type !== 1) {
         expandDataLocal.push({
           key: t('请求转换'),
