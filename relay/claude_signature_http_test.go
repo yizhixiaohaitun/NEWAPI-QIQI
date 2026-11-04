@@ -267,6 +267,17 @@ data: {}
 						c.Writer.Flush()
 					}
 					result := ClaudeHelper(c, info)
+					adminInfo := map[string]interface{}{}
+					service.AppendRelayCompatibilityAdminInfo(c, adminInfo)
+					if tc.expected == 2 {
+						require.Equal(t, []service.RelayCompatibilityEvent{{
+							RuleID: "QIQI-EC-005", Key: "claude_historical_thinking_signature_retry",
+							SettingKey: "request_compatibility_enabled", EventType: "applied",
+							Action: "strip_historical_thinking_and_retry", Outcome: "retry_started", Retried: true,
+						}}, adminInfo["compatibility_events"])
+					} else {
+						assert.NotContains(t, adminInfo, "compatibility_events")
+					}
 					bodiesMu.Lock()
 					defer bodiesMu.Unlock()
 					require.Len(t, bodies, tc.expected)

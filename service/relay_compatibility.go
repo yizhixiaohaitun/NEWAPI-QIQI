@@ -32,6 +32,12 @@ var ResponsesEncryptedContentRecoveryRule = RelayCompatibilityRule{
 	Key: "responses_encrypted_content_recovery",
 }
 
+var ClaudeHistoricalThinkingSignatureRetryRule = RelayCompatibilityRule{
+	ID:         "QIQI-EC-005",
+	Key:        "claude_historical_thinking_signature_retry",
+	SettingKey: "request_compatibility_enabled",
+}
+
 type RelayCompatibilityEvent struct {
 	RuleID     string `json:"rule_id"`
 	Key        string `json:"key"`

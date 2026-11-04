@@ -224,6 +224,13 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	// DoResponse. Keep both stages inside the same single-retry boundary.
 	for attempt := 0; ; attempt++ {
 		var httpResp *http.Response
+		if attempt == 1 {
+			event := service.NewRelayCompatibilityEvent(service.ClaudeHistoricalThinkingSignatureRetryRule, service.RelayCompatibilityEventTypeApplied)
+			event.Action = "strip_historical_thinking_and_retry"
+			event.Outcome = "retry_started"
+			event.Retried = true
+			service.RecordRelayCompatibilityEvent(c, event)
+		}
 		resp, requestErr := adaptor.DoRequest(c, info, requestBody)
 		if requestErr != nil {
 			return types.NewOpenAIError(requestErr, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
