@@ -131,7 +131,8 @@ func streamDataContainsModerationMetadata(data string) bool {
 		if common.Unmarshal(raw, &object) == nil && object != nil {
 			for key, child := range object {
 				switch key {
-				case "prompt_filter_results", "content_filter_results", "content_filter_offsets":
+				case "prompt_filter_results", "content_filter_results", "content_filter_offsets",
+					"safeguards", "safeguard_results", "openai_chatgpt_moderation_metadata":
 					return true
 				}
 				if contains(child) {

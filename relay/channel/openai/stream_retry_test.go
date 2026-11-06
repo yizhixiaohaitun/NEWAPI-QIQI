@@ -145,10 +145,27 @@ func TestStreamDataContainsModerationMetadata(t *testing.T) {
 		{"choice_nested", `{"choices":[{"content_filter_results":{"hate":{"filtered":false}}}]}`, true},
 		{"offsets_nested", `{"choices":[{"content_filter_offsets":null}]}`, true},
 		{"null_value_without_field", `{"choices":[{"content_filter_results":null}]}`, true},
+		{"safeguards", `{"choices":[],"safeguards":[]}`, true},
+		{"safeguard_results_nested", `{"choices":[],"metadata":{"safeguard_results":null}}`, true},
+		{"chatgpt_moderation_metadata", `{"choices":[],"openai_chatgpt_moderation_metadata":{"flagged":false}}`, true},
 		{"ordinary_empty", `{"choices":[],"metadata":{"value":null}}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, streamDataContainsModerationMetadata(tc.data))
+		})
+	}
+}
+
+func TestChatSafeguardFramePreventsRetryAfterError(t *testing.T) {
+	for _, field := range []string{"safeguards", "safeguard_results", "openai_chatgpt_moderation_metadata"} {
+		t.Run(field, func(t *testing.T) {
+			enableResponsesStreamRetryForTest(t)
+			body := "data: " + fmt.Sprintf(`{"choices":[],%q:[]}`, field) + "\n\n" + azureTokenRateLimitSSE + "\n\n"
+			c, recorder, resp, info := newChatStreamTestContext(t, body)
+			_, err := OaiStreamHandler(c, info, resp)
+			require.Nil(t, err)
+			require.False(t, info.ResponsesStreamErrorBeforeCommit)
+			require.Equal(t, 1, strings.Count(recorder.Body.String(), `"`+field+`"`))
 		})
 	}
 }
@@ -165,4 +182,22 @@ func TestChatAuditPreservesPriorFrameOrder(t *testing.T) {
 	require.Contains(t, body, preamble)
 	require.Less(t, strings.Index(body, preamble), strings.Index(body, audit))
 	require.Equal(t, 1, strings.Count(body, preamble))
+}
+
+func TestResponsesModerationErrorFrameIsNotDuplicated(t *testing.T) {
+	moderationError := `{"type":"error","error":{"type":"rate_limit_error","code":"429","message":"original failure"},"safeguards":[{"category":"violence","blocked":true}]}`
+	for _, retryEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("retry_%t", retryEnabled), func(t *testing.T) {
+			enableResponsesStreamRetryForTest(t)
+			if !retryEnabled {
+				disableResponsesStreamRetryForTest(t)
+			}
+			c, recorder, resp, info := newResponsesStreamTestContext(t, "data: "+moderationError+"\n\n")
+			_, err := OaiResponsesStreamHandler(c, info, resp)
+			require.Nil(t, err)
+			body := recorder.Body.String()
+			require.Equal(t, 1, strings.Count(body, moderationError))
+			require.Contains(t, body, `"safeguards":[{"category":"violence","blocked":true}]`)
+		})
+	}
 }

@@ -130,7 +130,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		if upstreamStreamErr != nil {
 			if !retryEnabled {
 				recordResponsesStreamRetryRecommendation(c)
-				sendResponsesStreamData(c, info, streamResponse, data)
+				if !moderationFrame {
+					sendResponsesStreamData(c, info, streamResponse, data)
+				}
 				return
 			}
 			if retryWriter != nil && !retryWriter.committed {
@@ -140,7 +142,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				return
 			}
 			sr.Error(upstreamStreamErr)
-			sendResponsesStreamData(c, info, streamResponse, data)
+			if !moderationFrame {
+				sendResponsesStreamData(c, info, streamResponse, data)
+			}
 			return
 		}
 
