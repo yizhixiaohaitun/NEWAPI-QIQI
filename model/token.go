@@ -29,6 +29,7 @@ type Token struct {
 	Group                       string         `json:"group" gorm:"default:''"`
 	CrossGroupRetry             bool           `json:"cross_group_retry"`                          // 跨分组重试，仅auto分组有效
 	UpstreamTimeout             int            `json:"upstream_timeout" gorm:"not null;default:0"` // streaming/realtime total seconds; 0 disables the cutoff
+	FirstByteTimeout            *int           `json:"first_byte_timeout"`                         // nil inherits global timeout; 0 disables first-byte cutoff
 	NonStreamUpstreamTimeout    *int           `json:"non_stream_upstream_timeout"`                // nil inherits UpstreamTimeout for legacy rows; 0 disables
 	RequestCompatibilityEnabled *bool          `json:"request_compatibility_enabled"`              // nil keeps legacy request compatibility enabled
 	CacheVersion                int            `json:"cache_version" gorm:"-"`
@@ -55,6 +56,13 @@ func (token *Token) BeforeCreate(_ *gorm.DB) error {
 func ValidateTokenUpstreamTimeout(seconds int) error {
 	if seconds < 0 {
 		return errors.New("超时时间不能为负数")
+	}
+	return nil
+}
+
+func ValidateTokenFirstByteTimeout(seconds int) error {
+	if seconds < 0 {
+		return errors.New("首字超时时间不能为负数")
 	}
 	return nil
 }
@@ -335,7 +343,7 @@ func (token *Token) Update() error {
 	defer tokenCacheMu.Unlock()
 	if err := DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "upstream_timeout",
-		"non_stream_upstream_timeout", "request_compatibility_enabled").Updates(token).Error; err != nil {
+		"first_byte_timeout", "non_stream_upstream_timeout", "request_compatibility_enabled").Updates(token).Error; err != nil {
 		return err
 	}
 	return refreshTokenCacheAfterUpdate(*token)

@@ -641,6 +641,33 @@ export function ApiKeysMutateDrawer({
 
                     <FormField
                       control={form.control}
+                      name='first_byte_timeout'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('流式首字超时断开')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              value={field.value ?? ''}
+                              type='number'
+                              min='0'
+                              step='1'
+                              placeholder={t('跟随全局设置')}
+                              onChange={(event) => {
+                                const value = event.target.value
+                                field.onChange(value === '' ? null : Number.parseInt(value, 10) || 0)
+                              }}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t('仅适用于流式请求，单位：秒。留空跟随全局设置，填写 0 表示关闭；首字前超时会直接断开且不切换渠道。')}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
                       name='non_stream_upstream_timeout'
                       render={({ field }) => (
                         <FormItem>

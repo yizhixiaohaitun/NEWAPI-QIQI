@@ -3,6 +3,9 @@ package controller
 import (
 	"context"
 	"errors"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,7 +16,7 @@ import (
 )
 
 func TestFirstByteTimeoutRetryStops(t *testing.T) {
-	for _, scenario := range []string{"ready", "budget", "specific", "cancelled", "written", "affinity", "skip"} {
+	for _, scenario := range []string{"ready", "budget", "specific", "cancelled", "written", "affinity", "skip", "token_override"} {
 		t.Run(scenario, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -35,6 +38,9 @@ func TestFirstByteTimeoutRetryStops(t *testing.T) {
 				c.Set("channel_affinity_skip_retry_on_failure", true)
 			case "skip":
 				err = types.NewErrorWithStatusCode(errors.New("timeout"), types.ErrorCodeFirstByteTimeout, http.StatusGatewayTimeout, types.ErrOptionWithSkipRetry())
+			case "token_override":
+				timeout := 5
+				common.SetContextKey(c, constant.ContextKeyTokenFirstByteTimeout, &timeout)
 			}
 			assert.Equal(t, scenario == "ready", shouldRetry(c, err, budget))
 		})

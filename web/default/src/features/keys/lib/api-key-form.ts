@@ -41,6 +41,7 @@ export function getApiKeyFormSchema(t: TFunction) {
       cross_group_retry: z.boolean().optional(),
       request_compatibility_enabled: z.boolean(),
       upstream_timeout: z.number().min(0, t('流式总时长不能为负数')),
+      first_byte_timeout: z.number().min(0, t('首字超时时间不能为负数')).nullable(),
       non_stream_upstream_timeout: z
         .number()
         .min(0, t('非流式超时时间不能为负数')),
@@ -81,6 +82,7 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   cross_group_retry: true,
   request_compatibility_enabled: true,
   upstream_timeout: 0,
+  first_byte_timeout: null,
   non_stream_upstream_timeout: 0,
   tokenCount: 1,
 }
@@ -121,6 +123,7 @@ export function transformFormDataToPayload(
     cross_group_retry: data.group === 'auto' ? !!data.cross_group_retry : false,
     request_compatibility_enabled: data.request_compatibility_enabled,
     upstream_timeout: data.upstream_timeout,
+    first_byte_timeout: data.first_byte_timeout ?? null,
     non_stream_upstream_timeout: data.non_stream_upstream_timeout,
   }
 }
@@ -150,6 +153,7 @@ export function transformApiKeyToFormDefaults(
     // Missing/null is a legacy token; never replace an explicit false.
     request_compatibility_enabled: apiKey.request_compatibility_enabled ?? true,
     upstream_timeout: apiKey.upstream_timeout,
+    first_byte_timeout: apiKey.first_byte_timeout ?? null,
     non_stream_upstream_timeout:
       apiKey.non_stream_upstream_timeout ?? apiKey.upstream_timeout,
     tokenCount: 1,

@@ -92,6 +92,22 @@ describe('token request compatibility form boundary', () => {
     }
   })
 
+  test('first-byte timeout keeps null inheritance and explicit zero', () => {
+    for (const value of [null, 0, 12]) {
+      const parsed = apiKeySchema.parse({ ...token, first_byte_timeout: value })
+      const form = transformApiKeyToFormDefaults(parsed)
+      assert.equal(form.first_byte_timeout, value)
+      const payload = transformFormDataToPayload(
+        getApiKeyFormSchema(t).parse({
+          ...getApiKeyFormDefaultValues(false),
+          name: 'first-byte',
+          first_byte_timeout: value,
+        })
+      )
+      assert.equal(jsonWire(payload).first_byte_timeout, value)
+    }
+  })
+
   test('explicit disable also survives new batch payloads and schema strips no field', () => {
     const form = getApiKeyFormSchema(t).parse({
       ...getApiKeyFormDefaultValues(false),

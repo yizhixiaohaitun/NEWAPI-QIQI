@@ -122,6 +122,7 @@ type RelayInfo struct {
 	UserGroup                string // 用户所在分组
 	TokenUnlimited           bool
 	UpstreamTimeout          int  // streaming/realtime total seconds; 0 means unlimited
+	FirstByteTimeout         *int // nil inherits the global first-byte timeout; 0 disables it
 	NonStreamUpstreamTimeout *int // nil inherits UpstreamTimeout for legacy tokens
 	UpstreamContext          context.Context
 	FirstByteWatch           *FirstByteWatch
@@ -528,6 +529,10 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		TokenKey:        common.GetContextKeyString(c, constant.ContextKeyTokenKey),
 		TokenUnlimited:  common.GetContextKeyBool(c, constant.ContextKeyTokenUnlimited),
 		UpstreamTimeout: common.GetContextKeyInt(c, constant.ContextKeyTokenUpstreamTimeout),
+		FirstByteTimeout: func() *int {
+			timeout, _ := common.GetContextKeyType[*int](c, constant.ContextKeyTokenFirstByteTimeout)
+			return timeout
+		}(),
 		NonStreamUpstreamTimeout: func() *int {
 			timeout, _ := common.GetContextKeyType[*int](c, constant.ContextKeyTokenNonStreamUpstreamTimeout)
 			return timeout

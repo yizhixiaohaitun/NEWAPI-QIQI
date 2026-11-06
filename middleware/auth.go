@@ -493,6 +493,7 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 	common.SetContextKey(c, constant.ContextKeyTokenGroup, token.Group)
 	common.SetContextKey(c, constant.ContextKeyTokenCrossGroupRetry, token.CrossGroupRetry)
 	common.SetContextKey(c, constant.ContextKeyTokenUpstreamTimeout, token.UpstreamTimeout)
+	common.SetContextKey(c, constant.ContextKeyTokenFirstByteTimeout, token.FirstByteTimeout)
 	common.SetContextKey(c, constant.ContextKeyTokenNonStreamUpstreamTimeout, token.NonStreamUpstreamTimeout)
 	common.SetContextKey(c, constant.ContextKeyTokenRequestCompatibilityEnabled, common.GetPointer(token.IsRequestCompatibilityEnabled()))
 	if len(parts) > 1 {

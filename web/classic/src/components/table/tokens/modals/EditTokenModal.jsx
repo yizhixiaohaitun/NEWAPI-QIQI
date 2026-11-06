@@ -85,6 +85,7 @@ const EditTokenModal = (props) => {
     cross_group_retry: false,
     request_compatibility_enabled: true,
     upstream_timeout: 0,
+    first_byte_timeout: null,
     non_stream_upstream_timeout: 0,
     tokenCount: 1,
   });
@@ -177,6 +178,9 @@ const EditTokenModal = (props) => {
       data.remain_amount = Number(
         quotaToDisplayAmount(data.remain_quota || 0).toFixed(6),
       );
+      if (data.first_byte_timeout == null) {
+        data.first_byte_timeout = null;
+      }
       if (data.non_stream_upstream_timeout == null) {
         data.non_stream_upstream_timeout = data.upstream_timeout || 0;
       }
@@ -702,6 +706,25 @@ const EditTokenModal = (props) => {
                               : Promise.reject(t('流式总时长不能为负数')),
                         },
                       ]}
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.InputNumber
+                      field='first_byte_timeout'
+                      label={t('流式首字超时断开')}
+                      min={0}
+                      step={1}
+                      precision={0}
+                      extraText={t(
+                        '仅适用于流式请求，单位：秒。留空跟随全局设置，填写 0 表示关闭；首字前超时会直接断开且不切换渠道。',
+                      )}
+                      rules={[{
+                        validator: (_rule, value) =>
+                          value == null || value >= 0
+                            ? Promise.resolve()
+                            : Promise.reject(t('首字超时时间不能为负数')),
+                      }]}
                       style={{ width: '100%' }}
                     />
                   </Col>

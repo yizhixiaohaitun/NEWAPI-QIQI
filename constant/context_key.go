@@ -20,6 +20,7 @@ const (
 	ContextKeyTokenModelLimit                  ContextKey = "token_model_limit"
 	ContextKeyTokenCrossGroupRetry             ContextKey = "token_cross_group_retry"
 	ContextKeyTokenUpstreamTimeout             ContextKey = "token_upstream_timeout"
+	ContextKeyTokenFirstByteTimeout            ContextKey = "token_first_byte_timeout"
 	ContextKeyTokenNonStreamUpstreamTimeout    ContextKey = "token_non_stream_upstream_timeout"
 	ContextKeyTokenRequestCompatibilityEnabled ContextKey = "token_request_compatibility_enabled"
 	ContextKeyUpstreamCancel                   ContextKey = "upstream_cancel"

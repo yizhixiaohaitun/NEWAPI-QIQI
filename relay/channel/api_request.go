@@ -529,7 +529,11 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	if info.IsStream && firstByteTimeoutEnabled(info) {
 		if cancelValue, ok := c.Get(string(constant2.ContextKeyUpstreamCancel)); ok {
 			if cancel, ok := cancelValue.(context.CancelFunc); ok && cancel != nil {
-				info.FirstByteWatch = common.NewFirstByteWatch(cancel, time.Duration(constant2.FirstByteTimeout)*time.Second)
+				timeout := constant2.FirstByteTimeout
+				if info.FirstByteTimeout != nil {
+					timeout = *info.FirstByteTimeout
+				}
+				info.FirstByteWatch = common.NewFirstByteWatch(cancel, time.Duration(timeout)*time.Second)
 			}
 		}
 	}
@@ -611,7 +615,14 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 
 // First-byte retry is meaningful only for an active HTTP stream attempt.
 func firstByteTimeoutEnabled(info *common.RelayInfo) bool {
-	return info != nil && constant2.FirstByteTimeout > 0 && info.UpstreamContext != nil &&
+	if info == nil || info.UpstreamContext == nil {
+		return false
+	}
+	timeout := constant2.FirstByteTimeout
+	if info.FirstByteTimeout != nil {
+		timeout = *info.FirstByteTimeout
+	}
+	return timeout > 0 &&
 		info.ChannelMeta != nil && info.ApiType == constant2.APITypeOpenAI &&
 		(info.RelayMode == constant.RelayModeChatCompletions || info.RelayMode == constant.RelayModeResponses) &&
 		(info.RelayFormat == types.RelayFormatOpenAI || info.RelayFormat == types.RelayFormatOpenAIResponses)

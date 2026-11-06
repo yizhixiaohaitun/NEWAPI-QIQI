@@ -9,9 +9,9 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 )
 
-// Version 1 hashes may predate request_compatibility_enabled. Reload once
+// Versioned hashes may predate request_compatibility_enabled or first_byte_timeout. Reload once
 // rather than treating a missing field as on when SQL already stores false.
-const tokenCacheVersion = 2
+const tokenCacheVersion = 3
 
 // Order this process's read-through fills against settings writes. In particular,
 // no delayed fill may overwrite the cache after an update API has succeeded.

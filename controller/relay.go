@@ -430,6 +430,13 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		}
 	}
 	if openaiErr.GetErrorCode() == types.ErrorCodeFirstByteTimeout {
+		// A positive per-token timeout is an explicit hard cutoff: do not
+		// switch channels or replay the request. Nil/legacy keeps retry behavior.
+		if c != nil {
+			if timeout, ok := common.GetContextKeyType[*int](c, constant.ContextKeyTokenFirstByteTimeout); ok && timeout != nil {
+				return false
+			}
+		}
 		return c != nil && c.GetBool("upstream_first_byte_timeout") && c.Writer != nil && !c.Writer.Written()
 	}
 	// A stream failure caught before any downstream output is safe to retry

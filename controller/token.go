@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -167,7 +168,24 @@ func GetTokenUsage(c *gin.Context) {
 
 type tokenMutationRequest struct {
 	model.Token
-	UpstreamTimeout *int `json:"upstream_timeout"`
+	UpstreamTimeout  *int `json:"upstream_timeout"`
+	FirstByteTimeout *int `json:"first_byte_timeout"`
+	FirstBytePresent bool `json:"-"`
+}
+
+func (r *tokenMutationRequest) UnmarshalJSON(data []byte) error {
+	type alias tokenMutationRequest
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*r = tokenMutationRequest(decoded)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	_, r.FirstBytePresent = fields["first_byte_timeout"]
+	return nil
 }
 
 func AddToken(c *gin.Context) {
@@ -186,6 +204,15 @@ func AddToken(c *gin.Context) {
 		token.UpstreamTimeout = model.DefaultTokenUpstreamTimeout
 	} else {
 		token.UpstreamTimeout = *request.UpstreamTimeout
+	}
+	if request.FirstBytePresent {
+		if request.FirstByteTimeout != nil {
+			if err := model.ValidateTokenFirstByteTimeout(*request.FirstByteTimeout); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+		}
+		token.FirstByteTimeout = request.FirstByteTimeout
 	}
 	if err := model.ValidateTokenUpstreamTimeout(token.UpstreamTimeout); err != nil {
 		common.ApiError(c, err)
@@ -252,6 +279,7 @@ func AddToken(c *gin.Context) {
 		Group:                       token.Group,
 		CrossGroupRetry:             token.CrossGroupRetry,
 		UpstreamTimeout:             token.UpstreamTimeout,
+		FirstByteTimeout:            token.FirstByteTimeout,
 		NonStreamUpstreamTimeout:    token.NonStreamUpstreamTimeout,
 		RequestCompatibilityEnabled: common.GetPointer(token.IsRequestCompatibilityEnabled()),
 	}
@@ -311,6 +339,12 @@ func UpdateToken(c *gin.Context) {
 			return
 		}
 	}
+	if request.FirstBytePresent && request.FirstByteTimeout != nil {
+		if err := model.ValidateTokenFirstByteTimeout(*request.FirstByteTimeout); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	if !token.UnlimitedQuota {
 		if token.RemainQuota < 0 {
 			common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
@@ -355,6 +389,9 @@ func UpdateToken(c *gin.Context) {
 		}
 		if request.UpstreamTimeout != nil {
 			cleanToken.UpstreamTimeout = token.UpstreamTimeout
+		}
+		if request.FirstBytePresent {
+			cleanToken.FirstByteTimeout = request.FirstByteTimeout
 		}
 		if token.NonStreamUpstreamTimeout != nil {
 			cleanToken.NonStreamUpstreamTimeout = token.NonStreamUpstreamTimeout
