@@ -240,6 +240,7 @@ API路径：/api/admin/users/config/levels
 - 流式审核元数据保真：`relay/channel/openai/stream_retry.go` 递归识别 `prompt_filter_results`、`content_filter_results`、`content_filter_offsets`、`safeguards`、`safeguard_results`、`openai_chatgpt_moderation_metadata`（含嵌套、空数组/null），收到后立即提交并经原始 JSON 输出；后续上游错误只保留同一连接的部分流，不换渠道、不重放或经 DTO 重建审核帧。Responses 同一帧同时含审核字段与 error 时只写出一次。回归 `relay/channel/openai/stream_retry_test.go`、`controller/relay_first_byte_timeout_test.go`、`controller/relay_chat_stream_rate_limit_retry_test.go`；无任何正文字节仍沿 `FirstByteWatch` 90 秒同连接重试，非流式路径不变。
 
 - 流式上游首字节超时：`relay/common/first_byte_timeout.go` 的 `FirstByteWatch` 由 `relay/channel/api_request.go` 仅为 OpenAI Chat/Responses 流式 HTTP 尝试启用，`controller/relay.go` 在无下游输出时保留同连接重试；`common/init.go` 读取 `STREAM_FIRST_BYTE_TIMEOUT`，默认90秒、0关闭。任意上游HTTP正文字节（含审核、心跳、角色帧）停止计时，不等同可见首字；`service/log_info_generate.go` 记录 `upstream_first_byte_ms`。回归 `relay/common/first_byte_timeout_test.go`、`controller/relay_first_byte_retry_test.go`、`controller/relay_first_byte_timeout_test.go`、`service/first_byte_log_test.go`。
+- SK 高级设置 `first_byte_timeout`：`model.Token` 的可空秒数通过 `middleware.SetupContextForToken` 传入 `RelayInfo`，正数覆盖全局计时并在首字超时后直接断开、禁止换渠道；0 显式关闭，null/省略继承全局行为。创建/更新和 default/classic 两套令牌编辑页同步该字段；Redis token cache version 为3。回归 `controller/relay_first_byte_retry_test.go` 与相关 Token/Relay 包测试。 
 
 ### 看板消耗分布金额饼图
 
