@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,7 +24,7 @@ func newChatStreamTestContext(t *testing.T, body string) (*gin.Context, *httptes
 	return c, rec, resp, info
 }
 
-func TestOaiStreamHandlerReturnsAzureTokenRateLimitBeforeOutputForRetry(t *testing.T) {
+func TestOaiStreamHandlerPreservesAuditBeforeError(t *testing.T) {
 	enableResponsesStreamRetryForTest(t)
 	body := strings.Join([]string{
 		`data: {"choices":[],"created":0,"id":"","model":"","object":"","prompt_filter_results":[{"prompt_index":0}]}`,
@@ -39,12 +40,10 @@ func TestOaiStreamHandlerReturnsAzureTokenRateLimitBeforeOutputForRetry(t *testi
 
 	usage, newAPIError := OaiStreamHandler(c, info, resp)
 
-	require.Nil(t, usage)
-	require.NotNil(t, newAPIError)
-	assert.Equal(t, http.StatusTooManyRequests, newAPIError.StatusCode)
-	assert.True(t, info.ResponsesStreamErrorBeforeCommit)
-	assert.Empty(t, recorder.Body.String())
-	assert.Empty(t, recorder.Header().Get("Content-Type"))
+	require.NotNil(t, usage)
+	require.Nil(t, newAPIError)
+	assert.False(t, info.ResponsesStreamErrorBeforeCommit)
+	assert.Equal(t, 1, strings.Count(recorder.Body.String(), `"prompt_filter_results":[{"prompt_index":0}]`))
 }
 
 func TestOaiStreamHandlerKeepsPartialStreamWhenErrorAfterOutput(t *testing.T) {
@@ -119,4 +118,51 @@ func TestResponsesOutputItemWithToolArgumentsCommits(t *testing.T) {
 func disableResponsesStreamRetryForTest(t *testing.T) {
 	t.Helper()
 	operation_setting.GetQiqiSetting().ResponsesStreamErrorRetryEnabled = false
+}
+
+func TestChatAuditFrameIsFlushedUnchangedBeforeFailure(t *testing.T) {
+	enableResponsesStreamRetryForTest(t)
+	audit := `{"choices":[],"prompt_filter_results":[{"content_filter_results":{"hate":{"filtered":false}},"unknown":"keep me"}]}`
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprint(force), func(t *testing.T) {
+			c, recorder, resp, info := newChatStreamTestContext(t, "data: "+audit+string([]byte{10, 10})+azureTokenRateLimitSSE+string([]byte{10, 10}))
+			info.ChannelSetting.ForceFormat = force
+			_, err := OaiStreamHandler(c, info, resp)
+			require.Nil(t, err)
+			require.Equal(t, 1, strings.Count(recorder.Body.String(), "data: "+audit+string([]byte{10, 10})))
+			require.False(t, info.ResponsesStreamErrorBeforeCommit)
+		})
+	}
+}
+
+func TestStreamDataContainsModerationMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data string
+		want bool
+	}{
+		{"top_level", `{"choices":[],"prompt_filter_results":[]}`, true},
+		{"choice_nested", `{"choices":[{"content_filter_results":{"hate":{"filtered":false}}}]}`, true},
+		{"offsets_nested", `{"choices":[{"content_filter_offsets":null}]}`, true},
+		{"null_value_without_field", `{"choices":[{"content_filter_results":null}]}`, true},
+		{"ordinary_empty", `{"choices":[],"metadata":{"value":null}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, streamDataContainsModerationMetadata(tc.data))
+		})
+	}
+}
+
+func TestChatAuditPreservesPriorFrameOrder(t *testing.T) {
+	enableResponsesStreamRetryForTest(t)
+	preamble := `{"choices":[{"delta":{"role":"assistant"}}]}`
+	audit := `{"choices":[],"prompt_filter_results":[{"id":9007199254740993}]}`
+	c, recorder, resp, info := newChatStreamTestContext(t, "data: "+preamble+"\n\ndata: "+audit+"\n\n"+azureTokenRateLimitSSE+"\n\n")
+	_, err := OaiStreamHandler(c, info, resp)
+	require.Nil(t, err)
+	body := recorder.Body.String()
+	require.Contains(t, body, audit)
+	require.Contains(t, body, preamble)
+	require.Less(t, strings.Index(body, preamble), strings.Index(body, audit))
+	require.Equal(t, 1, strings.Count(body, preamble))
 }

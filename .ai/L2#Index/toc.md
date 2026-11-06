@@ -237,6 +237,7 @@ API路径：/api/admin/users/config/levels
 
 - 报错关键词：`setting/operation_setting/retry_keywords.go` 保存 `AutomaticRetryKeywords`（每行一条、忽略大小写子串，默认含 prompt 被判违规文案），`model/option.go` 落库加载，`controller/relay.go` 在状态码规则之外命中关键词即换渠道；两套后台设置页均为多行输入框。回归 `setting/operation_setting/retry_keywords_test.go`、`controller/relay_retry_keyword_http_test.go`。
 - HTTP 200 流内限流错误：`relay/channel/openai/stream_retry.go` 缓冲尚无可见输出的 Chat 帧，`relay-openai.go`/`relay_responses.go` 在输出前遇到 error envelope 时不外泄前导帧并返回可重试错误，已有正文后保持原流不换渠道；`relay/compatible_handler.go` 开启时延迟流头。复用 Responses 流错误重试开关。回归 `relay/channel/openai/stream_retry_test.go`、`controller/relay_chat_stream_rate_limit_retry_test.go`、`controller/relay_stream_rate_limit_http_test.go`。HTTP 200 Responses 流内上下文窗口报错、纯空结束及无有效输出前的解析失败，使用同一开关和独立流错误预算，不再只依赖关键词；普通 HTTP 400 不因此全局重试。`relay_responses.go` 依据原始 JSON 区分空增量/空结束与正文、思考、拒绝、工具及多模态输出，保留扁平或嵌套错误原文；已输出、未知事件、4 MiB 缓冲上限提交、客户端取消、超时、指定渠道、亲和禁止和预算耗尽均保留禁止重放边界。回归 `relay/channel/openai/relay_responses_empty_retry_test.go`、`controller/relay_empty_stream_retry_test.go`、`controller/relay_responses_context_window_retry_test.go` 覆盖同一客户端连接切换渠道、失败前导帧隔离、原输入保留、空流与错误格式、真实输出后不重放和独立预算耗尽。
+- 流式审核元数据保真：`relay/channel/openai/stream_retry.go` 递归识别 `prompt_filter_results`、`content_filter_results`、`content_filter_offsets`（含嵌套、空数组/null），收到后立即提交并经原始 JSON 输出；后续上游错误只保留同一连接的部分流，不换渠道、不重放或经 DTO 重建审核帧。回归 `relay/channel/openai/stream_retry_test.go`、`controller/relay_first_byte_timeout_test.go`、`controller/relay_chat_stream_rate_limit_retry_test.go`；无任何正文字节仍沿 `FirstByteWatch` 90 秒同连接重试，非流式路径不变。
 
 ### 看板消耗分布金额饼图
 

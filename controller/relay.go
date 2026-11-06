@@ -439,6 +439,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		operation_setting.IsResponsesStreamErrorRetryEnabled() && c.Writer != nil && !c.Writer.Written() {
 		return true
 	}
+	if c != nil && c.GetBool("upstream_moderation_committed") {
+		return false
+	}
 	if types.IsChannelError(openaiErr) {
 		return true
 	}

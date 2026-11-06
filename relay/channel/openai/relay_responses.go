@@ -107,6 +107,25 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
+		moderationFrame := streamDataContainsModerationMetadata(data)
+		if moderationFrame {
+			c.Set("upstream_moderation_committed", true)
+			// Commit before error handling and forward the exact JSON. This frame
+			// is meaningful output even when it has no visible text; it must not
+			// be lost by a retry or rebuilt through a DTO.
+			if retryWriter != nil && !retryWriter.committed {
+				if err := retryWriter.Commit(); err != nil {
+					streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+					sr.Stop(streamErr)
+					return
+				}
+			}
+			if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
+				sr.Error(err)
+				return
+			}
+		}
+
 		upstreamStreamErr := responsesStreamEventError(&streamResponse, data)
 		if upstreamStreamErr != nil {
 			if !retryEnabled {
@@ -138,7 +157,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		}
 
-		sendResponsesStreamData(c, info, streamResponse, data)
+		if !moderationFrame {
+			sendResponsesStreamData(c, info, streamResponse, data)
+		}
 		addResponseAffinityAliases(streamResponse.Response)
 		if streamResponse.Item != nil {
 			addAffinityAliases(streamResponse.Item.ID)

@@ -25,9 +25,9 @@ import (
 )
 
 // Azure can answer a streaming Chat request with HTTP 200 and then put the
-// token rate-limit error inside the SSE body. Before any visible output, that
-// attempt must go back to channel retry instead of reaching the client.
-func TestRelayHTTPChatStreamRateLimitBeforeOutputRetriesNextChannel(t *testing.T) {
+// token rate-limit error inside the SSE body. Once moderation metadata has
+// arrived, that attempt must stay on the same channel and preserve the frame.
+func TestRelayHTTPChatStreamRateLimitAfterModerationDoesNotRetry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	oldDB, oldLogDB, oldCache, oldRetryTimes, oldCountToken, oldRedis := model.DB, model.LOG_DB, common.MemoryCacheEnabled, common.RetryTimes, constant.CountToken, common.RedisEnabled
 	oldUsableGroups := setting.UserUsableGroups2JSONString()
@@ -146,14 +146,13 @@ func TestRelayHTTPChatStreamRateLimitBeforeOutputRetriesNextChannel(t *testing.T
 
 	body := response.Body.String()
 	assert.Equal(t, http.StatusOK, response.Code, body)
-	assert.Contains(t, body, "ok-from-b")
-	assert.Contains(t, body, "[DONE]")
-	assert.NotContains(t, body, "exceeded token rate limit")
-	assert.NotContains(t, body, "chatcmpl-a")
-	assert.NotContains(t, body, "prompt_filter_results")
+	assert.NotContains(t, body, "ok-from-b")
+	assert.Contains(t, body, "exceeded token rate limit")
+	assert.Contains(t, body, "chatcmpl-a")
+	assert.Contains(t, body, "prompt_filter_results")
 	mu.Lock()
 	actualCalls := append([]string(nil), calls...)
 	mu.Unlock()
-	assert.Equal(t, []string{"A", "B"}, actualCalls)
-	assert.Equal(t, []string{"501", "502"}, usedChannels)
+	assert.Equal(t, []string{"A"}, actualCalls)
+	assert.Equal(t, []string{"501"}, usedChannels)
 }

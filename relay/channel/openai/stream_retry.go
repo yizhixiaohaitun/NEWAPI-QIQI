@@ -117,10 +117,48 @@ func (w *upstreamStreamRetryWriter) Commit() error {
 	return err
 }
 
-// chatStreamDataCommitsOutput only buffers Chat frames without visible output:
-// role-only/empty-content deltas and choice-less metadata. Reasoning, tool calls,
-// audio, finish and usage frames commit so they are never replayed elsewhere.
+// chatStreamDataCommitsOutput identifies Chat frames that are safe to buffer
+// until visible output. Moderation metadata is deliberately committed immediately
+// because it is meaningful output even when choices are empty.
+func streamDataContainsModerationMetadata(data string) bool {
+	var value json.RawMessage
+	if common.UnmarshalJsonStr(data, &value) != nil {
+		return false
+	}
+	var contains func(json.RawMessage) bool
+	contains = func(raw json.RawMessage) bool {
+		var object map[string]json.RawMessage
+		if common.Unmarshal(raw, &object) == nil && object != nil {
+			for key, child := range object {
+				switch key {
+				case "prompt_filter_results", "content_filter_results", "content_filter_offsets":
+					return true
+				}
+				if contains(child) {
+					return true
+				}
+			}
+			return false
+		}
+		var array []json.RawMessage
+		if common.Unmarshal(raw, &array) == nil {
+			for _, child := range array {
+				if contains(child) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return contains(value)
+}
+
 func chatStreamDataCommitsOutput(data string) bool {
+	if streamDataContainsModerationMetadata(data) {
+		// Moderation metadata is meaningful upstream output even without choices.
+		// Commit it before any later error can make a retry discard the frame.
+		return true
+	}
 	var envelope struct {
 		Choices []struct {
 			Delta        map[string]json.RawMessage `json:"delta"`
@@ -136,8 +174,6 @@ func chatStreamDataCommitsOutput(data string) bool {
 		return true
 	}
 	if len(envelope.Choices) == 0 {
-		// Azure prompt_filter_results and similar metadata frames have no
-		// visible output; keep them buffered until real output arrives.
 		return false
 	}
 	for _, choice := range envelope.Choices {

@@ -67,6 +67,12 @@ func TestRelayFirstByteTimeoutHTTP(t *testing.T) {
 		case 1, 4, 5:
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.(http.Flusher).Flush()
+		case 7:
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, `data: {"choices":[],"prompt_filter_results":[{"content_filter_results":{"hate":{"filtered":false}}}]}`+string([]byte{10, 10}))
+			w.(http.Flusher).Flush()
+			_, _ = io.WriteString(w, `data: {"error":{"code":"429","message":"rate limit"}}`+string([]byte{10, 10}))
+			return
 		case 2:
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = io.WriteString(w, `data: {"id":"audit","prompt_filter_results":[{"content_filter_results":{"hate":{"filtered":false}}}],"choices":[]}`+string([]byte{10, 10}))
@@ -137,6 +143,7 @@ func TestRelayFirstByteTimeoutHTTP(t *testing.T) {
 		{"body_wait", 1, 1, 1, "hello"},
 		{"audit_is_not_discarded", 2, 1, 0, "prompt_filter_results"},
 		{"visible_output_is_not_replayed", 3, 1, 0, "partial"},
+		{"audit_then_error_no_replay", 7, 1, 0, `"prompt_filter_results":[{"content_filter_results":{"hate":{"filtered":false}}}]`},
 		{"responses_body_wait", 4, 1, 1, "hello"},
 		{"disabled_does_not_retry", 5, 1, 0, ""},
 		{"retry_exhaustion", 6, 2, 0, "upstream_first_byte_timeout"},

@@ -143,6 +143,32 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	isAudioModel := strings.Contains(strings.ToLower(model), "audio")
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		moderationFrame := streamDataContainsModerationMetadata(data)
+		if moderationFrame {
+			if lastStreamData != "" {
+				if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+					sr.Error(err)
+				}
+				lastStreamData = ""
+			}
+			c.Set("upstream_moderation_committed", true)
+			// Moderation metadata is meaningful upstream output even without
+			// visible choices. Commit buffered preamble first, then forward the
+			// exact JSON before a later error can trigger a channel retry or force
+			// format reconstruction.
+			if retryWriter != nil && !retryWriter.committed {
+				if err := retryWriter.Commit(); err != nil {
+					streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+					sr.Stop(streamErr)
+					return
+				}
+			}
+			if err := helper.StringData(c, data); err != nil {
+				sr.Error(err)
+				return
+			}
+			return
+		}
 		var envelope dto.GeneralErrorResponse
 		if common.UnmarshalJsonStr(data, &envelope) == nil {
 			if upstreamError := envelope.TryToOpenAIError(); upstreamError != nil {
