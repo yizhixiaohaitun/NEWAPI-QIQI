@@ -39,6 +39,9 @@ func StreamAbnormalEmptyError(c *gin.Context, info *relaycommon.RelayInfo) *type
 	if info == nil || info.StreamStatus == nil {
 		return nil
 	}
+	if info.FirstByteWatch != nil && info.FirstByteWatch.TimedOut() {
+		return types.NewErrorWithStatusCode(fmt.Errorf("upstream timed out before the first response byte"), types.ErrorCodeFirstByteTimeout, http.StatusGatewayTimeout)
+	}
 	if info.ReceivedResponseCount > 0 {
 		return nil
 	}

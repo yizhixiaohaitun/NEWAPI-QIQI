@@ -12,6 +12,7 @@ import (
 	"time"
 
 	common2 "github.com/QuantumNous/new-api/common"
+	constant2 "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
@@ -525,9 +526,16 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		client = service.GetHttpClient()
 	}
 
+	if info.IsStream && firstByteTimeoutEnabled(info) {
+		if cancelValue, ok := c.Get(string(constant2.ContextKeyUpstreamCancel)); ok {
+			if cancel, ok := cancelValue.(context.CancelFunc); ok && cancel != nil {
+				info.FirstByteWatch = common.NewFirstByteWatch(cancel, time.Duration(constant2.FirstByteTimeout)*time.Second)
+			}
+		}
+	}
 	var stopPinger context.CancelFunc
 	var pingerDone <-chan struct{}
-	if info.IsStream && !info.DeferStreamHeadersUntilResponse {
+	if info.IsStream && !info.DeferStreamHeadersUntilResponse && info.FirstByteWatch == nil {
 		helper.SetEventStreamHeaders(c)
 		// 处理流式请求的 ping 保活
 		generalSettings := operation_setting.GetGeneralSetting()
@@ -552,11 +560,19 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	req = req.WithContext(requestContext)
 	resp, err := client.Do(req)
 	if err != nil {
+		if info.FirstByteWatch != nil {
+			info.FirstByteWatch.Stop()
+		}
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
 	if resp == nil {
 		return nil, errors.New("resp is nil")
+	}
+	if info.FirstByteWatch != nil && resp.StatusCode == http.StatusOK && resp.Body != nil {
+		resp.Body = info.FirstByteWatch.Wrap(resp.Body)
+	} else if info.FirstByteWatch != nil {
+		info.FirstByteWatch.Stop()
 	}
 
 	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
@@ -591,4 +607,12 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
 	return resp, nil
+}
+
+// First-byte retry is meaningful only for an active HTTP stream attempt.
+func firstByteTimeoutEnabled(info *common.RelayInfo) bool {
+	return info != nil && constant2.FirstByteTimeout > 0 && info.UpstreamContext != nil &&
+		info.ChannelMeta != nil && info.ApiType == constant2.APITypeOpenAI &&
+		(info.RelayMode == constant.RelayModeChatCompletions || info.RelayMode == constant.RelayModeResponses) &&
+		(info.RelayFormat == types.RelayFormatOpenAI || info.RelayFormat == types.RelayFormatOpenAIResponses)
 }

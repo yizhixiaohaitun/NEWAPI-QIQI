@@ -79,6 +79,13 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["model_price"] = modelPrice
 	other["user_group_ratio"] = userGroupRatio
 	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
+	// Unlike frt, this measures the first upstream HTTP body byte, including
+	// non-text metadata, and includes any preceding attempts in this request.
+	if relayInfo.FirstByteWatch != nil {
+		if firstByte := relayInfo.FirstByteWatch.FirstByteTime(); !firstByte.IsZero() {
+			other["upstream_first_byte_ms"] = firstByte.Sub(relayInfo.StartTime).Milliseconds()
+		}
+	}
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort
 	}

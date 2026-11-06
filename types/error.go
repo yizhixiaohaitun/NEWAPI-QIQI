@@ -50,6 +50,7 @@ const (
 	ErrorCodeDoRequestFailed              ErrorCode = "do_request_failed"
 	ErrorCodeClientClosedRequest          ErrorCode = "client_closed_request"
 	ErrorCodeUpstreamTimeout              ErrorCode = "upstream_timeout"
+	ErrorCodeFirstByteTimeout             ErrorCode = "upstream_first_byte_timeout"
 	ErrorCodeUpstreamResourceInsufficient ErrorCode = "upstream_resource_insufficient"
 	ErrorCodeGetChannelFailed             ErrorCode = "get_channel_failed"
 	ErrorCodeGenRelayInfoFailed           ErrorCode = "gen_relay_info_failed"

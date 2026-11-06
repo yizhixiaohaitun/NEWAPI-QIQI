@@ -124,6 +124,7 @@ type RelayInfo struct {
 	UpstreamTimeout          int  // streaming/realtime total seconds; 0 means unlimited
 	NonStreamUpstreamTimeout *int // nil inherits UpstreamTimeout for legacy tokens
 	UpstreamContext          context.Context
+	FirstByteWatch           *FirstByteWatch
 	StartTime                time.Time
 	FirstResponseTime        time.Time
 	isFirstResponse          bool

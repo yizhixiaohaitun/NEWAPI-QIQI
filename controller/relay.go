@@ -206,6 +206,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		relayInfo.ResponsesStreamErrorBeforeCommit = false
+		relayInfo.FirstByteWatch = nil
+		c.Set("upstream_first_byte_timeout", false)
 		c.Set("upstream_stream_error_before_commit", false)
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
@@ -246,9 +248,21 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		requestContextErr := c.Request.Context().Err()
 		upstreamContextErr := upstreamCtx.Err()
+		firstByteTimedOut := relayInfo.FirstByteWatch != nil && relayInfo.FirstByteWatch.Finish()
+		if firstByteTimedOut && requestContextErr == nil && requestUpstreamCtx.Err() == nil {
+			newAPIError = types.NewErrorWithStatusCode(errors.New("upstream timed out before the first response byte"), types.ErrorCodeFirstByteTimeout, http.StatusGatewayTimeout)
+			if !c.Writer.Written() {
+				c.Set("upstream_first_byte_timeout", true)
+				relayInfo.ResetFirstResponseTime()
+				helper.ResetEventStreamHeaders(c)
+			}
+		}
 		cancelUpstream()
 		c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(nil))
 		newAPIError = normalizeRelayContextError(newAPIError, requestContextErr, upstreamContextErr)
+		if requestContextErr == nil && errors.Is(requestUpstreamCtx.Err(), context.DeadlineExceeded) {
+			newAPIError = service.NewUpstreamTimeoutError()
+		}
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
@@ -258,6 +272,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 		retryLimit = retryLimitForRelayError(relayInfo, retryLimit)
+		if c.GetBool("upstream_first_byte_timeout") && retryLimit < 1 {
+			retryLimit = 1
+		}
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
@@ -411,6 +428,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		if _, ok := c.Get("specific_channel_id"); ok {
 			return false
 		}
+	}
+	if openaiErr.GetErrorCode() == types.ErrorCodeFirstByteTimeout {
+		return c != nil && c.GetBool("upstream_first_byte_timeout") && c.Writer != nil && !c.Writer.Written()
 	}
 	// A stream failure caught before any downstream output is safe to retry
 	// under the dedicated switch/budget, regardless of provider status/text.

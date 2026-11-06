@@ -187,6 +187,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			for {
 				select {
 				case <-pingTicker.C:
+					if info.FirstByteWatch != nil && info.FirstByteWatch.Pending() {
+						continue
+					}
 					var err error
 					func() {
 						writeMutex.Lock()

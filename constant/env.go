@@ -1,5 +1,7 @@
 package constant
 
+// FirstByteTimeout is the per-attempt upstream HTTP body wait in seconds.
+var FirstByteTimeout = 90
 var StreamingTimeout int
 var DifyDebug bool
 var MaxFileDownloadMB int
