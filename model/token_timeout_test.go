@@ -12,4 +12,7 @@ func TestValidateTokenUpstreamTimeout(t *testing.T) {
 	assert.NoError(t, ValidateTokenUpstreamTimeout(DefaultTokenUpstreamTimeout))
 	assert.NoError(t, ValidateTokenUpstreamTimeout(0))
 	assert.Error(t, ValidateTokenUpstreamTimeout(-1))
+	assert.NoError(t, ValidateTokenFirstByteTimeout(0))
+	assert.NoError(t, ValidateTokenFirstByteTimeout(90))
+	assert.Error(t, ValidateTokenFirstByteTimeout(-1))
 }
