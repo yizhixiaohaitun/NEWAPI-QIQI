@@ -375,7 +375,7 @@ export function CommonLogsFilterBar<TData>(
       {isAdmin && (
         <LogsFilterField>
           <LogsFilterInput
-            placeholder={t(useAuthStore.getState().auth.user?.role === ROLE.ROOT ? 'Username' : 'User ID')}
+            placeholder={t(useAuthStore.getState().auth.user?.role === ROLE.SUPER_ADMIN ? 'Username' : 'User ID')}
             type={sensitiveType}
             value={filters.username || ''}
             onChange={(e) => handleChange('username', e.target.value)}

@@ -179,7 +179,7 @@ export function UsersTable() {
       skeletonKeyPrefix='users-skeleton'
       applyHeaderSize
       toolbarProps={{
-        searchPlaceholder: t(useAuthStore.getState().auth.user?.role === ROLE.ROOT ? 'Filter by username, name or email...' : 'User ID'),
+        searchPlaceholder: t(useAuthStore.getState().auth.user?.role === ROLE.SUPER_ADMIN ? 'Filter by username, name or email...' : 'User ID'),
         filters: [
           {
             columnId: 'status',
