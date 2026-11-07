@@ -209,7 +209,8 @@ API路径：/api/admin/users/config/levels
 ### 错误关键词自动移除渠道模型
 
 - 配置：`setting/operation_setting/remove_model.go` 用读写锁维护 `AutomaticRemoveModelEnabled`（默认开启）、`AutomaticRemoveModelKeywords`（默认仅 `This Model is marked by provider as Legacy`）。一行一个、不区分大小写、空行不匹配；普通404、Access denied不默认触发。`model/option.go` 暴露并保存这两个选项。
-- 真实请求：`controller/relay.go#processChannelError` 接收当前尝试捕获的请求模型名（模型映射前），命中后只移除此渠道对应请求模型，并优先抑制整渠道自动禁用；对外上游错误原文、重试规则不因此修改。
+- 真实请求：`controller/relay.go#processChannelError` 接收普通Relay及RelayTask当前尝试捕获的请求模型名（模型映射前），命中后只移除此渠道对应请求模型，并优先抑制整渠道自动禁用；对外上游错误原文、重试规则不因此修改。
+- 防后台恢复：移除事务同步写入现有 `UpstreamModelUpdateIgnoredModels`；后台获取上游列表后重新读取当前模型和设置，`model/channel_upstream_cas.go#CompareAndSwapUpstreamState` 对Models/settings一起CAS提交并同事务更新Ability，提交后刷新缓存。内部维护不覆盖其他设置。回归 `controller/channel_upstream_prune_test.go` 验证旧快照与下一轮同步不复活，`controller/relay_task_remove_model_http_test.go` 覆盖任务HTTP映射名准确性。
 - 自动测试：`controller/channel-test.go#performChannelTests` 在allowDisable且当前渠道启用、真实错误命中时使用test context准确的original_model；视频安全探测不扩展。
 - 原子路由更新：`model/channel_remove_model.go#RemoveChannelModel` 事务内CAS更新Models并删除对应Ability，事务提交后重建当前进程渠道缓存；与缓存重建共享顺序锁，失败报告而不当作成功。`model/ability.go` 不创建空模型能力；移除最后模型保留空渠道，不删渠道。
 - 内部陈旧写回：`model/channel.go#Save/SaveWithoutKey` 只写内部维护实际负责的status/channel_info/setting，避免旧对象将已删模型复活。人工显式编辑仍可重新加入模型。跨实例内存缓存依旧沿原有定期同步机制，未新增跨实例事务保证。
