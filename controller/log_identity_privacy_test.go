@@ -26,7 +26,7 @@ func TestAdminLogIdentityPrivacy(t *testing.T) {
 		GetAllLogs(c)
 		require.Equal(t, 200, w.Code)
 		if tc.hidden {
-			require.NotContains(t, w.Body.String(), "secret-user")
+			require.Contains(t, w.Body.String(), "secret-user failed")
 			require.NotContains(t, w.Body.String(), "secret-admin")
 			require.NotContains(t, w.Body.String(), "secret-target")
 			require.Contains(t, w.Body.String(), `"user_id":42`)

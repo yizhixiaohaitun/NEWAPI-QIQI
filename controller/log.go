@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func asString(v interface{}) string { s, _ := v.(string); return s }
+
 // sanitizeAdminLogIdentity only changes the response object, never the stored log.
 func sanitizeAdminLogIdentity(log *model.Log) {
 	names := map[string]string{}
@@ -55,10 +57,14 @@ func sanitizeAdminLogIdentity(log *model.Log) {
 	clean = func(v interface{}) interface{} {
 		switch x := v.(type) {
 		case string:
-			return replace(x)
+			return x
 		case map[string]interface{}:
 			for k, value := range x {
-				x[k] = clean(value)
+				if _, ok := names[asString(value)]; ok && (strings.EqualFold(k, "username") || strings.EqualFold(k, "display_name") || strings.EqualFold(k, "admin_username") || strings.EqualFold(k, "operator_username")) {
+					x[k] = names[asString(value)]
+				} else {
+					x[k] = clean(value)
+				}
 			}
 		case []interface{}:
 			for i, value := range x {
@@ -68,7 +74,21 @@ func sanitizeAdminLogIdentity(log *model.Log) {
 		return v
 	}
 	log.Username = strconv.Itoa(log.UserId)
-	log.Content = replace(log.Content)
+	// Only locally generated audit templates may be reconstructed; upstream errors
+	// and arbitrary content are deliberately preserved verbatim.
+	if log.Type == model.LogTypeManage {
+		if obj, ok := other.(map[string]interface{}); ok {
+			if op, ok := obj["op"].(map[string]interface{}); ok {
+				if action, ok := op["action"].(string); ok {
+					if params, ok := op["params"].(map[string]interface{}); ok && strings.HasPrefix(action, "user.") {
+						if _, known := auditContentTemplates[action]; known && log.Content == auditContentEN(action, params) {
+							log.Content = replace(log.Content)
+						}
+					}
+				}
+			}
+		}
+	}
 	if !valid {
 		log.Other = ""
 	} else if log.Other != "" {
@@ -89,12 +109,23 @@ func parseZeroReplyQuery(c *gin.Context) bool {
 	return v == "1" || v == "true"
 }
 
+func adminLogUserFilter(c *gin.Context, username string) (string, []int) {
+	if c.GetInt("role") == common.RoleRootUser || username == "" {
+		return username, nil
+	}
+	id, err := strconv.Atoi(username)
+	if err != nil || id <= 0 {
+		id = -1
+	}
+	return "", []int{id}
+}
+
 func GetAllLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	username := c.Query("username")
+	username, userID := adminLogUserFilter(c, c.Query("username"))
 	tokenName := c.Query("token_name")
 	modelName := c.Query("model_name")
 	channel, _ := strconv.Atoi(c.Query("channel"))
@@ -102,7 +133,7 @@ func GetAllLogs(c *gin.Context) {
 	requestId := c.Query("request_id")
 	upstreamRequestId := c.Query("upstream_request_id")
 	zeroReply := parseZeroReplyQuery(c)
-	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId, zeroReply)
+	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId, zeroReply, userID...)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -186,12 +217,12 @@ func GetLogsStat(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	tokenName := c.Query("token_name")
-	username := c.Query("username")
+	username, userID := adminLogUserFilter(c, c.Query("username"))
 	modelName := c.Query("model_name")
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
 	zeroReply := parseZeroReplyQuery(c)
-	stat, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, zeroReply)
+	stat, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, zeroReply, userID...)
 	if err != nil {
 		common.ApiError(c, err)
 		return

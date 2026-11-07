@@ -467,7 +467,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string, zeroReply bool) (logs []*Log, total int64, err error) {
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string, zeroReply bool, userID ...int) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if zeroReply {
 		// 「0回复」伪类型筛选：不是真实的 log type 枚举，强制按消耗类日志过滤
@@ -484,6 +484,9 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
 		return nil, 0, err
+	}
+	if len(userID) > 0 {
+		tx = tx.Where("logs.user_id = ?", userID[0])
 	}
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.username", username); err != nil {
 		return nil, 0, err
@@ -637,7 +640,7 @@ type Stat struct {
 // zeroReply=true 时（前端选中「0回复」伪类型筛选），quota/rpm/tpm 也按
 // 0回复口径（type=消耗 且 prompt_tokens>0 且 completion_tokens=0）过滤，
 // 保证统计栏与列表数据口径一致；zeroReply 不影响 zero_reply_* 两个字段本身。
-func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, zeroReply bool) (stat Stat, err error) {
+func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, zeroReply bool, userID ...int) (stat Stat, err error) {
 	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
 
 	// 为rpm和tpm创建单独的查询
@@ -648,6 +651,11 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	// 用于量化流异常（client_gone、stream_error 等）导致扣费但无输出的请求
 	zeroReplyQuery := LOG_DB.Table("logs").Select("count(*) zero_reply_count, COALESCE(sum(quota), 0) zero_reply_quota")
 
+	if len(userID) > 0 {
+		tx = tx.Where("user_id = ?", userID[0])
+		rpmTpmQuery = rpmTpmQuery.Where("user_id = ?", userID[0])
+		zeroReplyQuery = zeroReplyQuery.Where("user_id = ?", userID[0])
+	}
 	if tx, err = applyExplicitLogTextFilter(tx, "username", username); err != nil {
 		return stat, err
 	}
