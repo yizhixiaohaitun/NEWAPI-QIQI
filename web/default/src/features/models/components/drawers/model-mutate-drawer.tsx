@@ -208,6 +208,8 @@ export function ModelMutateDrawer({
       ChannelDisableThreshold: '',
       AutomaticDisableChannelEnabled: false,
       AutomaticEnableChannelEnabled: false,
+      AutomaticRemoveModelEnabled: true,
+      AutomaticRemoveModelKeywords: 'This Model is marked by provider as Legacy',
       AutomaticDisableKeywords: '',
       AutomaticDisableStatusCodes: '401',
       AutomaticRetryStatusCodes:

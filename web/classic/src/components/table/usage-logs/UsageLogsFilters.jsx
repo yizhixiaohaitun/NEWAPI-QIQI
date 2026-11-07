@@ -21,7 +21,7 @@ import React from 'react';
 import { Button, Form } from '@douyinfe/semi-ui';
 import { IconSearch } from '@douyinfe/semi-icons';
 
-import { DATE_RANGE_PRESETS } from '../../../constants/console.constants';
+import { isRoot } from '../../../helpers';\n\nimport { DATE_RANGE_PRESETS } from '../../../constants/console.constants';
 
 const LogsFilters = ({
   formInitValues,
@@ -115,7 +115,7 @@ const LogsFilters = ({
               <Form.Input
                 field='username'
                 prefix={<IconSearch />}
-                placeholder={t('用户名称')}
+                placeholder={t(isRoot() ? '用户名称' : '用户 ID')}
                 showClear
                 pure
                 size='small'

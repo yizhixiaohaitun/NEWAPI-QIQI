@@ -204,7 +204,24 @@ API路径：/api/admin/users/config/levels
 - 本轮附件独立可选入口：设置 `NEWAPI_CLAUDE_SIGNATURE_ATTACHMENT` 后仅运行 `TestClaudeSignatureAttachmentReplay`，不复用旧 `TestClaudeAdaptiveAttachmentReplay` 的 high/无 display 断言；核对 54 条消息、12 个历史 thinking、`adaptive/display=summarized/effort=medium`，Claude/AWS 流式均只向 localhost 回放，附件内容不写进仓库或输出。
 - 签名兼容参考提示：复用 `service/relay_compatibility.go` 的请求级事件与既有成功/错误日志附加链，`QIQI-EC-005` / `claude_historical_thinking_signature_retry` 只在确实清理历史思考块并发起同渠道一次重试时记录；`retry_started` 仅说明已尝试，不证明真实上游恢复，且不记录签名或请求正文。默认主题沿用管理员使用日志“参考”列，由 `web/default/src/features/usage-logs/components/columns/compatibility-reference.tsx` 展示；经典主题由 `web/classic/src/hooks/usage-logs/useUsageLogsData.jsx` 调用同目录 `compatibility-reference.js` 在管理员日志详情展示同项。令牌编辑“请求兼容”附静态能力说明，无新增独立开关；无事件的请求及旧日志不补造触发记录，普通用户仍由既有 `admin_info` 过滤隔离。直接回归入口：`relay/claude_signature_http_test.go`、`service/relay_compatibility_test.go`（真实成功日志附加、事件去重、无事件不补造）、上述两主题提示实现的同名 `.test.tsx` / `.test.js`、两主题 `src/i18n/token-request-compatibility.test.*` 及 production build。
 
-**最后更新**：2026-11-04
+**最后更新**：2026-11-07
+
+### 错误关键词自动移除渠道模型
+
+- 配置：`setting/operation_setting/remove_model.go` 用读写锁维护 `AutomaticRemoveModelEnabled`（默认开启）、`AutomaticRemoveModelKeywords`（默认仅 `This Model is marked by provider as Legacy`）。一行一个、不区分大小写、空行不匹配；普通404、Access denied不默认触发。`model/option.go` 暴露并保存这两个选项。
+- 真实请求：`controller/relay.go#processChannelError` 接收当前尝试捕获的请求模型名（模型映射前），命中后只移除此渠道对应请求模型，并优先抑制整渠道自动禁用；对外上游错误原文、重试规则不因此修改。
+- 自动测试：`controller/channel-test.go#performChannelTests` 在allowDisable且当前渠道启用、真实错误命中时使用test context准确的original_model；视频安全探测不扩展。
+- 原子路由更新：`model/channel_remove_model.go#RemoveChannelModel` 事务内CAS更新Models并删除对应Ability，事务提交后重建当前进程渠道缓存；与缓存重建共享顺序锁，失败报告而不当作成功。`model/ability.go` 不创建空模型能力；移除最后模型保留空渠道，不删渠道。
+- 内部陈旧写回：`model/channel.go#Save/SaveWithoutKey` 只写内部维护实际负责的status/channel_info/setting，避免旧对象将已删模型复活。人工显式编辑仍可重新加入模型。跨实例内存缓存依旧沿原有定期同步机制，未新增跨实例事务保证。
+- 两主题入口：default `/system-settings/models/routing-reliability`（`routing-reliability-section.tsx`、`model-removal-settings.ts`及设置类型/registry）；classic `SettingsMonitoring.jsx` 与 `modelRemovalSettings.js`。新增关键词先保存再开启，关闭先保存；关键词留空明确禁用匹配，不回填默认。
+- 回归：`model/channel_remove_model_test.go`、`model/channel_maintenance_remove_test.go`、`controller/channel_remove_model_test.go`、`controller/relay_remove_model_http_test.go`、`controller/channel_auto_remove_model_test.go`、`setting/operation_setting/remove_model_test.go`；两主题同名model-removal设置测试；default类型检查与两主题production build。
+
+### 非根管理员用户身份编号展示
+
+- `controller/user.go` 对非root的用户列表、ID搜索、详情使用响应副本投影username/display_name为十进制ID；root原样。更新已存在用户时保留真实username/display_name，不把编号写回；普通用户自身资料、登录不受影响。
+- `controller/log.go` 在管理员日志返回边界对非root投影用户编号，结构化身份字段同步处理；只重建能够精确识别的本地用户操作审计模板，不全局替换上游错误自由文本。管理员日志列表和统计的用户筛选对非root按ID查询；root仍按原username规则。`model/log.go`的可选userID限制兼容旧调用。
+- default用户列/日志列、移动卡及用户信息弹窗，classic用户列表/编辑弹窗/日志列和信息弹窗按root权限显示姓名或ID；非root编辑不提交身份字段。
+- 回归：`controller/user_identity_privacy_test.go`、`controller/log_identity_privacy_test.go`、`controller/log_filter_identity_test.go`；原有authz测试及两主题构建。存储原始用户/日志不被响应净化修改；任意上游正文及其他用户自定义标签不承诺匿名化。
 
 ### SK 请求兼容集合（2026-10-14）
 

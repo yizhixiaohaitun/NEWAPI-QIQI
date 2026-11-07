@@ -231,6 +231,8 @@ export type ModelSettings = {
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
+  AutomaticRemoveModelEnabled: boolean
+  AutomaticRemoveModelKeywords: string
   AutomaticDisableKeywords: string
   AutomaticDisableStatusCodes: string
   AutomaticRetryStatusCodes: string

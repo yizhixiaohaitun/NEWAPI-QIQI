@@ -30,7 +30,7 @@ import {
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 
-import { getUsers, searchUsers } from '../api'
+import { ROLE } from '@/lib/roles'\nimport { useAuthStore } from '@/stores/auth-store'\n\nimport { getUsers, searchUsers } from '../api'
 import {
   USER_STATUS,
   getUserStatusOptions,
@@ -176,7 +176,7 @@ export function UsersTable() {
       skeletonKeyPrefix='users-skeleton'
       applyHeaderSize
       toolbarProps={{
-        searchPlaceholder: t('Filter by username, name or email...'),
+        searchPlaceholder: t(useAuthStore.getState().auth.user?.role === ROLE.ROOT ? 'Filter by username, name or email...' : 'User ID'),
         filters: [
           {
             columnId: 'status',

@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useRef } from 'react';
 import { Form, Button } from '@douyinfe/semi-ui';
-import { IconSearch } from '@douyinfe/semi-icons';
+import { IconSearch } from '@douyinfe/semi-icons';\nimport { isRoot } from '../../../helpers';
 
 const UsersFilters = ({
   formInitValues,
@@ -65,7 +65,7 @@ const UsersFilters = ({
           <Form.Input
             field='searchKeyword'
             prefix={<IconSearch />}
-            placeholder={t('支持搜索用户的 ID、用户名、显示名称和邮箱地址')}
+            placeholder={t(isRoot() ? '支持搜索用户的 ID、用户名、显示名称和邮箱地址' : '用户 ID')}
             showClear
             pure
             size='small'

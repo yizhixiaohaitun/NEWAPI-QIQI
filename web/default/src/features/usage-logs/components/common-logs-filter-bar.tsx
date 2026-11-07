@@ -38,7 +38,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
+import { ROLE } from '@/lib/roles'\nimport { useAuthStore } from '@/stores/auth-store'\n\nimport { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'
@@ -372,7 +372,7 @@ export function CommonLogsFilterBar<TData>(
       {isAdmin && (
         <LogsFilterField>
           <LogsFilterInput
-            placeholder={t('Username')}
+            placeholder={t(useAuthStore.getState().auth.user?.role === ROLE.ROOT ? 'Username' : 'User ID')}
             type={sensitiveType}
             value={filters.username || ''}
             onChange={(e) => handleChange('username', e.target.value)}
