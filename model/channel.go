@@ -343,14 +343,14 @@ func (channel *Channel) GetAutoBan() bool {
 }
 
 func (channel *Channel) Save() error {
-	return DB.Save(channel).Error
+	return DB.Omit("models", "settings").Save(channel).Error
 }
 
 func (channel *Channel) SaveWithoutKey() error {
 	if channel.Id == 0 {
 		return errors.New("channel ID is 0")
 	}
-	return DB.Omit("key").Save(channel).Error
+	return DB.Omit("key", "models", "settings").Save(channel).Error
 }
 
 func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool, sortOptions ...ChannelSortOptions) ([]*Channel, error) {
@@ -1005,12 +1005,13 @@ func (channel *Channel) SetSetting(setting dto.ChannelSettings) {
 
 func (channel *Channel) GetOtherSettings() dto.ChannelOtherSettings {
 	setting := dto.ChannelOtherSettings{}
+	originalSettings := channel.OtherSettings
 	if channel.OtherSettings != "" {
 		err := common.UnmarshalJsonStr(channel.OtherSettings, &setting)
 		if err != nil {
 			common.SysLog(fmt.Sprintf("failed to unmarshal setting: channel_id=%d, error=%v", channel.Id, err))
 			channel.OtherSettings = "{}" // 清空设置以避免后续错误
-			_ = DB.Model(&Channel{}).Where("id = ?", channel.Id).Update("settings", channel.OtherSettings).Error
+			_ = DB.Model(&Channel{}).Where("id = ? AND settings = ?", channel.Id, originalSettings).Update("settings", channel.OtherSettings).Error
 		}
 	}
 	return setting

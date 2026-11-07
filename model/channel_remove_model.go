@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"gorm.io/gorm"
 	"strings"
 )
@@ -34,7 +35,16 @@ func RemoveChannelModel(id int, name string) (bool, error) {
 			if !found {
 				return nil
 			}
-			result := tx.Model(&Channel{}).Where("id = ? AND models = ?", id, ch.Models).UpdateColumn("models", strings.Join(kept, ","))
+			settings := dto.ChannelOtherSettings{}
+			if ch.OtherSettings != "" {
+				_ = common.UnmarshalJsonStr(ch.OtherSettings, &settings)
+			}
+			if !containsModelName(settings.UpstreamModelUpdateIgnoredModels, name) {
+				settings.UpstreamModelUpdateIgnoredModels = append(settings.UpstreamModelUpdateIgnoredModels, name)
+			}
+			oldSettings := ch.OtherSettings
+			ch.SetOtherSettings(settings)
+			result := tx.Model(&Channel{}).Where("id = ? AND models = ? AND settings = ?", id, ch.Models, oldSettings).Updates(map[string]interface{}{"models": strings.Join(kept, ","), "settings": ch.OtherSettings})
 			if result.Error != nil {
 				return result.Error
 			}
@@ -65,4 +75,13 @@ func RemoveChannelModel(id int, name string) (bool, error) {
 		common.SysLog(fmt.Sprintf("channel #%d removed model %q after upstream keyword match", id, name))
 	}
 	return changed, nil
+}
+
+func containsModelName(names []string, name string) bool {
+	for _, n := range names {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }

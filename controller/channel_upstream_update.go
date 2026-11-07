@@ -372,38 +372,45 @@ func checkAndPersistChannelUpstreamModelUpdates(
 		}
 	}
 
-	pendingAddModels, pendingRemoveModels, fetchErr := collectPendingUpstreamModelChanges(channel, *settings)
-	settings.UpstreamModelUpdateLastCheckTime = now
-	if fetchErr != nil {
-		if err = updateChannelUpstreamModelSettings(channel, *settings, false); err != nil {
+	upstreamModels, fetchErr := fetchChannelUpstreamModelIDs(channel)
+	for attempt := 0; attempt < 10; attempt++ {
+		var current model.Channel
+		if err := model.DB.First(&current, channel.Id).Error; err != nil {
 			return false, 0, err
 		}
-		return false, 0, fetchErr
-	}
-
-	if allowAutoApply && settings.UpstreamModelUpdateAutoSyncEnabled && len(pendingAddModels) > 0 {
-		originModels := normalizeModelNames(channel.GetModels())
-		mergedModels := mergeModelNames(originModels, pendingAddModels)
-		if len(mergedModels) > len(originModels) {
-			channel.Models = strings.Join(mergedModels, ",")
-			autoAdded = len(mergedModels) - len(originModels)
-			modelsChanged = true
+		oldModels, oldSettings := current.Models, current.OtherSettings
+		currentSettings := current.GetOtherSettings()
+		currentSettings.UpstreamModelUpdateLastCheckTime = now
+		modelsChanged, autoAdded = false, 0
+		if fetchErr == nil {
+			pendingAddModels, pendingRemoveModels := collectPendingUpstreamModelChangesFromModels(current.GetModels(), upstreamModels, currentSettings.UpstreamModelUpdateIgnoredModels, normalizeChannelModelMapping(&current))
+			if allowAutoApply && currentSettings.UpstreamModelUpdateAutoSyncEnabled && len(pendingAddModels) > 0 {
+				originModels := normalizeModelNames(current.GetModels())
+				mergedModels := mergeModelNames(originModels, pendingAddModels)
+				autoAdded = len(mergedModels) - len(originModels)
+				modelsChanged = autoAdded > 0
+				if modelsChanged {
+					current.Models = strings.Join(mergedModels, ",")
+				}
+				currentSettings.UpstreamModelUpdateLastDetectedModels = []string{}
+			} else {
+				currentSettings.UpstreamModelUpdateLastDetectedModels = pendingAddModels
+			}
+			currentSettings.UpstreamModelUpdateLastRemovedModels = pendingRemoveModels
 		}
-		settings.UpstreamModelUpdateLastDetectedModels = []string{}
-	} else {
-		settings.UpstreamModelUpdateLastDetectedModels = pendingAddModels
-	}
-	settings.UpstreamModelUpdateLastRemovedModels = pendingRemoveModels
-
-	if err = updateChannelUpstreamModelSettings(channel, *settings, modelsChanged); err != nil {
-		return false, autoAdded, err
-	}
-	if modelsChanged {
-		if err = channel.UpdateAbilities(nil); err != nil {
-			return true, autoAdded, err
+		current.SetOtherSettings(currentSettings)
+		committed, commitErr := model.CompareAndSwapUpstreamState(&current, oldModels, oldSettings, modelsChanged)
+		if commitErr != nil {
+			return false, 0, commitErr
 		}
+		if !committed {
+			continue
+		}
+		*channel = current
+		*settings = currentSettings
+		return modelsChanged, autoAdded, fetchErr
 	}
-	return modelsChanged, autoAdded, nil
+	return false, 0, fmt.Errorf("concurrent channel upstream update")
 }
 
 func refreshChannelRuntimeCache() {
