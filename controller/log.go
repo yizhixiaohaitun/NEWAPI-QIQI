@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -12,56 +13,45 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func asString(v interface{}) string { s, _ := v.(string); return s }
-
-// sanitizeAdminLogIdentity only changes the response object, never the stored log.
+// sanitizeAdminLogIdentity only changes the response object, never stored logs or
+// arbitrary provider strings. UseNumber preserves opaque diagnostic numbers.
 func sanitizeAdminLogIdentity(log *model.Log) {
-	names := map[string]string{}
-	if log.Username != "" {
-		names[log.Username] = strconv.Itoa(log.UserId)
+	originalUsername := log.Username
+	log.Username = strconv.Itoa(log.UserId)
+	if log.Other == "" {
+		return
 	}
 	var other interface{}
-	valid := log.Other == "" || json.Unmarshal([]byte(log.Other), &other) == nil
-	var collect func(interface{})
-	collect = func(v interface{}) {
-		switch x := v.(type) {
-		case map[string]interface{}:
-			for k, value := range x {
-				key := strings.ToLower(k)
-				if s, ok := value.(string); ok && s != "" && (key == "username" || key == "display_name" || key == "admin_username" || key == "operator_username") {
-					replacement := ""
-					for _, idKey := range []string{"target_user_id", "id", "admin_id", "user_id"} {
-						if id, ok := x[idKey].(float64); ok {
-							replacement = strconv.FormatInt(int64(id), 10)
-							break
-						}
-					}
-					names[s] = replacement
-				}
-				collect(value)
-			}
-		case []interface{}:
-			for _, value := range x {
-				collect(value)
-			}
-		}
-	}
-	collect(other)
-	replace := func(s string) string {
-		for name, id := range names {
-			s = strings.ReplaceAll(s, name, id)
-		}
-		return s
+	decoder := json.NewDecoder(bytes.NewBufferString(log.Other))
+	decoder.UseNumber()
+	if decoder.Decode(&other) != nil {
+		log.Other = ""
+		return
 	}
 	var clean func(interface{}) interface{}
 	clean = func(v interface{}) interface{} {
 		switch x := v.(type) {
-		case string:
-			return x
 		case map[string]interface{}:
 			for k, value := range x {
-				if _, ok := names[asString(value)]; ok && (strings.EqualFold(k, "username") || strings.EqualFold(k, "display_name") || strings.EqualFold(k, "admin_username") || strings.EqualFold(k, "operator_username")) {
-					x[k] = names[asString(value)]
+				key := strings.ToLower(k)
+				if text, ok := value.(string); ok && (key == "username" || key == "display_name" || key == "admin_username" || key == "operator_username") {
+					replacement := ""
+					idKeys := []string{"target_user_id", "id", "user_id"}
+					if key == "admin_username" || key == "operator_username" {
+						idKeys = []string{"admin_id", "operator_id", "user_id", "id"}
+					}
+					for _, idKey := range idKeys {
+						if n, ok := x[idKey].(json.Number); ok {
+							if id, err := n.Int64(); err == nil && id > 0 {
+								replacement = n.String()
+								break
+							}
+						}
+					}
+					if replacement == "" && text == originalUsername {
+						replacement = strconv.Itoa(log.UserId)
+					}
+					x[k] = replacement
 				} else {
 					x[k] = clean(value)
 				}
@@ -73,31 +63,33 @@ func sanitizeAdminLogIdentity(log *model.Log) {
 		}
 		return v
 	}
-	log.Username = strconv.Itoa(log.UserId)
-	// Only locally generated audit templates may be reconstructed; upstream errors
-	// and arbitrary content are deliberately preserved verbatim.
+	// Re-render only a recognized local audit template whose original text matches.
+	// Short usernames must not replace unrelated words in the surrounding message.
+	action := ""
 	if log.Type == model.LogTypeManage {
 		if obj, ok := other.(map[string]interface{}); ok {
 			if op, ok := obj["op"].(map[string]interface{}); ok {
-				if action, ok := op["action"].(string); ok {
-					if params, ok := op["params"].(map[string]interface{}); ok && strings.HasPrefix(action, "user.") {
-						if _, known := auditContentTemplates[action]; known && log.Content == auditContentEN(action, params) {
-							log.Content = replace(log.Content)
+				if a, ok := op["action"].(string); ok && strings.HasPrefix(a, "user.") {
+					if params, ok := op["params"].(map[string]interface{}); ok {
+						if _, known := auditContentTemplates[a]; known && log.Content == auditContentEN(a, params) {
+							action = a
 						}
 					}
 				}
 			}
 		}
 	}
-	if !valid {
+	cleaned := clean(other)
+	if action != "" {
+		obj := cleaned.(map[string]interface{})
+		op := obj["op"].(map[string]interface{})
+		log.Content = auditContentEN(action, op["params"].(map[string]interface{}))
+	}
+	b, err := json.Marshal(cleaned)
+	if err != nil {
 		log.Other = ""
-	} else if log.Other != "" {
-		b, err := json.Marshal(clean(other))
-		if err != nil {
-			log.Other = ""
-		} else {
-			log.Other = string(b)
-		}
+	} else {
+		log.Other = string(b)
 	}
 }
 
