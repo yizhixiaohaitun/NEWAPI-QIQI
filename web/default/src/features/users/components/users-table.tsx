@@ -30,7 +30,10 @@ import {
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 
-import { ROLE } from '@/lib/roles'\nimport { useAuthStore } from '@/stores/auth-store'\n\nimport { getUsers, searchUsers } from '../api'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
+
+import { getUsers, searchUsers } from '../api'
 import {
   USER_STATUS,
   getUserStatusOptions,

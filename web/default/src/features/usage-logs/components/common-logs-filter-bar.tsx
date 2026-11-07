@@ -38,7 +38,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-import { ROLE } from '@/lib/roles'\nimport { useAuthStore } from '@/stores/auth-store'\n\nimport { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
+
+import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'

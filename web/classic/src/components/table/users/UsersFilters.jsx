@@ -19,7 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useRef } from 'react';
 import { Form, Button } from '@douyinfe/semi-ui';
-import { IconSearch } from '@douyinfe/semi-icons';\nimport { isRoot } from '../../../helpers';
+import { IconSearch } from '@douyinfe/semi-icons';
+import { isRoot } from '../../../helpers';
 
 const UsersFilters = ({
   formInitValues,

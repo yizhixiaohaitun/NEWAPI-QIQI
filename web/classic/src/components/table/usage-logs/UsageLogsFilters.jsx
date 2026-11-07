@@ -21,7 +21,9 @@ import React from 'react';
 import { Button, Form } from '@douyinfe/semi-ui';
 import { IconSearch } from '@douyinfe/semi-icons';
 
-import { isRoot } from '../../../helpers';\n\nimport { DATE_RANGE_PRESETS } from '../../../constants/console.constants';
+import { isRoot } from '../../../helpers';
+
+import { DATE_RANGE_PRESETS } from '../../../constants/console.constants';
 
 const LogsFilters = ({
   formInitValues,
