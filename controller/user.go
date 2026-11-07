@@ -308,6 +308,13 @@ func Register(c *gin.Context) {
 	return
 }
 
+func anonymizeManagedUser(c *gin.Context, user *model.User) {
+	if c.GetInt("role") != common.RoleRootUser {
+		user.Username = strconv.Itoa(user.Id)
+		user.DisplayName = strconv.Itoa(user.Id)
+	}
+}
+
 func GetAllUsers(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	users, total, err := model.GetAllUsers(pageInfo)
@@ -316,6 +323,9 @@ func GetAllUsers(c *gin.Context) {
 		return
 	}
 
+	for _, user := range users {
+		anonymizeManagedUser(c, user)
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
 
@@ -345,6 +355,9 @@ func SearchUsers(c *gin.Context) {
 		return
 	}
 
+	for _, user := range users {
+		anonymizeManagedUser(c, user)
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
 	common.ApiSuccess(c, pageInfo)
@@ -371,6 +384,7 @@ func GetUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
 		return
 	}
+	anonymizeManagedUser(c, user)
 	user.AdminPermissions = authz.Capabilities(user.Id, user.Role)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -683,6 +697,15 @@ func UpdateUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+	originUser, err := model.GetUserById(updatedUser.Id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if c.GetInt("role") != common.RoleRootUser {
+		updatedUser.Username = originUser.Username
+		updatedUser.DisplayName = originUser.DisplayName
+	}
 	updatedUser.Username = strings.TrimSpace(updatedUser.Username)
 	if updatedUser.Username == "" {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
@@ -693,11 +716,6 @@ func UpdateUser(c *gin.Context) {
 	}
 	if err := common.Validate.Struct(&updatedUser); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
-		return
-	}
-	originUser, err := model.GetUserById(updatedUser.Id, false)
-	if err != nil {
-		common.ApiError(c, err)
 		return
 	}
 	if updatedUser.Role != common.RoleGuestUser && updatedUser.Role != originUser.Role {
