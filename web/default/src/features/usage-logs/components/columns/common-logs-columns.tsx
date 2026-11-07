@@ -20,6 +20,8 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { GitBranch, KeyRound, Sparkles } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useAuthStore } from '@/stores/auth-store'
+import { ROLE } from '@/lib/roles'
 
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
@@ -496,8 +498,10 @@ function createCommonLogsColumns(
           const { sensitiveVisible, setSelectedUserId, setUserInfoDialogOpen } =
             useUsageLogsContext()
           const log = row.original
+          const isRoot = useAuthStore((s) => s.auth.user?.role === ROLE.SUPER_ADMIN)
+          const username = isRoot ? log.username : String(log.user_id)
 
-          if (!log.username) return null
+          if (!username) return null
 
           return (
             <button
@@ -517,11 +521,11 @@ function createCommonLogsColumns(
                   )}
                   style={
                     sensitiveVisible
-                      ? getUserAvatarStyle(log.username)
+                      ? getUserAvatarStyle(username)
                       : undefined
                   }
                 >
-                  {sensitiveVisible ? getUserAvatarFallback(log.username) : '•'}
+                  {sensitiveVisible ? getUserAvatarFallback(username) : '•'}
                 </AvatarFallback>
               </Avatar>
               <TooltipProvider delay={300}>
@@ -531,10 +535,10 @@ function createCommonLogsColumns(
                       <span className='text-muted-foreground max-w-[100px] truncate text-sm hover:underline' />
                     }
                   >
-                    {sensitiveVisible ? log.username : '••••'}
+                    {sensitiveVisible ? username : '••••'}
                   </TooltipTrigger>
-                  {sensitiveVisible && log.username.length > 12 && (
-                    <TooltipContent side='top'>{log.username}</TooltipContent>
+                  {sensitiveVisible && username.length > 12 && (
+                    <TooltipContent side='top'>{username}</TooltipContent>
                   )}
                 </Tooltip>
               </TooltipProvider>

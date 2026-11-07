@@ -1,14 +1,85 @@
 package controller
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
 )
+
+// sanitizeAdminLogIdentity only changes the response object, never the stored log.
+func sanitizeAdminLogIdentity(log *model.Log) {
+	names := map[string]string{}
+	if log.Username != "" {
+		names[log.Username] = strconv.Itoa(log.UserId)
+	}
+	var other interface{}
+	valid := log.Other == "" || json.Unmarshal([]byte(log.Other), &other) == nil
+	var collect func(interface{})
+	collect = func(v interface{}) {
+		switch x := v.(type) {
+		case map[string]interface{}:
+			for k, value := range x {
+				key := strings.ToLower(k)
+				if s, ok := value.(string); ok && s != "" && (key == "username" || key == "display_name" || key == "admin_username" || key == "operator_username") {
+					replacement := ""
+					for _, idKey := range []string{"target_user_id", "id", "admin_id", "user_id"} {
+						if id, ok := x[idKey].(float64); ok {
+							replacement = strconv.FormatInt(int64(id), 10)
+							break
+						}
+					}
+					names[s] = replacement
+				}
+				collect(value)
+			}
+		case []interface{}:
+			for _, value := range x {
+				collect(value)
+			}
+		}
+	}
+	collect(other)
+	replace := func(s string) string {
+		for name, id := range names {
+			s = strings.ReplaceAll(s, name, id)
+		}
+		return s
+	}
+	var clean func(interface{}) interface{}
+	clean = func(v interface{}) interface{} {
+		switch x := v.(type) {
+		case string:
+			return replace(x)
+		case map[string]interface{}:
+			for k, value := range x {
+				x[k] = clean(value)
+			}
+		case []interface{}:
+			for i, value := range x {
+				x[i] = clean(value)
+			}
+		}
+		return v
+	}
+	log.Username = strconv.Itoa(log.UserId)
+	log.Content = replace(log.Content)
+	if !valid {
+		log.Other = ""
+	} else if log.Other != "" {
+		b, err := json.Marshal(clean(other))
+		if err != nil {
+			log.Other = ""
+		} else {
+			log.Other = string(b)
+		}
+	}
+}
 
 // parseZeroReplyQuery 解析「0回复」伪类型筛选参数（zero_reply=1/true）。
 // 它不是真实的 log type 枚举值：前端选中「0回复」时额外携带该参数，
@@ -35,6 +106,11 @@ func GetAllLogs(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if c.GetInt("role") != common.RoleRootUser {
+		for _, log := range logs {
+			sanitizeAdminLogIdentity(log)
+		}
 	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(logs)

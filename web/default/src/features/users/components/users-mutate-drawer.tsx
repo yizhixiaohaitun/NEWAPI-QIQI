@@ -173,7 +173,8 @@ export function UsersMutateDrawer({
       const payload = transformFormDataToPayload(
         data,
         currentRow?.id,
-        permissionCatalog
+        permissionCatalog,
+        !isUpdate || currentUser?.role === ROLE.SUPER_ADMIN
       )
       const result = isUpdate
         ? await updateUser(payload as typeof payload & { id: number })
@@ -247,7 +248,7 @@ export function UsersMutateDrawer({
                   {t('Basic Information')}
                 </h3>
 
-                <FormField
+                {( !isUpdate || currentUser?.role === ROLE.SUPER_ADMIN) && <FormField
                   control={form.control}
                   name='username'
                   render={({ field }) => (
@@ -264,6 +265,8 @@ export function UsersMutateDrawer({
                     </FormItem>
                   )}
                 />
+
+                }
 
                 {!isUpdate && (
                   <FormField
@@ -305,7 +308,7 @@ export function UsersMutateDrawer({
                   />
                 )}
 
-                <FormField
+                {(!isUpdate || currentUser?.role === ROLE.SUPER_ADMIN) && <FormField
                   control={form.control}
                   name='display_name'
                   render={({ field }) => (
@@ -324,6 +327,8 @@ export function UsersMutateDrawer({
                     </FormItem>
                   )}
                 />
+
+                }
 
                 <FormField
                   control={form.control}

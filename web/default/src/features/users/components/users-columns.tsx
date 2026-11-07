@@ -33,6 +33,8 @@ import {
 } from '@/components/ui/tooltip'
 import { formatQuota, formatTimestamp } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   USER_STATUS,
@@ -51,6 +53,7 @@ function getQuotaProgressColor(percentage: number): string {
 
 export function useUsersColumns(): ColumnDef<User>[] {
   const { t } = useTranslation()
+  const isRoot = useAuthStore((s) => s.auth.user?.role === ROLE.SUPER_ADMIN)
   return [
     {
       id: 'select',
@@ -91,10 +94,10 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'username',
-      header: t('Username'),
+      header: t(isRoot ? 'Username' : 'ID'),
       cell: ({ row }) => {
-        const username = row.getValue('username') as string
-        const displayName = row.original.display_name
+        const username = isRoot ? row.getValue('username') as string : String(row.original.id)
+        const displayName = isRoot ? row.original.display_name : undefined
         const remark = row.original.remark
 
         return (

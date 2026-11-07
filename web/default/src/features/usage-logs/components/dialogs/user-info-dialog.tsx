@@ -24,6 +24,8 @@ import { toast } from 'sonner'
 import { Dialog } from '@/components/dialog'
 import { Label } from '@/components/ui/label'
 import { formatQuota, formatCompactNumber } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getUserInfo } from '../../api'
 import type { UserInfo } from '../../types'
@@ -40,6 +42,7 @@ export function UserInfoDialog({
   onOpenChange,
 }: UserInfoDialogProps) {
   const { t } = useTranslation()
+  const isRoot = useAuthStore((s) => s.auth.user?.role === ROLE.SUPER_ADMIN)
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
@@ -103,8 +106,8 @@ export function UserInfoDialog({
         <div className='space-y-4 py-4'>
           {/* Basic Info */}
           <div className='grid grid-cols-2 gap-4'>
-            <InfoItem label={t('Username')} value={userInfo.username} />
-            {userInfo.display_name && (
+            <InfoItem label={t(isRoot ? 'Username' : 'ID')} value={isRoot ? userInfo.username : String(userId)} />
+            {isRoot && userInfo.display_name && (
               <InfoItem
                 label={t('Display Name')}
                 value={userInfo.display_name}

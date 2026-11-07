@@ -74,11 +74,11 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
 export function transformFormDataToPayload(
   data: UserFormValues,
   userId?: number,
-  catalog?: PermissionCatalog
+  catalog?: PermissionCatalog,
+  includeIdentity = true
 ): UserFormData & { id?: number } {
   const payload: UserFormData & { id?: number } = {
-    username: data.username,
-    display_name: data.display_name || data.username,
+    ...(includeIdentity ? { username: data.username, display_name: data.display_name || data.username } : {}),
     password: data.password || undefined,
   }
 

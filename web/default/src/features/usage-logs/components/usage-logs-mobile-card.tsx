@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { flexRender, type Cell, type Table } from '@tanstack/react-table'
 import { Database } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useAuthStore } from '@/stores/auth-store'
+import { ROLE } from '@/lib/roles'
 
 import {
   dotColorMap,
@@ -249,7 +251,9 @@ function MobileUserField({ log }: { log: UsageLog }) {
   const { sensitiveVisible, setSelectedUserId, setUserInfoDialogOpen } =
     useUsageLogsContext()
 
-  if (!log.username) return null
+  const isRoot = useAuthStore((s) => s.auth.user?.role === ROLE.SUPER_ADMIN)
+  const username = isRoot ? log.username : String(log.user_id)
+  if (!username) return null
 
   return (
     <button
@@ -268,14 +272,14 @@ function MobileUserField({ log }: { log: UsageLog }) {
             !sensitiveVisible && 'bg-muted text-muted-foreground'
           )}
           style={
-            sensitiveVisible ? getUserAvatarStyle(log.username) : undefined
+            sensitiveVisible ? getUserAvatarStyle(username) : undefined
           }
         >
-          {sensitiveVisible ? getUserAvatarFallback(log.username) : '•'}
+          {sensitiveVisible ? getUserAvatarFallback(username) : '•'}
         </AvatarFallback>
       </Avatar>
       <span className='text-foreground min-w-0 truncate text-sm'>
-        {sensitiveVisible ? log.username : '••••'}
+        {sensitiveVisible ? username : '••••'}
       </span>
     </button>
   )
