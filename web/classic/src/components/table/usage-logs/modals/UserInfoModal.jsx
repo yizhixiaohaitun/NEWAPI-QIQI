@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import { Modal, Badge } from '@douyinfe/semi-ui';
-import { renderQuota, renderNumber } from '../../../../helpers';
+import { isRoot, renderQuota, renderNumber } from '../../../../helpers';
 
 const UserInfoModal = ({
   showUserInfo,
@@ -81,10 +81,10 @@ const UserInfoModal = ({
           {/* 基本信息 */}
           <div style={rowStyle}>
             <div style={colStyle}>
-              {renderLabel(t('用户名'), 'primary')}
-              <div style={valueStyle}>{userInfoData.username}</div>
+              {renderLabel(isRoot() ? t('用户名') : 'ID', 'primary')}
+              <div style={valueStyle}>{isRoot() ? userInfoData.username : userInfoData.id}</div>
             </div>
-            {userInfoData.display_name && (
+            {isRoot() && userInfoData.display_name && (
               <div style={colStyle}>
                 {renderLabel(t('显示名称'), 'primary')}
                 <div style={valueStyle}>{userInfoData.display_name}</div>

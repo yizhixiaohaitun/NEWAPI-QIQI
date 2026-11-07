@@ -27,6 +27,7 @@ import {
   Typography,
 } from '@douyinfe/semi-ui';
 import {
+  isRoot,
   renderGroup,
   renderQuota,
   stringToColor,
@@ -588,20 +589,21 @@ export const getLogsColumns = ({
       title: t('用户'),
       dataIndex: 'username',
       render: (text, record, index) => {
+        const identity = isRoot() ? text : String(record.user_id ?? '-');
         return isAdminUser ? (
           <div>
             <Avatar
               size='extra-small'
-              color={stringToColor(text)}
+              color={stringToColor(identity || '-')}
               style={{ marginRight: 4 }}
               onClick={(event) => {
                 event.stopPropagation();
                 showUserInfoFunc(record.user_id);
               }}
             >
-              {typeof text === 'string' && text.slice(0, 1)}
+              {typeof identity === 'string' && identity.slice(0, 1)}
             </Avatar>
-            {text}
+            {identity}
           </div>
         ) : (
           <></>

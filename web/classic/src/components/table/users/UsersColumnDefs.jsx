@@ -30,6 +30,7 @@ import {
 } from '@douyinfe/semi-ui';
 import { IconMore } from '@douyinfe/semi-icons';
 import {
+  isRoot,
   renderGroup,
   renderNumber,
   renderQuota,
@@ -323,9 +324,9 @@ export const getUsersColumns = ({
       dataIndex: 'id',
     },
     {
-      title: t('用户名'),
+      title: isRoot() ? t('用户名') : 'ID',
       dataIndex: 'username',
-      render: (text, record) => renderUsername(text, record),
+      render: (text, record) => isRoot() ? renderUsername(text, record) : String(record.id ?? '-'),
     },
     {
       title: t('状态'),

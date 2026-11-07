@@ -21,6 +21,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   API,
+  isRoot,
   showError,
   showSuccess,
   renderQuota,
@@ -148,6 +149,10 @@ const EditUserModal = (props) => {
   const submit = async (values) => {
     setLoading(true);
     let payload = { ...values };
+    if (userId && !isRoot()) {
+      delete payload.username;
+      delete payload.display_name;
+    }
     delete payload.quota;
     delete payload.quota_amount;
     if (userId) {
@@ -294,7 +299,7 @@ const EditUserModal = (props) => {
                   </div>
 
                   <Row gutter={12}>
-                    <Col span={24}>
+                    {(!userId || isRoot()) && <Col span={24}>
                       <Form.Input
                         field='username'
                         label={t('用户名')}
@@ -302,7 +307,8 @@ const EditUserModal = (props) => {
                         rules={[{ required: true, message: t('请输入用户名') }]}
                         showClear
                       />
-                    </Col>
+                    </Col>}
+                    {userId && !isRoot() && <Col span={24}><Text>ID: {userId}</Text></Col>}
 
                     <Col span={24}>
                       <Form.Input
@@ -314,14 +320,14 @@ const EditUserModal = (props) => {
                       />
                     </Col>
 
-                    <Col span={24}>
+                    {(!userId || isRoot()) && <Col span={24}>
                       <Form.Input
                         field='display_name'
                         label={t('显示名称')}
                         placeholder={t('请输入新的显示名称')}
                         showClear
                       />
-                    </Col>
+                    </Col>}
 
                     <Col span={24}>
                       <Form.Input

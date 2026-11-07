@@ -33,7 +33,7 @@ import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
-import { API, showError, showSuccess } from '../../../../helpers';
+import { API, isRoot, showError, showSuccess } from '../../../../helpers';
 import { convertUSDToCurrency } from '../../../../helpers/render';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import CardTable from '../../../common/ui/CardTable';
@@ -365,7 +365,7 @@ const UserSubscriptionsModal = ({ visible, onCancel, user, t, onSuccess }) => {
             {t('用户订阅管理')}
           </Typography.Title>
           <Text type='tertiary' className='ml-2'>
-            {user?.username || '-'} (ID: {user?.id || '-'})
+            {isRoot() ? `${user?.username || '-'} (ID: ${user?.id || '-'})` : `ID: ${user?.id ?? '-'}`}
           </Text>
         </Space>
       }

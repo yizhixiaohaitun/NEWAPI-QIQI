@@ -25,6 +25,7 @@ import {
   API,
   getTodayStartTimestamp,
   isAdmin,
+  isRoot,
   showError,
   showSuccess,
   timestamp2string,
@@ -723,7 +724,7 @@ export const useLogsData = () => {
       if (isAdminUser && logs[i].type === 3 && other?.admin_info) {
         const adminInfo = other.admin_info;
         const hasUsername =
-          adminInfo.admin_username !== undefined &&
+          isRoot() && adminInfo.admin_username !== undefined &&
           adminInfo.admin_username !== null &&
           adminInfo.admin_username !== '';
         const hasId =
