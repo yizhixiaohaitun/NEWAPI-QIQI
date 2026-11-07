@@ -312,6 +312,8 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 		}
 	}
 
+	// Preserve the requested name before model mapping changes the upstream name.
+	c.Set("original_model", testModel)
 	request := buildTestRequest(testModel, endpointType, channel, isStream)
 
 	info, err := relaycommon.GenRelayInfo(c, relayFormat, request, nil)
@@ -1243,9 +1245,14 @@ func performChannelTests(ctx context.Context, channels []*model.Channel, testUse
 		}
 
 		// disable channel
-		if allowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
-			processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
-			summary.Disabled++
+		if allowDisable && isChannelEnabled && newAPIError != nil && result.context != nil {
+			removeMatch := operation_setting.ShouldRemoveModel(newAPIError.Error())
+			if removeMatch || (shouldBanChannel && channel.GetAutoBan()) {
+				processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, result.context.GetString("original_model"))
+				if !removeMatch {
+					summary.Disabled++
+				}
+			}
 		}
 
 		// enable channel
