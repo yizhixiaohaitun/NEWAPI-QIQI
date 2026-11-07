@@ -183,6 +183,8 @@ func InitOptionMap() {
 	common.OptionMap["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
 	common.OptionMap["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
 	common.OptionMap["AutomaticRetryStatusCodes"] = operation_setting.AutomaticRetryStatusCodesToString()
+	common.OptionMap["AutomaticRemoveModelEnabled"] = strconv.FormatBool(operation_setting.AutomaticRemoveModelEnabled())
+	common.OptionMap["AutomaticRemoveModelKeywords"] = operation_setting.AutomaticRemoveModelKeywordsToString()
 	common.OptionMap["AutomaticRetryKeywords"] = operation_setting.AutomaticRetryKeywordsToString()
 	common.OptionMap["ExposeRatioEnabled"] = strconv.FormatBool(ratio_setting.IsExposeRatioEnabled())
 
@@ -332,6 +334,8 @@ func updateOptionMap(key string, value string) (err error) {
 			common.EmailDomainRestrictionEnabled = boolValue
 		case "EmailAliasRestrictionEnabled":
 			common.EmailAliasRestrictionEnabled = boolValue
+		case "AutomaticRemoveModelEnabled":
+			operation_setting.SetAutomaticRemoveModelEnabled(boolValue)
 		case "AutomaticDisableChannelEnabled":
 			common.AutomaticDisableChannelEnabled = boolValue
 		case "AutomaticEnableChannelEnabled":
@@ -594,6 +598,8 @@ func updateOptionMap(key string, value string) (err error) {
 		err = operation_setting.AutomaticDisableStatusCodesFromString(value)
 	case "AutomaticRetryStatusCodes":
 		err = operation_setting.AutomaticRetryStatusCodesFromString(value)
+	case "AutomaticRemoveModelKeywords":
+		operation_setting.AutomaticRemoveModelKeywordsFromString(value)
 	case "AutomaticRetryKeywords":
 		operation_setting.AutomaticRetryKeywordsFromString(value)
 	case "StreamCacheQueueLength":

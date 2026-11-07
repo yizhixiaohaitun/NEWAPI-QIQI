@@ -276,7 +276,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			retryLimit = 1
 		}
 
-		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, relayInfo.OriginModelName)
 
 		if !shouldRetry(c, newAPIError, retryLimit-retryParam.GetRetry()) {
 			break
@@ -479,14 +479,20 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	return operation_setting.ShouldRetryByStatusCode(code)
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, requestModel ...string) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
 	if service.ClearChannelAffinityOnResponsesStateMismatch(c, err) {
 		logger.LogWarn(c, "cleared channel affinity cache after Azure Responses state resource mismatch")
 	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	if service.ShouldDisableChannel(err) && channelError.AutoBan {
+	removeMatch := operation_setting.ShouldRemoveModel(err.Error())
+	if removeMatch && len(requestModel) > 0 && requestModel[0] != "" {
+		if _, removeErr := model.RemoveChannelModel(channelError.ChannelId, requestModel[0]); removeErr != nil {
+			logger.LogError(c, fmt.Sprintf("automatic model removal failed: %v", removeErr))
+		}
+	}
+	if !removeMatch && service.ShouldDisableChannel(err) && channelError.AutoBan {
 		gopool.Go(func() {
 			service.DisableChannel(channelError, err.ErrorWithStatusCode())
 		})
