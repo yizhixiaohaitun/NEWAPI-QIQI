@@ -17,6 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import '../../../i18n/channel-model-removal';
+import { orderModelRemovalUpdates, normalizeModelRemovalKeywords } from './modelRemovalSettings';
+
 import React, { useEffect, useState, useRef } from 'react';
 import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
 import {
@@ -38,6 +41,8 @@ export default function SettingsMonitoring(props) {
     QuotaRemindThreshold: '',
     AutomaticDisableChannelEnabled: false,
     AutomaticEnableChannelEnabled: false,
+    AutomaticRemoveModelEnabled: true,
+    AutomaticRemoveModelKeywords: 'This Model is marked by provider as Legacy',
     AutomaticDisableKeywords: '',
     AutomaticDisableStatusCodes: '401',
     AutomaticRetryStatusCodes:
@@ -75,7 +80,8 @@ export default function SettingsMonitoring(props) {
           : '';
       return showError(`${t('自动重试状态码格式不正确')}${details}`);
     }
-    const requestQueue = updateArray.map((item) => {
+    const orderedUpdates = orderModelRemovalUpdates(updateArray, inputs.AutomaticRemoveModelEnabled);
+    const saveItem = (item) => {
       let value = '';
       if (typeof inputs[item.key] === 'boolean') {
         value = String(inputs[item.key]);
@@ -83,6 +89,7 @@ export default function SettingsMonitoring(props) {
         const normalizedMap = {
           AutomaticDisableStatusCodes: parsedAutoDisableStatusCodes.normalized,
           AutomaticRetryStatusCodes: parsedAutoRetryStatusCodes.normalized,
+          AutomaticRemoveModelKeywords: normalizeModelRemovalKeywords(inputs.AutomaticRemoveModelKeywords || ''),
         };
         value = normalizedMap[item.key] ?? inputs[item.key];
       }
@@ -90,13 +97,21 @@ export default function SettingsMonitoring(props) {
         key: item.key,
         value,
       });
-    });
+    };
     setLoading(true);
-    Promise.all(requestQueue)
+    (async () => {
+      const results = [];
+      for (const item of orderedUpdates) {
+        const result = await saveItem(item);
+        if (!result || result.data?.success === false) throw new Error('Option save failed');
+        results.push(result);
+      }
+      return results;
+    })()
       .then((res) => {
-        if (requestQueue.length === 1) {
+        if (orderedUpdates.length === 1) {
           if (res.includes(undefined)) return;
-        } else if (requestQueue.length > 1) {
+        } else if (orderedUpdates.length > 1) {
           if (res.includes(undefined))
             return showError(t('部分保存失败，请重试'));
         }
@@ -291,6 +306,22 @@ export default function SettingsMonitoring(props) {
                 />
               </Col>
             </Row>
+            <Form.Section text={t('报错自动移除渠道模型')}>
+              <Form.Switch
+                field='AutomaticRemoveModelEnabled'
+                label={t('按关键词自动移除模型')}
+                extraText={t('仅从出错渠道移除对应模型，不删除渠道，不影响其他模型；此规则优先于整渠道自动禁用。')}
+                onChange={(value) => setInputs({ ...inputs, AutomaticRemoveModelEnabled: value })}
+              />
+              <Form.TextArea
+                field='AutomaticRemoveModelKeywords'
+                label={t('自动移除模型的报错关键词')}
+                placeholder={t('一行一个，不区分大小写')}
+                extraText={t('上游错误包含任意非空行时触发。留空不匹配；建议使用明确的模型停用错误，不要填写 404 或 Access denied 等宽泛内容。移除后不会自动恢复。')}
+                autosize={{ minRows: 4, maxRows: 12 }}
+                onChange={(value) => setInputs({ ...inputs, AutomaticRemoveModelKeywords: value })}
+              />
+            </Form.Section>
             <Row>
               <Button size='default' onClick={onSubmit}>
                 {t('保存监控设置')}

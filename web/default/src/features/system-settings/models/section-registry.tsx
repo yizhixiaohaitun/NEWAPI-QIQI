@@ -76,6 +76,8 @@ const MODELS_SECTIONS = [
           AutomaticDisableChannelEnabled:
             settings.AutomaticDisableChannelEnabled,
           AutomaticEnableChannelEnabled: settings.AutomaticEnableChannelEnabled,
+          AutomaticRemoveModelEnabled: settings.AutomaticRemoveModelEnabled,
+          AutomaticRemoveModelKeywords: settings.AutomaticRemoveModelKeywords,
           AutomaticDisableKeywords: settings.AutomaticDisableKeywords,
           AutomaticDisableStatusCodes: settings.AutomaticDisableStatusCodes,
           AutomaticRetryStatusCodes: settings.AutomaticRetryStatusCodes,

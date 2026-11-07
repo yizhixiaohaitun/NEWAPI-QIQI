@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import '@/i18n/channel-model-removal'
+
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMemo, useRef } from 'react'
 import { useForm } from 'react-hook-form'
@@ -57,6 +59,8 @@ import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 
+import { DEFAULT_MODEL_REMOVAL_KEYWORDS, normalizeModelRemovalKeywords, orderModelRemovalUpdates } from './model-removal-settings'
+
 const numericString = z.string().refine((value) => {
   const trimmed = value.trim()
   if (!trimmed) return true
@@ -73,6 +77,8 @@ const routingReliabilitySchema = z
     AutomaticDisableChannelEnabled: z.boolean(),
     AutomaticEnableChannelEnabled: z.boolean(),
     AutomaticDisableKeywords: z.string(),
+    AutomaticRemoveModelEnabled: z.boolean(),
+    AutomaticRemoveModelKeywords: z.string(),
     AutomaticDisableStatusCodes: z.string(),
     AutomaticRetryStatusCodes: z.string(),
     AutomaticRetryKeywords: z.string(),
@@ -122,6 +128,8 @@ type RoutingReliabilitySectionProps = {
     ChannelDisableThreshold: string
     AutomaticDisableChannelEnabled: boolean
     AutomaticEnableChannelEnabled: boolean
+    AutomaticRemoveModelEnabled: boolean
+    AutomaticRemoveModelKeywords: string
     AutomaticDisableKeywords: string
     AutomaticDisableStatusCodes: string
     AutomaticRetryStatusCodes: string
@@ -141,6 +149,8 @@ type NormalizedRoutingReliabilityValues = {
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
+  AutomaticRemoveModelEnabled: boolean
+  AutomaticRemoveModelKeywords: string
   AutomaticDisableKeywords: string
   AutomaticDisableStatusCodes: string
   AutomaticRetryStatusCodes: string
@@ -169,6 +179,10 @@ const buildFormDefaults = (
   ChannelDisableThreshold: defaults.ChannelDisableThreshold ?? '',
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
+  AutomaticRemoveModelEnabled: defaults.AutomaticRemoveModelEnabled ?? true,
+  AutomaticRemoveModelKeywords: normalizeModelRemovalKeywords(
+    defaults.AutomaticRemoveModelKeywords ?? DEFAULT_MODEL_REMOVAL_KEYWORDS
+  ),
   AutomaticDisableKeywords: normalizeLineEndings(
     defaults.AutomaticDisableKeywords ?? ''
   ),
@@ -195,6 +209,10 @@ const normalizeDefaults = (
   ChannelDisableThreshold: (defaults.ChannelDisableThreshold ?? '').trim(),
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
+  AutomaticRemoveModelEnabled: defaults.AutomaticRemoveModelEnabled ?? true,
+  AutomaticRemoveModelKeywords: normalizeModelRemovalKeywords(
+    defaults.AutomaticRemoveModelKeywords ?? DEFAULT_MODEL_REMOVAL_KEYWORDS
+  ),
   AutomaticDisableKeywords: normalizeLineEndings(
     defaults.AutomaticDisableKeywords ?? ''
   ),
@@ -223,6 +241,8 @@ const normalizeFormValues = (
   ChannelDisableThreshold: values.ChannelDisableThreshold.trim(),
   AutomaticDisableChannelEnabled: values.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: values.AutomaticEnableChannelEnabled,
+  AutomaticRemoveModelEnabled: values.AutomaticRemoveModelEnabled,
+  AutomaticRemoveModelKeywords: normalizeModelRemovalKeywords(values.AutomaticRemoveModelKeywords),
   AutomaticDisableKeywords: normalizeLineEndings(
     values.AutomaticDisableKeywords
   ),
@@ -288,7 +308,7 @@ export function RoutingReliabilitySection({
       return
     }
 
-    for (const key of updates) {
+    for (const key of orderModelRemovalUpdates(updates, normalized.AutomaticRemoveModelEnabled)) {
       const value = normalized[key]
       await updateOption.mutateAsync({
         key,
@@ -516,6 +536,47 @@ export function RoutingReliabilitySection({
                       />
                     </FormControl>
                   </SettingsSwitchItem>
+                )}
+              />
+            </div>
+          </div>
+
+          <Separator />
+
+          <div className='flex min-w-0 flex-col gap-4'>
+            <h4 className='text-sm font-medium'>{t('报错自动移除渠道模型')}</h4>
+            <div className='grid min-w-0 gap-6 lg:grid-cols-2'>
+              <FormField
+                control={form.control}
+                name='AutomaticRemoveModelEnabled'
+                render={({ field }) => (
+                  <SettingsSwitchItem>
+                    <SettingsSwitchContent>
+                      <FormLabel>{t('按关键词自动移除模型')}</FormLabel>
+                      <FormDescription>
+                        {t('仅从出错渠道移除对应模型，不删除渠道，不影响其他模型；此规则优先于整渠道自动禁用。')}
+                      </FormDescription>
+                    </SettingsSwitchContent>
+                    <FormControl>
+                      <Switch checked={field.value} onCheckedChange={field.onChange} />
+                    </FormControl>
+                  </SettingsSwitchItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='AutomaticRemoveModelKeywords'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('自动移除模型的报错关键词')}</FormLabel>
+                    <FormControl>
+                      <Textarea rows={4} placeholder={t('一行一个，不区分大小写')} {...field} />
+                    </FormControl>
+                    <FormDescription>
+                      {t('上游错误包含任意非空行时触发。留空不匹配；建议使用明确的模型停用错误，不要填写 404 或 Access denied 等宽泛内容。移除后不会自动恢复。')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
                 )}
               />
             </div>
