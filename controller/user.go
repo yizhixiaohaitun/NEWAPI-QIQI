@@ -349,7 +349,39 @@ func SearchUsers(c *gin.Context) {
 		}
 	}
 	pageInfo := common.GetPageQuery(c)
-	users, total, err := model.SearchUsers(keyword, group, role, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	var users []*model.User
+	var total int64
+	var err error
+	if c.GetInt("role") == common.RoleRootUser {
+		users, total, err = model.SearchUsers(keyword, group, role, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	} else {
+		query := model.DB.Unscoped().Model(&model.User{})
+		if keyword != "" {
+			id, parseErr := strconv.Atoi(keyword)
+			if parseErr != nil || id <= 0 {
+				query = query.Where("1 = 0")
+			} else {
+				query = query.Where("id = ?", id)
+			}
+		}
+		if group != "" {
+			query = query.Where(map[string]interface{}{"group": group})
+		}
+		if role != nil {
+			query = query.Where("role = ?", *role)
+		}
+		if status != nil {
+			if *status == -1 {
+				query = query.Where("deleted_at IS NOT NULL")
+			} else {
+				query = query.Where("deleted_at IS NULL").Where("status = ?", *status)
+			}
+		}
+		err = query.Count(&total).Error
+		if err == nil {
+			err = query.Omit("password", "access_token").Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&users).Error
+		}
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
