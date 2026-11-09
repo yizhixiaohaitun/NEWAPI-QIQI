@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -33,6 +34,7 @@ func TestRelayFirstByteTimeoutHTTP(t *testing.T) {
 	oldRatios, oldPrices := ratio_setting.GroupRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
 	oldQiqi := *operation_setting.GetQiqiSetting()
 	oldPing := operation_setting.GetGeneralSetting().PingIntervalEnabled
+	oldAuto := model_setting.GetGlobalSettings().AutoChatToResponsesEnabled
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = oldDB, oldLogDB
 		common.SetDatabaseTypes(oldMain, oldLogType)
@@ -41,6 +43,7 @@ func TestRelayFirstByteTimeoutHTTP(t *testing.T) {
 		constant.FirstByteTimeout, constant.StreamingTimeout = oldTimeout, oldIdle
 		*operation_setting.GetQiqiSetting() = oldQiqi
 		operation_setting.GetGeneralSetting().PingIntervalEnabled = oldPing
+		model_setting.GetGlobalSettings().AutoChatToResponsesEnabled = oldAuto
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldRatios))
 		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(oldPrices))
 	})
@@ -54,6 +57,7 @@ func TestRelayFirstByteTimeoutHTTP(t *testing.T) {
 	operation_setting.GetQiqiSetting().ResponsesStreamErrorRetryEnabled = true
 	operation_setting.GetQiqiSetting().ResponsesStreamErrorRetryTimes = 2
 	operation_setting.GetGeneralSetting().PingIntervalEnabled = false
+	model_setting.GetGlobalSettings().AutoChatToResponsesEnabled = false
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"first-byte":1}`))
 	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"first-byte-model":0}`))
 	require.NoError(t, db.Create(&model.User{Id: 891, Username: "first-byte-user", Quota: 1000000, Status: common.UserStatusEnabled}).Error)

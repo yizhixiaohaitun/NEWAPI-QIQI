@@ -100,6 +100,11 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - 回归：`controller/channel_test_fishaudio_test.go` 使用本地模拟上游验证实际请求与展示；不验证真实 Fish 上游、转录或线上配置。
 - 定价详情的语音调用示例：`web/default/src/features/pricing/lib/audio-speech-sample.ts` 生成合成请求与二进制保存代码，不使用聊天消息或 JSON 音频解析；回归入口为 `web/default/tests/audio-speech-sample.test.ts`（`bun test`）。
 
+### Relay 完成、断连和超时回归
+
+- `controller/relay_completion_context_http_test.go`：通过本地模拟上游覆盖响应写出后断连仍成功、上游执行中真实取消返回 499、请求总时限返回上游超时；成功场景检查未记录错误日志。
+- `controller/relay_first_byte_timeout_test.go`：覆盖首字节超时、重试及流式输出边界；固定关闭自动转换以匹配聊天模拟上游，测试结束恢复设置。
+
 ### Relay 对外错误隐私边界
 
 - `middleware/distributor.go`：首次渠道选择失败或无渠道时，对外仅返回模型和请求 ID；分组、选中分组及底层错误只写后台日志。
