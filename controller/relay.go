@@ -259,6 +259,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		cancelUpstream()
 		c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(nil))
+		// A completed handler may finish billing after the client has read the
+		// response and closed its connection. Do not turn success into a 499.
+		if newAPIError == nil && !firstByteTimedOut {
+			relayInfo.LastError = nil
+			return
+		}
 		newAPIError = normalizeRelayContextError(newAPIError, requestContextErr, upstreamContextErr)
 		if requestContextErr == nil && errors.Is(requestUpstreamCtx.Err(), context.DeadlineExceeded) {
 			newAPIError = service.NewUpstreamTimeoutError()

@@ -67,3 +67,11 @@ func TestPromptCacheKeyPreserved(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `"cache-会话"`, string(got.PromptCacheKey))
 }
+
+func TestChatStreamOptionsAreNotSentToResponses(t *testing.T) {
+	req := &dto.GeneralOpenAIRequest{Model: "m", Stream: lo.ToPtr(true), StreamOptions: &dto.StreamOptions{IncludeUsage: true}, Messages: []dto.Message{{Role: "user", Content: "hello"}}}
+	got, err := ChatCompletionsRequestToResponsesRequest(req)
+	require.NoError(t, err)
+	require.Nil(t, got.StreamOptions)
+	require.True(t, req.StreamOptions.IncludeUsage)
+}
