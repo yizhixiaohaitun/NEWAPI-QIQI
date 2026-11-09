@@ -377,7 +377,6 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		Input:             inputRaw,
 		Instructions:      instructionsRaw,
 		Stream:            req.Stream,
-		StreamOptions:     req.StreamOptions,
 		Temperature:       req.Temperature,
 		Text:              textRaw,
 		ToolChoice:        toolChoiceRaw,
