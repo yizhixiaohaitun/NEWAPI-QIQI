@@ -93,6 +93,11 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - **重试与并发读写**：`relay/common/relay_info.go` 保存首次计价快照，`relay/helper/price.go` 在同步和任务重新计价时复用；`setting/config/config.go` 的锁保护活动配置读取及单字段更新（`model/option.go`），避免同一字段并发读写；两次 option 请求不是跨字段事务，开启/关闭的安全写入顺序由前端保证。
 - **异步边界**：`controller/relay.go` 标记新任务 `BillingSnapshotCaptured`，`service/task_billing.go` 对新任务持久化的零模型/分组倍率不回退当前值，旧任务无此标记时保留历史查找；`service/task_polling.go` 的 adaptor 非零返回值是最终额度，现有生产 adaptor 均返回零，不在此分支二次打折。
 - **回归入口**：`setting/ratio_setting/festival_discount_test.go`、`relay/helper/price_test.go`、`relay/helper/festival_retry_test.go`、`service/festival_discount_test.go`、`service/task_billing_test.go`、`pkg/billingexpr/billingexpr_test.go`；聚焦运行 `go test ./setting/ratio_setting ./types ./pkg/billingexpr ./relay/helper ./service ./controller ./relay`。
+### Fish Audio 语音测试与能力展示
+
+- `controller/channel-test.go`：Fish Audio 的 `s2.1-pro` / `s2-pro` 自动测试使用非流式语音合成，转换后的二进制音频不按聊天响应校验或记录；显式其他端点不改，流式测试明确拒绝。
+- `common/endpoint_type.go`、`common/endpoint_defaults.go`、`constant/endpoint_type.go`：这两个模型对外展示语音端点，其他 Fish 模型不猜测能力；渠道选择仍使用已配置的模型和分组。
+- 回归：`controller/channel_test_fishaudio_test.go` 使用本地模拟上游验证实际请求与展示；不验证真实 Fish 上游、转录或线上配置。
 
 ### Relay 对外错误隐私边界
 

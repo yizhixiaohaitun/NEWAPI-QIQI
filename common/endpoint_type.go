@@ -6,6 +6,11 @@ import "github.com/QuantumNous/new-api/constant"
 func GetEndpointTypesByChannelType(channelType int, modelName string) []constant.EndpointType {
 	var endpointTypes []constant.EndpointType
 	switch channelType {
+	case constant.ChannelTypeFishAudio:
+		if modelName == "s2.1-pro" || modelName == "s2-pro" {
+			return []constant.EndpointType{constant.EndpointTypeAudioSpeech}
+		}
+		return nil
 	case constant.ChannelTypeJina:
 		endpointTypes = []constant.EndpointType{constant.EndpointTypeJinaRerank}
 	//case constant.ChannelTypeMidjourney, constant.ChannelTypeMidjourneyPlus:

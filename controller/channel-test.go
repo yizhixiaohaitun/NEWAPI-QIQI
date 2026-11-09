@@ -191,6 +191,10 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 	if endpointType == string(constant.EndpointTypeOpenAIVideo) {
 		return probeOpenAIVideoChannel(ctx, channel, testModel)
 	}
+	fishSpeechTest := channel.Type == constant.ChannelTypeFishAudio && (testModel == "s2.1-pro" || testModel == "s2-pro") && (endpointType == "" || endpointType == string(constant.EndpointTypeAudioSpeech))
+	if fishSpeechTest && isStream {
+		return testResult{localErr: errors.New("Fish Audio speech channel test only supports non-streaming mode")}
+	}
 
 	requestPath := "/v1/chat/completions"
 
@@ -229,6 +233,9 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 		if strings.HasSuffix(testModel, ratio_setting.CompactModelSuffix) {
 			requestPath = "/v1/responses/compact"
 		}
+	}
+	if fishSpeechTest {
+		requestPath = "/v1/audio/speech"
 	}
 	if strings.HasPrefix(requestPath, "/v1/responses/compact") {
 		testModel = ratio_setting.WithCompactModelSuffix(testModel)
@@ -313,6 +320,10 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 	}
 
 	request := buildTestRequest(testModel, endpointType, channel, isStream)
+	if fishSpeechTest {
+		relayFormat = types.RelayFormatOpenAIAudio
+		request = &dto.AudioRequest{Model: testModel, Input: "hello world", ResponseFormat: "mp3"}
+	}
 
 	info, err := relaycommon.GenRelayInfo(c, relayFormat, request, nil)
 
@@ -394,8 +405,15 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 	adaptor.Init(info)
 
 	var convertedRequest any
+	var audioRequestBody io.Reader
 	// 根据 RelayMode 选择正确的转换函数
 	switch info.RelayMode {
+	case relayconstant.RelayModeAudioSpeech:
+		audioReq, ok := request.(*dto.AudioRequest)
+		if !ok {
+			return testResult{context: c, localErr: errors.New("invalid audio request type"), newAPIError: types.NewError(errors.New("invalid audio request type"), types.ErrorCodeConvertRequestFailed)}
+		}
+		audioRequestBody, err = adaptor.ConvertAudioRequest(c, info, *audioReq)
 	case relayconstant.RelayModeEmbeddings:
 		// Embedding 请求 - request 已经是正确的类型
 		if embeddingReq, ok := request.(*dto.EmbeddingRequest); ok {
@@ -479,7 +497,12 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 			newAPIError: types.NewError(err, types.ErrorCodeConvertRequestFailed),
 		}
 	}
-	jsonData, err := common.Marshal(convertedRequest)
+	var jsonData []byte
+	if audioRequestBody != nil {
+		jsonData, err = io.ReadAll(audioRequestBody)
+	} else {
+		jsonData, err = common.Marshal(convertedRequest)
+	}
 	if err != nil {
 		return testResult{
 			context:     c,
@@ -607,7 +630,11 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 			newAPIError: types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError),
 		}
 	}
-	if bodyErr := validateTestResponseBody(respBody, isStream); bodyErr != nil {
+	var bodyErr error
+	if !fishSpeechTest {
+		bodyErr = validateTestResponseBody(respBody, isStream)
+	}
+	if bodyErr != nil {
 		return testResult{
 			context:     c,
 			localErr:    bodyErr,
@@ -640,7 +667,7 @@ func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUse
 			Group:            info.UsingGroup,
 			Other:            other,
 		})
-		if !options.modelProbe {
+		if !options.modelProbe && !fishSpeechTest {
 			common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 		}
 	}
