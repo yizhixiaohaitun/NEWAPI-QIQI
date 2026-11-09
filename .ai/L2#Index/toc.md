@@ -98,6 +98,7 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - `controller/channel-test.go`：Fish Audio 的 `s2.1-pro` / `s2-pro` 自动测试使用非流式语音合成，转换后的二进制音频不按聊天响应校验或记录；显式其他端点不改，流式测试明确拒绝。
 - `common/endpoint_type.go`、`common/endpoint_defaults.go`、`constant/endpoint_type.go`：这两个模型对外展示语音端点，其他 Fish 模型不猜测能力；渠道选择仍使用已配置的模型和分组。
 - 回归：`controller/channel_test_fishaudio_test.go` 使用本地模拟上游验证实际请求与展示；不验证真实 Fish 上游、转录或线上配置。
+- 定价详情的语音调用示例：`web/default/src/features/pricing/lib/audio-speech-sample.ts` 生成合成请求与二进制保存代码，不使用聊天消息或 JSON 音频解析；回归入口为 `web/default/tests/audio-speech-sample.test.ts`（`bun test`）。
 
 ### Relay 对外错误隐私边界
 

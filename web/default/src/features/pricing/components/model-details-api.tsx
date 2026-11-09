@@ -40,6 +40,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useStatus } from '@/hooks/use-status'
 
+import { buildAudioSpeechSample } from '../lib/audio-speech-sample'
 import {
   buildRateLimits,
   buildSupportedParameters,
@@ -428,6 +429,7 @@ function buildSample(
   endpointType: string,
   ctx: SampleContext
 ): string {
+  if (endpointType === 'audio-speech') return buildAudioSpeechSample(lang, ctx)
   if (endpointType === 'anthropic') return buildAnthropicSample(lang, ctx)
   if (endpointType === 'gemini') return buildGeminiSample(lang, ctx)
   if (endpointType === 'embeddings' || endpointType === 'jina-rerank')
