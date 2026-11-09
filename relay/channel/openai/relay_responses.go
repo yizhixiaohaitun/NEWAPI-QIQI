@@ -133,6 +133,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				if !moderationFrame {
 					sendResponsesStreamData(c, info, streamResponse, data)
 				}
+				// Error events are terminal even when retry is disabled. Do not
+				// wait for an upstream EOF that may never arrive.
+				sr.Stop(upstreamStreamErr)
 				return
 			}
 			if retryWriter != nil && !retryWriter.committed {
@@ -141,10 +144,12 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				sr.Stop(streamErr)
 				return
 			}
-			sr.Error(upstreamStreamErr)
 			if !moderationFrame {
 				sendResponsesStreamData(c, info, streamResponse, data)
 			}
+			// Output is already committed: preserve the original error once,
+			// then close this stream without replaying the request.
+			sr.Stop(upstreamStreamErr)
 			return
 		}
 

@@ -24,12 +24,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// HTTP 200 + SSE invalid_request_error must honor the configured keyword even
-// though HTTP 400 is deliberately excluded from status-code retry policy.
+// HTTP 200 + SSE failures before output retry without depending on keywords
+// or enabling ordinary HTTP 400 retries. Terminal errors must also finish when
+// the upstream deliberately leaves its response body open.
 func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 	service.InitTokenEncoders()
-	for _, scenario := range []string{"before_output", "after_output", "after_tool", "after_reasoning", "empty_delta_done", "empty_completed", "empty_eof", "malformed", "flat_error", "unmatched_error", "budget_exhausted"} {
+	for _, scenario := range []string{"before_output", "after_output", "after_tool", "after_reasoning", "empty_delta_done", "empty_completed", "empty_eof", "malformed", "flat_error", "unmatched_error", "budget_exhausted", "before_output_held_open", "after_output_held_open", "after_tool_held_open", "after_reasoning_held_open", "after_audit_held_open", "retry_disabled_held_open", "budget_exhausted_held_open"} {
 		t.Run(scenario, func(t *testing.T) {
+			heldOpen := strings.HasSuffix(scenario, "_held_open")
+			scenario := strings.TrimSuffix(scenario, "_held_open")
 			oldMode := gin.Mode()
 			gin.SetMode(gin.TestMode)
 			oldDB, oldLogDB := model.DB, model.LOG_DB
@@ -68,7 +71,7 @@ func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 			operation_setting.GetGeneralSetting().PingIntervalEnabled = false
 			operation_setting.AutomaticRetryStatusCodeRanges = []operation_setting.StatusCodeRange{{Start: 429, End: 429}}
 			operation_setting.AutomaticRetryKeywordsFromString("") // Stream failures must not depend on configured error text.
-			qiqi.ResponsesStreamErrorRetryEnabled = true
+			qiqi.ResponsesStreamErrorRetryEnabled = scenario != "retry_disabled"
 			qiqi.ResponsesStreamErrorRetryTimes = 1
 			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"context-window-http":1}`))
 			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"gpt-6.1-terra":0}`))
@@ -96,6 +99,8 @@ func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 							_, _ = fmt.Fprint(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
 						}
 						switch scenario {
+						case "after_audit":
+							_, _ = fmt.Fprint(w, `data: {"type":"response.in_progress","safeguard_results":[]}`+"\n\n")
 						case "after_tool":
 							_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"name\":\"lookup\",\"call_id\":\"call_1\",\"arguments\":\"{}\"}}\n\n")
 						case "after_reasoning":
@@ -118,6 +123,11 @@ func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 							return
 						}
 						_, _ = fmt.Fprintf(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":%q}}\n\n", errorMessage)
+						if heldOpen {
+							w.(http.Flusher).Flush()
+							<-r.Context().Done()
+							return
+						}
 					} else {
 						_, _ = fmt.Fprint(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
 						_, _ = fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"attempt-B\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n")
@@ -158,7 +168,7 @@ func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 			gateway := httptest.NewServer(router)
 			defer gateway.Close()
 			client := gateway.Client()
-			client.Timeout = 10 * time.Second
+			client.Timeout = 2 * time.Second
 			// One client HTTP request encompasses both upstream attempts.
 			response, err := client.Post(gateway.URL+"/v1/responses", "application/json", strings.NewReader(requestBody))
 			require.NoError(t, err)
@@ -178,7 +188,7 @@ func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 			for _, actual := range actualBodies {
 				assert.JSONEq(t, requestBody, actual, "failover must preserve the original input")
 			}
-			if scenario == "after_output" || scenario == "after_tool" || scenario == "after_reasoning" {
+			if scenario == "after_output" || scenario == "after_tool" || scenario == "after_reasoning" || scenario == "after_audit" || scenario == "retry_disabled" {
 				assert.Equal(t, http.StatusOK, response.StatusCode, body)
 				assert.Equal(t, []string{"A"}, actualCalls)
 				assert.Equal(t, []string{"893"}, used)
@@ -187,10 +197,12 @@ func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 					assert.Contains(t, body, "partial")
 				case "after_tool":
 					assert.Contains(t, body, "call_1")
+				case "after_audit":
+					assert.Equal(t, 1, strings.Count(body, `"safeguard_results":[]`))
 				case "after_reasoning":
 					assert.Contains(t, body, "thinking")
 				}
-				assert.Contains(t, body, errorMessage)
+				assert.Equal(t, 1, strings.Count(body, errorMessage), "terminal error must be delivered exactly once")
 				assert.NotContains(t, body, "hello")
 				return
 			}
