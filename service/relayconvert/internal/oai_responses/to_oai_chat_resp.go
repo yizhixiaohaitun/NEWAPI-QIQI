@@ -200,6 +200,9 @@ func ExtractOutputTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
 		return sb.String()
 	}
 	for _, out := range resp.Output {
+		if out.Type != responsesOutputTypeMessage || (out.Role != "" && out.Role != "assistant") {
+			continue
+		}
 		for _, c := range out.Content {
 			if c.Text != "" {
 				sb.WriteString(c.Text)

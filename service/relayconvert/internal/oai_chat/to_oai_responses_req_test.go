@@ -60,3 +60,10 @@ func assistantMessageWithTool(content string, id string, name string, args strin
 	})
 	return msg
 }
+
+func TestPromptCacheKeyPreserved(t *testing.T) {
+	req := &dto.GeneralOpenAIRequest{Model: "m", PromptCacheKey: "cache-会话", Messages: []dto.Message{{Role: "system", Content: "rules"}, {Role: "user", Content: "hello"}}}
+	got, err := ChatCompletionsRequestToResponsesRequest(req)
+	require.NoError(t, err)
+	assert.JSONEq(t, `"cache-会话"`, string(got.PromptCacheKey))
+}

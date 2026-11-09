@@ -388,3 +388,12 @@ func mustStreamChunks(t *testing.T, state *ResponsesToChatStreamState, event *dt
 	require.NoError(t, err)
 	return chunks
 }
+
+func TestResponsesReasoningIsNotExposedAsAssistantText(t *testing.T) {
+	resp := &dto.OpenAIResponsesResponse{Output: []dto.ResponsesOutput{{Type: "reasoning", Content: []dto.ResponsesOutputContent{{Type: "reasoning_text", Text: "thinking"}}}, {Type: "function_call", CallId: "call_1", Name: "lookup", Arguments: []byte(`{}`)}}}
+	chat, _, err := ResponsesResponseToChatCompletionsResponse(resp, "chat_1")
+	require.NoError(t, err)
+	assert.Empty(t, chat.Choices[0].Message.StringContent())
+	require.NotNil(t, chat.Choices[0].Message.ReasoningContent)
+	assert.Equal(t, "thinking", *chat.Choices[0].Message.ReasoningContent)
+}

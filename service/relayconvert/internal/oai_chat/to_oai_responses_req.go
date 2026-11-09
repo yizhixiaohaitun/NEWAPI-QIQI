@@ -377,6 +377,7 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		Input:             inputRaw,
 		Instructions:      instructionsRaw,
 		Stream:            req.Stream,
+		StreamOptions:     req.StreamOptions,
 		Temperature:       req.Temperature,
 		Text:              textRaw,
 		ToolChoice:        toolChoiceRaw,
@@ -386,6 +387,9 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		ParallelToolCalls: parallelToolCallsRaw,
 		Store:             req.Store,
 		Metadata:          req.Metadata,
+	}
+	if req.PromptCacheKey != "" {
+		out.PromptCacheKey, _ = common.Marshal(req.PromptCacheKey)
 	}
 	if req.MaxTokens != nil || req.MaxCompletionTokens != nil {
 		out.MaxOutputTokens = lo.ToPtr(maxOutputTokens)

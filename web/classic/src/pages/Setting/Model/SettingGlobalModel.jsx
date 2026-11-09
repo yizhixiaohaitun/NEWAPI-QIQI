@@ -68,6 +68,7 @@ const chatCompletionsToResponsesPolicyAllChannelsExample = JSON.stringify(
 
 const defaultGlobalSettingInputs = {
   'global.pass_through_request_enabled': false,
+  'global.auto_chat_to_responses_enabled': true,
   'global.thinking_model_blacklist': '[]',
   'global.chat_completions_to_responses_policy': '{}',
   'general_setting.ping_interval_enabled': false,
@@ -260,6 +261,22 @@ export default function SettingGlobalModel(props) {
                     description={t(
                       '提示：该功能为测试版，未来配置结构与功能行为可能发生变更，请勿在生产环境使用。',
                     )}
+                  />
+                </Col>
+              </Row>
+
+              <Row style={{ marginTop: 10 }}>
+                <Col span={24}>
+                  <Form.Switch
+                    label={t('自动转换兼容的聊天请求')}
+                    field='global.auto_chat_to_responses_enabled'
+                    onChange={(value) =>
+                      setInputs((prev) => ({
+                        ...prev,
+                        'global.auto_chat_to_responses_enabled': value,
+                      }))
+                    }
+                    extraText={t('仅自动转换 OpenAI 渠道中兼容的纯文本请求，不影响已有的自定义转换规则。')}
                   />
                 </Col>
               </Row>

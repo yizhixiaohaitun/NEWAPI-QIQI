@@ -1,4 +1,6 @@
 {
+  "Automatically convert compatible chat requests": "自动转换兼容的聊天请求",
+  "Automatically convert compatible text-only requests for OpenAI channels. Existing custom conversion rules remain independent.": "仅自动转换 OpenAI 渠道中兼容的纯文本请求，不影响已有的自定义转换规则。",
   "translation": {
     "360": "360",
     "1000": "1000",

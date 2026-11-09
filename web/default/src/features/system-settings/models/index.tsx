@@ -26,6 +26,7 @@ import {
 
 const defaultModelSettings: ModelSettings = {
   'global.pass_through_request_enabled': false,
+  'global.auto_chat_to_responses_enabled': true,
   'global.thinking_model_blacklist': '[]',
   'global.chat_completions_to_responses_policy': '{}',
   'general_setting.ping_interval_enabled': false,
