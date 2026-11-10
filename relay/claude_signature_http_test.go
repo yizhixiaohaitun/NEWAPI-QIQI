@@ -150,6 +150,8 @@ func TestClaudeSignatureRetryHTTP(t *testing.T) {
 			}{
 				{name: "success unchanged", expected: 1},
 				{name: "precise signature then success", firstStatus: 400, message: signatureValidationMessage, expected: 2},
+				{name: "precise signature 429 then success", firstStatus: 429, message: signatureValidationMessage, expected: 2},
+				{name: "unrelated 429 does not retry", firstStatus: 429, message: "rate limit exceeded", expected: 1},
 				{name: "signature stops after one retry", firstStatus: 400, message: signatureValidationMessage, secondSignature: true, expected: 2},
 				{name: "mapped raw400 retries", firstStatus: 400, message: signatureValidationMessage, mapping: `{"400":"503"}`, expected: 2},
 				{name: "mapped non400 does not retry", firstStatus: 403, message: signatureValidationMessage, mapping: `{"403":"400"}`, expected: 1},

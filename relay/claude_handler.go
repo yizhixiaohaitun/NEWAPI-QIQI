@@ -251,7 +251,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 		if attempt == 0 && len(retrySource) > 0 && !c.Writer.Written() &&
 			c.Request.Context().Err() == nil && (info.UpstreamContext == nil || info.UpstreamContext.Err() == nil) &&
-			newAPIError.StatusCode == http.StatusBadRequest && strings.Contains(newAPIError.Error(), "Invalid `signature` in `thinking` block") {
+			(newAPIError.StatusCode == http.StatusBadRequest || newAPIError.StatusCode == http.StatusTooManyRequests) && strings.Contains(newAPIError.Error(), "Invalid `signature` in `thinking` block") {
 			if body, changed := stripHistoricalClaudeThinking(retrySource); changed {
 				requestBody = bytes.NewReader(body)
 				info.UpstreamRequestBodySize = int64(len(body))
