@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -132,7 +133,87 @@ func handleFinalStream(c *gin.Context, info *relaycommon.RelayInfo, resp *dto.Ch
 	return nil
 }
 
+func geminiStreamHasVisibleOutput(response *dto.GeminiChatResponse) bool {
+	if response == nil {
+		return false
+	}
+	for _, candidate := range response.Candidates {
+		for _, part := range candidate.Content.Parts {
+			if part.Text != "" || part.FunctionCall != nil || part.InlineData != nil ||
+				part.FileData != nil || part.ExecutableCode != nil || part.CodeExecutionResult != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func commitGeminiStreamOutput(c *gin.Context, info *relaycommon.RelayInfo, response *dto.GeminiChatResponse) *types.NewAPIError {
+	if !geminiStreamHasVisibleOutput(response) || info.FirstByteWatch == nil {
+		return nil
+	}
+	info.FirstByteWatch.MarkOutput()
+	if err := helper.CommitBufferedStream(c); err != nil {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+	}
+	return nil
+}
+
+func geminiStreamFrameUnsafe(data string) bool {
+	var raw json.RawMessage
+	if common.UnmarshalJsonStr(data, &raw) != nil || len(raw) == 0 {
+		return true
+	}
+	var containsSafetyField func(json.RawMessage) bool
+	containsSafetyField = func(value json.RawMessage) bool {
+		var object map[string]json.RawMessage
+		if common.Unmarshal(value, &object) == nil && object != nil {
+			for key, child := range object {
+				switch key {
+				case "promptFeedback", "safetyRatings", "blockReason", "safeguards", "safeguard_results":
+					return true
+				}
+				if containsSafetyField(child) {
+					return true
+				}
+			}
+			return false
+		}
+		var array []json.RawMessage
+		if common.Unmarshal(value, &array) == nil {
+			for _, child := range array {
+				if containsSafetyField(child) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return containsSafetyField(raw)
+}
+
+func preserveGeminiUnsafeFrame(c *gin.Context, info *relaycommon.RelayInfo) {
+	if info.FirstByteWatch == nil {
+		return
+	}
+	_ = helper.CommitBufferedStream(c)
+	c.Set("upstream_moderation_committed", true)
+}
+
 func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response, callback func(data string, geminiResponse *dto.GeminiChatResponse) bool) (*dto.Usage, *types.NewAPIError) {
+	var bufferedWriter *helper.BufferedStreamWriter
+	if info.FirstByteWatch != nil {
+		originalWriter := c.Writer
+		bufferedWriter = helper.NewBufferedStreamWriter(originalWriter)
+		c.Writer = bufferedWriter
+		defer func() {
+			if !bufferedWriter.Committed() {
+				bufferedWriter.Discard()
+			}
+			c.Writer = originalWriter
+		}()
+	}
+
 	var usage = &dto.Usage{}
 	var imageCount int
 	var hasBillableUsageMetadata bool
@@ -141,12 +222,24 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		var geminiResponse dto.GeminiChatResponse
 		if err := common.UnmarshalJsonStr(data, &geminiResponse); err != nil {
-			sr.Stop(fmt.Errorf("unmarshal: %w", err))
+			c.Set("upstream_moderation_committed", true)
+			_ = helper.CommitBufferedStream(c)
+			if info.RelayFormat == types.RelayFormatGemini {
+				_ = helper.StringData(c, data)
+			}
+			sr.Stop(types.NewErrorWithStatusCode(fmt.Errorf("unmarshal: %w", err), types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
 			return
 		}
 
+		if geminiStreamFrameUnsafe(data) {
+			preserveGeminiUnsafeFrame(c, info)
+		}
 		if len(geminiResponse.Candidates) == 0 && geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
 			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", *geminiResponse.PromptFeedback.BlockReason))
+		}
+		if outputErr := commitGeminiStreamOutput(c, info, &geminiResponse); outputErr != nil {
+			sr.Stop(outputErr)
+			return
 		}
 
 		// 统计图片数量
@@ -177,6 +270,9 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	// 但会按成功返回；改为返回错误让上层 shouldRetry/换渠道接管）
 	if emptyErr := helper.StreamAbnormalEmptyError(c, info); emptyErr != nil {
 		return nil, emptyErr
+	}
+	if err := helper.CommitBufferedStream(c); err != nil {
+		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 	}
 
 	if !hasBillableUsageMetadata {

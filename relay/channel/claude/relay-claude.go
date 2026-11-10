@@ -211,15 +211,122 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 	return relayconvert.FormatClaudeResponseInfo(claudeResponse, oaiResponse, claudeInfo)
 }
 
+func claudeStreamHasVisibleOutput(response *dto.ClaudeResponse) bool {
+	if response == nil {
+		return false
+	}
+	if response.Completion != "" {
+		return true
+	}
+	if response.Type != "content_block_delta" || response.Delta == nil {
+		return false
+	}
+	switch response.Delta.Type {
+	case "text_delta":
+		return response.Delta.GetText() != ""
+	case "thinking_delta":
+		return response.Delta.Thinking != nil && *response.Delta.Thinking != ""
+	case "input_json_delta":
+		return response.Delta.PartialJson != nil && *response.Delta.PartialJson != ""
+	default:
+		return false
+	}
+}
+
+func commitClaudeStreamOutput(c *gin.Context, info *relaycommon.RelayInfo, response *dto.ClaudeResponse) *types.NewAPIError {
+	if !claudeStreamHasVisibleOutput(response) || info.FirstByteWatch == nil {
+		return nil
+	}
+	info.FirstByteWatch.MarkOutput()
+	if err := helper.CommitBufferedStream(c); err != nil {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+	}
+	return nil
+}
+
+func claudeStreamFrameUnsafe(response *dto.ClaudeResponse, data string) bool {
+	var raw json.RawMessage
+	if common.UnmarshalJsonStr(data, &raw) != nil || len(raw) == 0 {
+		return true
+	}
+	var containsSafetyField func(json.RawMessage) bool
+	containsSafetyField = func(value json.RawMessage) bool {
+		var object map[string]json.RawMessage
+		if common.Unmarshal(value, &object) == nil && object != nil {
+			for key, child := range object {
+				switch key {
+				case "safeguards", "safeguard_results", "prompt_filter_results", "content_filter_results", "safety_ratings":
+					return true
+				}
+				if containsSafetyField(child) {
+					return true
+				}
+			}
+			return false
+		}
+		var array []json.RawMessage
+		if common.Unmarshal(value, &array) == nil {
+			for _, child := range array {
+				if containsSafetyField(child) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if containsSafetyField(raw) {
+		return true
+	}
+	if response == nil {
+		return true
+	}
+	switch response.Type {
+	case "message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop", "ping":
+		return false
+	default:
+		return true
+	}
+}
+
+func commitClaudeUnsafeFrame(c *gin.Context, info *relaycommon.RelayInfo) {
+	if info.FirstByteWatch == nil {
+		return
+	}
+	_ = helper.CommitBufferedStream(c)
+	c.Set("upstream_moderation_committed", true)
+}
+
+func preserveClaudeStreamError(c *gin.Context, info *relaycommon.RelayInfo, response dto.ClaudeResponse, data string) {
+	if info.FirstByteWatch == nil {
+		return
+	}
+	if err := helper.CommitBufferedStream(c); err != nil {
+		return
+	}
+	c.Set("upstream_moderation_committed", true)
+	if info.RelayFormat == types.RelayFormatClaude {
+		helper.ClaudeChunkData(c, response, data)
+	}
+}
+
 func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, data string) *types.NewAPIError {
 	var claudeResponse dto.ClaudeResponse
 	err := common.UnmarshalJsonStr(data, &claudeResponse)
 	if err != nil {
 		common.SysLog("error unmarshalling stream response: " + err.Error())
-		return types.NewError(err, types.ErrorCodeBadResponseBody)
+		c.Set("upstream_moderation_committed", true)
+		_ = helper.CommitBufferedStream(c)
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+		preserveClaudeStreamError(c, info, claudeResponse, data)
+		return types.WithClaudeError(*claudeError, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
+	}
+	if claudeStreamFrameUnsafe(&claudeResponse, data) {
+		commitClaudeUnsafeFrame(c, info)
+	}
+	if outputErr := commitClaudeStreamOutput(c, info, &claudeResponse); outputErr != nil {
+		return outputErr
 	}
 	if claudeResponse.StopReason != "" {
 		maybeMarkClaudeRefusal(c, claudeResponse.StopReason)
@@ -347,6 +454,19 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 }
 
 func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *types.NewAPIError) {
+	var bufferedWriter *helper.BufferedStreamWriter
+	if info.FirstByteWatch != nil {
+		originalWriter := c.Writer
+		bufferedWriter = helper.NewBufferedStreamWriter(originalWriter)
+		c.Writer = bufferedWriter
+		defer func() {
+			if !bufferedWriter.Committed() {
+				bufferedWriter.Discard()
+			}
+			c.Writer = originalWriter
+		}()
+	}
+
 	claudeInfo := &ClaudeResponseInfo{
 		ResponseId:   helper.GetResponseID(c),
 		Created:      common.GetTimestamp(),
@@ -369,6 +489,9 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	// 让上层 shouldRetry/换渠道逻辑接管。
 	if emptyErr := helper.StreamAbnormalEmptyError(c, info); emptyErr != nil {
 		return nil, emptyErr
+	}
+	if err := helper.CommitBufferedStream(c); err != nil {
+		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 	}
 
 	HandleStreamFinalResponse(c, info, claudeInfo)

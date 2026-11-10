@@ -533,7 +533,12 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 				if info.FirstByteTimeout != nil {
 					timeout = *info.FirstByteTimeout
 				}
-				info.FirstByteWatch = common.NewFirstByteWatch(cancel, time.Duration(timeout)*time.Second)
+				watchTimeout := time.Duration(timeout) * time.Second
+				if firstOutputTimeoutProtocol(info) {
+					info.FirstByteWatch = common.NewFirstOutputWatch(cancel, watchTimeout)
+				} else {
+					info.FirstByteWatch = common.NewFirstByteWatch(cancel, watchTimeout)
+				}
 			}
 		}
 	}
@@ -622,8 +627,28 @@ func firstByteTimeoutEnabled(info *common.RelayInfo) bool {
 	if info.FirstByteTimeout != nil {
 		timeout = *info.FirstByteTimeout
 	}
-	return timeout > 0 &&
-		info.ChannelMeta != nil && info.ApiType == constant2.APITypeOpenAI &&
+	if timeout <= 0 || info.ChannelMeta == nil {
+		return false
+	}
+	if info.ApiType == constant2.APITypeOpenAI &&
 		(info.RelayMode == constant.RelayModeChatCompletions || info.RelayMode == constant.RelayModeResponses) &&
-		(info.RelayFormat == types.RelayFormatOpenAI || info.RelayFormat == types.RelayFormatOpenAIResponses)
+		(info.RelayFormat == types.RelayFormatOpenAI || info.RelayFormat == types.RelayFormatOpenAIResponses) {
+		return true
+	}
+	return firstOutputTimeoutProtocol(info)
+}
+
+// firstOutputTimeoutProtocol intentionally covers only native streaming
+// endpoints whose handlers can distinguish visible output from protocol
+// metadata. Other adapters keep their existing first-HTTP-byte semantics.
+func firstOutputTimeoutProtocol(info *common.RelayInfo) bool {
+	if info == nil || !info.IsStream {
+		return false
+	}
+	if info.RelayFormat == types.RelayFormatClaude && strings.HasPrefix(info.RequestURLPath, "/v1/messages") {
+		return true
+	}
+	return info.RelayFormat == types.RelayFormatGemini &&
+		info.RelayMode == constant.RelayModeGemini &&
+		strings.Contains(info.RequestURLPath, ":streamGenerateContent")
 }
