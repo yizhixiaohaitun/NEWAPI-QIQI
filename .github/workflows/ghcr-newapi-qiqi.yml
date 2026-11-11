@@ -10,8 +10,8 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: yizhixiaohaitun/newapi-qiqi
-  PRODUCT_SHA: 20f7edce77a305a5bf1e96e6a6722905fafe7f85
-  VERSION: newapi-qiqi-20261111-20f7edc
+  PRODUCT_SHA: ad55f35fc88f6bd619810a94db225ad7a9be419b
+  VERSION: newapi-qiqi-20261111-ad55f35
 
 jobs:
   build:
