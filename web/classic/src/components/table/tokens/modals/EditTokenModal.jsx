@@ -472,6 +472,9 @@ const EditTokenModal = (props) => {
                             {t('Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.')}
                           </div>
                           <div>
+                            {t('For a 400 or 429 with the exact Invalid `signature` in `thinking` block error, before output and without cancellation, paired client-only tool calls may trigger a lossy best-effort retry: all assistant thinking and redacted_thinking blocks are removed, while text, tools and settings remain. With compatibility enabled and raw passthrough off, it retries at most once on the same channel; ordinary rate limits do not trigger it, and upstream acceptance is not guaranteed.')}
+                          </div>
+                          <div>
                             {t('Enabled for new tokens; you can turn it off.')}
                           </div>
                           <div>

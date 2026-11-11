@@ -220,6 +220,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
 	var usage any
+	toolThinkingRecovery := false
 	// Bedrock prepares its SDK request in DoRequest but invokes upstream in
 	// DoResponse. Keep both stages inside the same single-retry boundary.
 	for attempt := 0; ; attempt++ {
@@ -227,6 +228,10 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if attempt == 1 {
 			event := service.NewRelayCompatibilityEvent(service.ClaudeHistoricalThinkingSignatureRetryRule, service.RelayCompatibilityEventTypeApplied)
 			event.Action = "strip_historical_thinking_and_retry"
+			if toolThinkingRecovery {
+				event = service.NewRelayCompatibilityEvent(service.ClaudeToolThinkingSignatureRetryRule, service.RelayCompatibilityEventTypeApplied)
+				event.Action = "strip_tool_turn_thinking_and_retry"
+			}
 			event.Outcome = "retry_started"
 			event.Retried = true
 			service.RecordRelayCompatibilityEvent(c, event)
@@ -251,8 +256,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 		if attempt == 0 && len(retrySource) > 0 && !c.Writer.Written() &&
 			c.Request.Context().Err() == nil && (info.UpstreamContext == nil || info.UpstreamContext.Err() == nil) &&
-			newAPIError.StatusCode == http.StatusBadRequest && strings.Contains(newAPIError.Error(), "Invalid `signature` in `thinking` block") {
-			if body, changed := stripHistoricalClaudeThinking(retrySource); changed {
+			isClaudeThinkingSignatureRejection(newAPIError) {
+			if body, changed, toolRecovery := prepareClaudeSignatureRecovery(retrySource); changed && claimClaudeSignatureRetry(c, info.ChannelId) {
+				toolThinkingRecovery = toolRecovery
 				requestBody = bytes.NewReader(body)
 				info.UpstreamRequestBodySize = int64(len(body))
 				continue

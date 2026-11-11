@@ -98,6 +98,19 @@ export const CLAUDE_HISTORICAL_THINKING_SIGNATURE_RULE = {
   },
 } as const satisfies EnhancedCompatibilityRuleDefinition
 
+export const CLAUDE_TOOL_THINKING_SIGNATURE_RULE = {
+  id: 'QIQI-EC-006',
+  key: 'claude_tool_thinking_signature_retry',
+  settingKey: 'request_compatibility_enabled',
+  shortNameKey: '工具续聊思考签名有损恢复',
+  descriptionKey: '为优先恢复工具续聊，移除全部助手思考块并尝试同渠道重试一次；这是有损处理，不保证上游接受。',
+  referenceKeys: {
+    recovered: '已进行有损处理：移除全部助手思考块并尝试同渠道重试一次，不保证上游接受。',
+    recommended: '已进行有损处理：移除全部助手思考块并尝试同渠道重试一次，不保证上游接受。',
+    attempted: '已进行有损处理：移除全部助手思考块并尝试同渠道重试一次，不保证上游接受。',
+  },
+} as const satisfies EnhancedCompatibilityRuleDefinition
+
 export const ENHANCED_COMPATIBILITY_RULES = [
   RESPONSES_MISSING_REASONING_ITEM_RULE,
   RESPONSES_STREAM_ERROR_RETRY_RULE,
@@ -108,7 +121,7 @@ export function findEnhancedCompatibilityRule(event: {
   rule_id?: string
   key?: string
 }): EnhancedCompatibilityRuleDefinition | undefined {
-  return [...ENHANCED_COMPATIBILITY_RULES, CLAUDE_HISTORICAL_THINKING_SIGNATURE_RULE].find(
+  return [...ENHANCED_COMPATIBILITY_RULES, CLAUDE_HISTORICAL_THINKING_SIGNATURE_RULE, CLAUDE_TOOL_THINKING_SIGNATURE_RULE].find(
     (rule) => rule.id === event.rule_id || rule.key === event.key
   )
 }

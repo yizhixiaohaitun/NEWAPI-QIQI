@@ -38,6 +38,13 @@ var ClaudeHistoricalThinkingSignatureRetryRule = RelayCompatibilityRule{
 	SettingKey: "request_compatibility_enabled",
 }
 
+// A lossy tool-continuation fallback, distinct from safe completed-turn cleanup.
+var ClaudeToolThinkingSignatureRetryRule = RelayCompatibilityRule{
+	ID:         "QIQI-EC-006",
+	Key:        "claude_tool_thinking_signature_retry",
+	SettingKey: "request_compatibility_enabled",
+}
+
 type RelayCompatibilityEvent struct {
 	RuleID     string `json:"rule_id"`
 	Key        string `json:"key"`

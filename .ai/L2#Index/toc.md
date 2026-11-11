@@ -207,6 +207,16 @@ API路径：/api/admin/users/config/levels
 - 可读参数与编号：`common/protocol_field_mask.go`、`common/str.go` 仅完整协议字段路径保守豁免，URL/域名/API key 继续脱敏；`common/request_id_message.go`、`common/utils.go` 清理已知尾部 request id 后加本层单一编号。
 - 回归：`dto/claude_thinking_test.go`、`relay/claude_thinking_test.go`（模型映射/override 后实际 loopback HTTP 捕获及可选 `NEWAPI_CLAUDE_ATTACHMENT` 附件回放）、`types/public_error_format_test.go`、`controller/relay_error_format_test.go`、`relay/helper/public_error_format_test.go`、`common/protocol_field_mask_test.go`。请求回放仅测试捕获端返回 400，不调用生产计费上游。同步运行 service/input 减免、Claude refusal、OpenAI、AWS、Vertex、relayconvert 包。新增 `dto/claude_disabled_test.go`（5.5 与 4.7/4.8 disabled 能力边界、effort/别名/精确数值/幂等）、`relay/claude_disabled_test.go`（流/非流 Claude/Chat 实际 loopback 出站、AWS/Vertex 参数覆盖后 marshal、Responses/Chat 转换）；精确附件回放按原 max_tokens 与可选字段断言，`NEWAPI_CLAUDE_CAPTURE` 可保存本地出站证据。错误回放验证 masked disabled+双 ID 的 HTTP/SSE 公开副本仅单一本层 ID、effort 可读、raw 不变；`status_code=%d` 在 `types/error.go` 本层只作日志包装，不逆向还原外部已脱敏路径、不扩大公开错误正则。
 
+### Claude 工具续聊签名有损恢复（2026-11-11）
+
+- `relay/claude_signature_tool_recovery.go` 在状态映射前仅识别 HTTP 400/429 中精确的 ``Invalid `signature` in `thinking` block``；普通限流不触发。`ClaudeHelper` 沿用 SK 兼容开启、非 raw、未输出/Flush、请求与上游上下文有效、同渠道最多一次的门槛；二次失败保留真实错误。
+- 用户明确选择优先恢复续聊：有活动 thinking 且最后真实输入后的纯客户端 `tool_use/tool_result` 完整配对时，删除所有 assistant 的 `thinking/redacted_thinking`，不留下依赖已修改前缀的签名。保留消息数量、正文、工具与结果顺序、thinking/output_config 和未知精确数值。这是有损最佳努力，不等价于正常工具轮次，不保证上游接受；不验签、不补造签名、不关闭新请求思考。
+- 混合用户输入、未知/服务器工具、重复或缺失 ID、未配对调用、助手预填、移除后空消息均不降级；无活动 thinking 时沿用历史清理。纯函数采用 RawMessage，字符串历史助手回复原样保留。
+- 事件 `QIQI-EC-006` / `claude_tool_thinking_signature_retry` / `strip_tool_turn_thinking_and_retry` / `retry_started` 与 EC005 历史清理分开；两主题管理员日志说明明确“有损、尝试、不保证接受”，不伪造成功或数量，普通用户 admin_info 隔离保留。令牌请求兼容说明及独立中英文/繁中翻译同步。
+- 回归：`relay/claude_signature_tool_recovery_test.go` 的独立删除 oracle、配对/保守边界与可选 `NEWAPI_CLAUDE_TOOL_SIGNATURE_ATTACHMENT`（57 消息、19 thinking，Claude/真实 AWS SDK 流/非流 localhost）；`claude_signature_http_test.go` 覆盖成功不变、400/429、映射前状态、一次重试、二次错误、SK/raw/输出/取消。模拟只证明转换与重试，不证明真实签名或真实上游接受；附件不入仓、不发付费模型。前端回归沿两主题 compatibility-reference 与 token-request-compatibility、默认 claude-signature-reference 测试。
+- 重试额度存于入站 Gin 请求上下文并按渠道 ID 分隔；控制器换同渠道其他 key、再次进入 helper 也不能再兼容重试。历史清理遇纯思考消息须整次放弃，不能先改前缀又留下签名。数值保真承诺仅为首次实际出站到二次；已有 DTO/SDK 首次 any 序列化不在本轮修复范围，新增 HTTP 大数工具参数测试覆盖此边界。
+- 本轮仅本地提交；禁止推送、构建线上镜像、更新或访问服务器。
+
 ### Claude 历史 thinking 签名精确 400 兼容（2026-11-04）
 
 - `relay/claude_handler.go#ClaudeHelper`：仅 SK 请求兼容开启、非原始透传、客户端尚未写入或 Flush、请求与上游总上下文均未取消/超时，且状态码映射前确为 HTTP 400、错误含完整 ``Invalid `signature` in `thinking` block`` 时，同渠道最多重发一次。普通成功和其他错误不改；同时接住常规 `DoRequest` HTTP 错误与 AWS 在 `DoResponse` 中真正调用 SDK 后的错误。每次都重新 `DoRequest`，刷新 AWS 已组装请求；二次失败按真实错误走原有状态映射，不覆盖成首次签名错误，不关闭 thinking。

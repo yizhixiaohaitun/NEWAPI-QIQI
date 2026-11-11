@@ -72,8 +72,12 @@ func stripHistoricalClaudeThinking(body []byte) ([]byte, bool) {
 			}
 			kept = append(kept, block)
 		}
-		// Do not produce an empty assistant message.
-		if !removed || len(kept) == 0 {
+		// Recovery is atomic: keeping a signed-only message after changing
+		// its prefix could invalidate that retained signature.
+		if removed && len(kept) == 0 {
+			return body, false
+		}
+		if !removed {
 			continue
 		}
 		content, err := common.Marshal(kept)

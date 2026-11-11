@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 import { createInstance } from 'i18next'
@@ -65,4 +66,12 @@ test('dedicated bundle registers before/after async init, preserving unrelated s
       }
     }
   }
+})
+
+test('tool continuation recovery explanation is translated and visible', () => {
+  const key = Object.keys(tokenRequestCompatibilityTranslations.en).find((key) => key.startsWith('For paired client-only'))
+  assert.ok(key)
+  assert.match(i18n.t(key, { lng: 'zhCN' }), /有损.*不保证上游接受.*普通限流不触发/)
+  assert.match(i18n.t(key, { lng: 'en' }), /lossy.*not guaranteed.*Ordinary rate limits/)
+  assert.ok(readFileSync(new URL('../features/keys/components/api-keys-mutate-drawer.tsx', import.meta.url), 'utf8').includes(key))
 })
