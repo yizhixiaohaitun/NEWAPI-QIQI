@@ -199,6 +199,11 @@ API路径：/api/admin/users/config/levels
 
 ---
 
+## Claude Sonnet 5.5 thinking 格式兼容（2026-11-11）
+
+- `dto/claude_thinking.go` 将 Sonnet 5.5 及既有命名规则对应的日期、Bedrock/Vertex、effort 别名纳入 adaptive 转换；仅转换 enabled，保留 disabled、无 thinking 和采样参数，不推断其他型号能力。沿用兼容开关、原始透传与最终覆盖规则；jp/au 未纳入 Sonnet。
+- 回归：`dto/claude_sonnet55_test.go` 和 `relay/sonnet55_thinking_test.go`；附件仅本地回放，不发送真实上游。
+
 ## Claude thinking 格式兼容与公开错误边界（2026-10-12）
 
 - 能力与格式单入口：`dto/claude_thinking.go`；下述能力适配受 SK 请求兼容集合总开关控制（见后续章节），错误/隐私边界不受该开关控制。仅明确 Opus 4.7/既有 4.8/5.5 名单及原生 Bedrock/Vertex 名称，旧 enabled+budget 转 adaptive+独立 output_config.effort。4096 采用项目 high 软引导，非硬预算等价；已有 effort/扩展、未提供 thinking 保留；4.7/4.8 显式 disabled 不变。依据本次 Bedrock 拒绝 enabled 与 disabled 的两份证据，仅 5.5 的显式 disabled（含原生/别名、转换及末端参数覆盖）迁为 adaptive 并移除 budget；已有 effort high/medium 等优先，无 effort 时 low 尽量保留少思考意图，不承诺关闭思考，5.5 不猜采样/tool_choice/display 能力。

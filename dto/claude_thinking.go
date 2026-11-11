@@ -10,11 +10,12 @@ import (
 )
 
 var adaptiveClaudeModel = regexp.MustCompile(`^(?:us\.|eu\.|apac\.|jp\.|au\.|global\.)?(?:anthropic\.)?claude-opus-(4-7|4-8|5-5)(?:-(?:[0-9]{8}|v[0-9]+))?(?:@(?:[0-9]{8}|[0-9]+)|:[0-9]+)?$`)
+var adaptiveClaudeSonnet55 = regexp.MustCompile(`^(?:us\.|eu\.|apac\.|global\.)?(?:anthropic\.)?claude-sonnet-5-5(?:-(?:[0-9]{8}|v[0-9]+))?(?:@(?:[0-9]{8}|[0-9]+)|:[0-9]+)?$`)
 
 // ClaudeRequiresAdaptiveThinking is an explicit compatibility list, not a
-// prediction about future model versions. Opus 5.5 enabled AND disabled are
-// rejected by the supplied Bedrock ValidationExceptions; 4.7/4.8 retain
-// their existing disabled support.
+// prediction about future model versions. Sonnet 5.5 enabled is rejected by
+// the reported validation error; disabled migration remains Opus 5.5 only,
+// as established by its separate Bedrock ValidationException.
 func ClaudeRequiresAdaptiveThinking(model string) bool {
 	return claudeAdaptiveVersion(model) != ""
 }
@@ -22,6 +23,9 @@ func ClaudeRequiresAdaptiveThinking(model string) bool {
 func claudeAdaptiveVersion(model string) string {
 	model = strings.TrimSuffix(model, "-thinking")
 	model, _, _ = reasoning.TrimEffortSuffix(model)
+	if adaptiveClaudeSonnet55.MatchString(model) {
+		return "sonnet-5-5"
+	}
 	if match := adaptiveClaudeModel.FindStringSubmatch(model); len(match) > 1 {
 		// jp/au inference-profile aliases are confirmed only for 4.7.
 		if (strings.HasPrefix(model, "jp.") || strings.HasPrefix(model, "au.")) && match[1] != "4-7" {
