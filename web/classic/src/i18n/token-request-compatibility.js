@@ -21,6 +21,10 @@ import i18n from './i18n';
 // Dedicated token strings; register once initialization completes, without shared locale edits.
 export const tokenRequestCompatibilityTranslations = {
   en: {
+    '工具轮次思考签名有损兼容': 'Lossy tool-turn thinking signature compatibility',
+    '已移除全部助手思考块并尝试在同渠道重试 1 次；不保证上游接受。': 'All assistant thinking blocks removed; one retry attempted on the same channel. Upstream acceptance is not guaranteed.',
+    'For a 400 or 429 with the exact Invalid `signature` in `thinking` block error, before output and without cancellation, paired client-only tool calls may trigger a lossy best-effort retry: all assistant thinking and redacted_thinking blocks are removed, while text, tools and settings remain. With compatibility enabled and raw passthrough off, it retries at most once on the same channel; ordinary rate limits do not trigger it, and upstream acceptance is not guaranteed.':
+      'For a 400 or 429 with the exact Invalid `signature` in `thinking` block error, before output and without cancellation, paired client-only tool calls may trigger a lossy best-effort retry: all assistant thinking and redacted_thinking blocks are removed, while text, tools and settings remain. With compatibility enabled and raw passthrough off, it retries at most once on the same channel; ordinary rate limits do not trigger it, and upstream acceptance is not guaranteed.',
     "历史思考签名兼容": "Historical thinking signature compatibility",
     "已清理历史思考块，并在同渠道重试 1 次。": "Historical thinking blocks removed; retried once on the same channel.",
     "兼容处理": "Compatibility action",
@@ -44,6 +48,10 @@ export const tokenRequestCompatibilityTranslations = {
       'Removes temperature/top_p/top_k for Opus 4.7.',
   },
   'zh-CN': {
+    '工具轮次思考签名有损兼容': '工具轮次思考签名有损兼容',
+    '已移除全部助手思考块并尝试在同渠道重试 1 次；不保证上游接受。': '已移除全部助手思考块并尝试在同渠道重试 1 次；不保证上游接受。',
+    'For a 400 or 429 with the exact Invalid `signature` in `thinking` block error, before output and without cancellation, paired client-only tool calls may trigger a lossy best-effort retry: all assistant thinking and redacted_thinking blocks are removed, while text, tools and settings remain. With compatibility enabled and raw passthrough off, it retries at most once on the same channel; ordinary rate limits do not trigger it, and upstream acceptance is not guaranteed.':
+      '启用请求兼容且未开启原始透传时，若请求尚未输出且未取消，纯客户端工具调用与结果已配对，遇到 400 或 429 且错误精确包含 Invalid `signature` in `thinking` block，可能为恢复续聊进行有损的尽力重试：移除全部助手 thinking 和 redacted_thinking 块，保留正文、工具和配置，同渠道最多重试一次。普通限流不会触发，且不保证上游接受。',
     '历史思考签名兼容': '历史思考签名兼容',
     '已清理历史思考块，并在同渠道重试 1 次。': '已清理历史思考块，并在同渠道重试 1 次。',
     '兼容处理': '兼容处理',

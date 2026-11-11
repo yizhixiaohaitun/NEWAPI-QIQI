@@ -19,6 +19,20 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createInstance } from 'i18next';
+import { readFileSync } from 'node:fs';
+
+test('tool-turn explanation is visible and translated independently in Chinese and English', async () => {
+  globalThis.window = { location: { search: '', hash: '', pathname: '/' } };
+  const { tokenRequestCompatibilityTranslations: translations } = await import('./token-request-compatibility.js');
+  const explanation = Object.keys(translations.en).find((key) => key.startsWith('For a 400 or 429 with the exact'));
+  assert.ok(explanation);
+  const modal = readFileSync(new URL('../components/table/tokens/modals/EditTokenModal.jsx', import.meta.url), 'utf8');
+  assert.ok(modal.includes(explanation));
+  assert.match(translations['zh-CN'][explanation], /有损.*不保证上游接受/);
+  assert.match(translations.en[explanation], /lossy.*acceptance is not guaranteed/);
+  assert.match(translations.en['工具轮次思考签名有损兼容'], /Lossy/);
+  assert.match(translations.en['已移除全部助手思考块并尝试在同渠道重试 1 次；不保证上游接受。'], /attempted.*not guaranteed/);
+});
 
 test('actual classic instance registers dedicated Chinese token strings', async () => {
   // Browser bootstrap needs window.__i18n; no application APIs or browser data are used.

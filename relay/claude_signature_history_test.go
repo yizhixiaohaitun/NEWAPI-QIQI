@@ -16,6 +16,7 @@ func TestStripHistoricalClaudeThinking(t *testing.T) {
 		{"no genuine user", `{"messages":[{"role":"assistant","content":[{"type":"thinking"},{"type":"text","text":"x"}]},{"role":"user","content":[{"type":"tool_result"}]}]}`, "", false},
 		{"thinking-only historical message", `{"messages":[{"role":"assistant","content":[{"type":"thinking"}]},{"role":"user","content":"new"}]}`, "", false},
 		{"ambiguous user content", `{"messages":[{"role":"assistant","content":[{"type":"thinking"},{"type":"text","text":"x"}]},{"role":"user","content":[{}]}]}`, "", false},
+		{"atomic signed-only history", `{"messages":[{"role":"assistant","content":[{"type":"thinking","signature":"first"},{"type":"text","text":"answer"}]},{"role":"assistant","content":[{"type":"thinking","signature":"keep-dependent"}]},{"role":"user","content":"next"}]}`, "", false},
 		{"malformed", `{`, "", false},
 	}
 	for _, tc := range cases {

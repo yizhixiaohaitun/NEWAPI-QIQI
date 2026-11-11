@@ -378,6 +378,9 @@ export function ApiKeysMutateDrawer({
                         </span>
                         <span className='block'>
                           {t('Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.')}
+                          </span>
+                          <span className='block'>
+                          {t("For paired client-only tool continuations, on HTTP 400 or 429 with the exact invalid thinking signature error, before output and cancellation, compatibility may remove all assistant thinking and redacted thinking blocks and retry once on the same channel. This is lossy best effort; text, tools and settings stay intact, and upstream acceptance is not guaranteed. Ordinary rate limits do not trigger this recovery.")}
                         </span>
                         <span className='mt-1 block'>
                           {t('Enabled for new tokens; you can turn it off.')}

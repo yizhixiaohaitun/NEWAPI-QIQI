@@ -23,6 +23,7 @@ import i18n from './config'
 // Dedicated token strings; never rewrite shared locale JSON. Register after init as well.
 export const tokenRequestCompatibilityTranslations = {
   en: {
+    "For paired client-only tool continuations, on HTTP 400 or 429 with the exact invalid thinking signature error, before output and cancellation, compatibility may remove all assistant thinking and redacted thinking blocks and retry once on the same channel. This is lossy best effort; text, tools and settings stay intact, and upstream acceptance is not guaranteed. Ordinary rate limits do not trigger this recovery.": "For paired client-only tool continuations, on HTTP 400 or 429 with the exact invalid thinking signature error, before output and cancellation, compatibility may remove all assistant thinking and redacted thinking blocks and retry once on the same channel. This is lossy best effort; text, tools and settings stay intact, and upstream acceptance is not guaranteed. Ordinary rate limits do not trigger this recovery.",
     'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.':
       'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.',
     'Request compatibility': 'Request compatibility',
@@ -43,6 +44,7 @@ export const tokenRequestCompatibilityTranslations = {
       'Removes temperature/top_p/top_k for Opus 4.7.',
   },
   zhCN: {
+    "For paired client-only tool continuations, on HTTP 400 or 429 with the exact invalid thinking signature error, before output and cancellation, compatibility may remove all assistant thinking and redacted thinking blocks and retry once on the same channel. This is lossy best effort; text, tools and settings stay intact, and upstream acceptance is not guaranteed. Ordinary rate limits do not trigger this recovery.": "纯客户端工具调用及结果配对完整时，仅在输出前且请求未取消、遇到 HTTP 400 或 429 的精确思考签名错误后，允许移除全部助手 thinking/redacted_thinking 并在同渠道重试一次。这是有损的尽力恢复，保留正文、工具和配置，不保证上游接受；普通限流不触发。",
     'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.':
       '仅在输出前遇到精确的历史思考签名错误时，移除已结束轮次的历史思考块并在同渠道重试一次；不关闭思考，也不保证成功。',
     'Request compatibility': '请求兼容',
@@ -62,6 +64,7 @@ export const tokenRequestCompatibilityTranslations = {
       '移除 Opus 4.7 的 temperature/top_p/top_k 参数。',
   },
   zhTW: {
+    "For paired client-only tool continuations, on HTTP 400 or 429 with the exact invalid thinking signature error, before output and cancellation, compatibility may remove all assistant thinking and redacted thinking blocks and retry once on the same channel. This is lossy best effort; text, tools and settings stay intact, and upstream acceptance is not guaranteed. Ordinary rate limits do not trigger this recovery.": "純客戶端工具呼叫及結果配對完整時，僅在輸出前且請求未取消、遇到 HTTP 400 或 429 的精確思考簽名錯誤後，允許移除全部助手 thinking/redacted_thinking 並在同渠道重試一次。這是有損的盡力恢復，保留正文、工具和設定，不保證上游接受；一般限流不觸發。",
     'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.':
       '僅在輸出前遇到精確的歷史思考簽名錯誤時，移除已結束輪次的歷史思考區塊並在同渠道重試一次；不關閉思考，也不保證成功。',
     'Request compatibility': '請求相容',

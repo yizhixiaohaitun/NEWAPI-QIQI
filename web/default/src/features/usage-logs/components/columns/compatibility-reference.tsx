@@ -41,7 +41,8 @@ export function CompatibilityReference({
 }) {
   const rule = findEnhancedCompatibilityRule(event)
   const isSignatureRetry =
-    rule?.key === 'claude_historical_thinking_signature_retry' &&
+    (rule?.key === 'claude_historical_thinking_signature_retry' ||
+      rule?.key === 'claude_tool_thinking_signature_retry') &&
     event.outcome === 'retry_started'
   const isRecommendation =
     event.event_type === 'recommendation' || event.outcome === 'disabled'
@@ -82,7 +83,9 @@ export function CompatibilityReference({
   }
 
   let messageKey: string
-  if (isSignatureRetry) {
+  if (isSignatureRetry && rule?.key === 'claude_tool_thinking_signature_retry') {
+    messageKey = rule.referenceKeys.attempted
+  } else if (isSignatureRetry) {
     messageKey = typeof event.count === 'number'
       ? '已清理 {{referenceCount}} 个历史思考块，并在同渠道重试 1 次。'
       : '已清理历史思考块，并在同渠道重试 1 次。'

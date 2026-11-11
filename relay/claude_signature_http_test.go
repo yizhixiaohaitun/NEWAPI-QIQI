@@ -152,6 +152,15 @@ func TestClaudeSignatureRetryHTTP(t *testing.T) {
 				{name: "precise signature then success", firstStatus: 400, message: signatureValidationMessage, expected: 2},
 				{name: "precise signature 429 then success", firstStatus: 429, message: signatureValidationMessage, expected: 2},
 				{name: "unrelated 429 does not retry", firstStatus: 429, message: "rate limit exceeded", expected: 1},
+				{name: "wrapped signature429 then success", firstStatus: 429, message: "messages.3.content.44: " + signatureValidationMessage, expected: 2},
+				{name: "signature429 stops after one retry", firstStatus: 429, message: signatureValidationMessage, secondSignature: true, expected: 2},
+				{name: "mapped raw429 retries", firstStatus: 429, message: signatureValidationMessage, mapping: `{"429":"503"}`, expected: 2},
+				{name: "ordinary rate limit", firstStatus: 429, message: "rate limit exceeded", expected: 1},
+				{name: "signature429 disabled", firstStatus: 429, message: signatureValidationMessage, disabled: true, expected: 1},
+				{name: "signature429 raw", firstStatus: 429, message: signatureValidationMessage, raw: true, expected: 1},
+				{name: "signature429 output", firstStatus: 429, message: signatureValidationMessage, written: "body", expected: 1},
+				{name: "signature429 flush", firstStatus: 429, message: signatureValidationMessage, written: "flush", expected: 1},
+				{name: "signature429 active turn", firstStatus: 429, message: signatureValidationMessage, active: true, expected: 2},
 				{name: "signature stops after one retry", firstStatus: 400, message: signatureValidationMessage, secondSignature: true, expected: 2},
 				{name: "mapped raw400 retries", firstStatus: 400, message: signatureValidationMessage, mapping: `{"400":"503"}`, expected: 2},
 				{name: "mapped non400 does not retry", firstStatus: 403, message: signatureValidationMessage, mapping: `{"403":"400"}`, expected: 1},
@@ -167,7 +176,18 @@ func TestClaudeSignatureRetryHTTP(t *testing.T) {
 				{name: "already flushed only", firstStatus: 400, message: signatureValidationMessage, written: "flush", expected: 1},
 				{name: "already ping", firstStatus: 400, message: signatureValidationMessage, written: "ping", expected: 1},
 				{name: "already stream start", firstStatus: 400, message: signatureValidationMessage, written: "start", expected: 1},
-				{name: "current tool continuation only", firstStatus: 400, message: signatureValidationMessage, active: true, expected: 1},
+				{name: "current tool continuation only", firstStatus: 400, message: signatureValidationMessage, active: true, expected: 2},
+				{name: "active429 disabled", firstStatus: 429, message: signatureValidationMessage, active: true, disabled: true, expected: 1},
+				{name: "active429 raw", firstStatus: 429, message: signatureValidationMessage, active: true, raw: true, expected: 1},
+				{name: "active429 output", firstStatus: 429, message: signatureValidationMessage, active: true, written: "body", expected: 1},
+				{name: "active429 flush", firstStatus: 429, message: signatureValidationMessage, active: true, written: "flush", expected: 1},
+				{name: "active429 second failure", firstStatus: 429, message: signatureValidationMessage, active: true, secondFailure: true, expected: 2},
+				{name: "active429 ordinary rate limit", firstStatus: 429, message: "rate limit exceeded", active: true, expected: 1},
+				{name: "active429 canceled", firstStatus: 429, message: signatureValidationMessage, active: true, cancel: true, expected: 1},
+				{name: "active429 upstream canceled", firstStatus: 429, message: signatureValidationMessage, active: true, timeout: true, expected: 1},
+				{name: "active429 second signature stops", firstStatus: 429, message: signatureValidationMessage, active: true, secondSignature: true, expected: 2},
+				{name: "active429 mapped raw retries", firstStatus: 429, message: signatureValidationMessage, active: true, mapping: `{"429":"503"}`, expected: 2},
+				{name: "active403 mapped does not retry", firstStatus: 403, message: signatureValidationMessage, active: true, mapping: `{"403":"429"}`, expected: 1},
 			} {
 				name := "claude/"
 				if aws {
@@ -272,11 +292,15 @@ data: {}
 					adminInfo := map[string]interface{}{}
 					service.AppendRelayCompatibilityAdminInfo(c, adminInfo)
 					if tc.expected == 2 {
-						require.Equal(t, []service.RelayCompatibilityEvent{{
-							RuleID: "QIQI-EC-005", Key: "claude_historical_thinking_signature_retry",
-							SettingKey: "request_compatibility_enabled", EventType: "applied",
-							Action: "strip_historical_thinking_and_retry", Outcome: "retry_started", Retried: true,
-						}}, adminInfo["compatibility_events"])
+						if tc.active {
+							require.Equal(t, []service.RelayCompatibilityEvent{{RuleID: "QIQI-EC-006", Key: "claude_tool_thinking_signature_retry", SettingKey: "request_compatibility_enabled", EventType: "applied", Action: "strip_tool_turn_thinking_and_retry", Outcome: "retry_started", Retried: true}}, adminInfo["compatibility_events"])
+						} else {
+							require.Equal(t, []service.RelayCompatibilityEvent{{
+								RuleID: "QIQI-EC-005", Key: "claude_historical_thinking_signature_retry",
+								SettingKey: "request_compatibility_enabled", EventType: "applied",
+								Action: "strip_historical_thinking_and_retry", Outcome: "retry_started", Retried: true,
+							}}, adminInfo["compatibility_events"])
+						}
 					} else {
 						assert.NotContains(t, adminInfo, "compatibility_events")
 					}
@@ -295,7 +319,7 @@ data: {}
 					} else {
 						require.NotNil(t, result)
 						if tc.cancel || tc.timeout {
-							assert.Equal(t, http.StatusBadRequest, result.StatusCode)
+							assert.Equal(t, tc.firstStatus, result.StatusCode)
 							assert.Contains(t, result.Error(), signatureValidationMessage, "the precise failure reaches the cancellation gate")
 						}
 						if tc.secondFailure {
@@ -317,14 +341,18 @@ data: {}
 					assert.Equal(t, originalMessages, sentMessages, "first request must retain the original history")
 					if tc.expected == 2 {
 						require.NoError(t, common.Unmarshal(bodies[1], &sent))
-						expected, changed := stripHistoricalClaudeThinking(bodies[0])
+						expected, changed, toolRecovery := prepareClaudeSignatureRecovery(bodies[0])
+						assert.Equal(t, tc.active, toolRecovery)
 						require.True(t, changed)
 						var want, got any
 						require.NoError(t, common.UnmarshalUseNumber(expected, &want))
 						require.NoError(t, common.UnmarshalUseNumber(bodies[1], &got))
 						assert.Equal(t, want, got, "retry changes only completed historical thinking")
-						assert.JSONEq(t, `{"type":"adaptive","display":"summarized"}`, string(sent["thinking"]))
-						assert.JSONEq(t, `{"effort":"medium","extension":9007199254740993}`, string(sent["output_config"]))
+						assert.JSONEq(t, string(original["thinking"]), string(sent["thinking"]))
+						assert.Equal(t, len(original["output_config"]) > 0, len(sent["output_config"]) > 0)
+						if len(original["output_config"]) > 0 {
+							assert.JSONEq(t, string(original["output_config"]), string(sent["output_config"]))
+						}
 						assert.NotContains(t, string(sent["messages"]), "synthetic-signature")
 						assert.NotContains(t, string(sent["messages"]), "synthetic-redacted")
 					}
