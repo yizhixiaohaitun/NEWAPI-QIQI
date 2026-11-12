@@ -455,6 +455,18 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if c != nil && c.GetBool("upstream_moderation_committed") {
 		return false
 	}
+	// Some compatible providers use a singular or plural capacity error code
+	// with a generic message. Recognize the code independently of admin text
+	// and status ranges, but never replay committed output or client errors.
+	switch strings.ToLower(strings.TrimSpace(string(openaiErr.GetErrorCode()))) {
+	case "server_is_overloaded", "servers_is_overloaded":
+		if c != nil && c.Writer != nil && c.Writer.Written() {
+			return false
+		}
+		if openaiErr.StatusCode == http.StatusTooManyRequests || (openaiErr.StatusCode >= 500 && openaiErr.StatusCode <= 599) {
+			return true
+		}
+	}
 	if types.IsChannelError(openaiErr) {
 		return true
 	}

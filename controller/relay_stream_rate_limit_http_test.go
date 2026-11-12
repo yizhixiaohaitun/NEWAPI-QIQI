@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -32,6 +33,8 @@ func TestRelayHTTPChatStreamTokenRateLimitSafety(t *testing.T) {
 			name = "after_content_never_switches_channel"
 		}
 		t.Run(name, func(t *testing.T) {
+			oldAuto := model_setting.GetGlobalSettings().AutoChatToResponsesEnabled
+			model_setting.GetGlobalSettings().AutoChatToResponsesEnabled = false
 			oldMode := gin.Mode()
 			gin.SetMode(gin.TestMode)
 			oldDB, oldLogDB := model.DB, model.LOG_DB
@@ -46,6 +49,7 @@ func TestRelayHTTPChatStreamTokenRateLimitSafety(t *testing.T) {
 			oldRetryRanges := operation_setting.AutomaticRetryStatusCodeRanges
 			oldQuotaPerUnit := common.QuotaPerUnit
 			t.Cleanup(func() {
+				model_setting.GetGlobalSettings().AutoChatToResponsesEnabled = oldAuto
 				gin.SetMode(oldMode)
 				model.DB, model.LOG_DB = oldDB, oldLogDB
 				common.SetDatabaseTypes(oldMainType, oldLogType)

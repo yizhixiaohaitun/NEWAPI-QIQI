@@ -28,6 +28,19 @@ import (
 // or enabling ordinary HTTP 400 retries. Terminal errors must also finish when
 // the upstream deliberately leaves its response body open.
 func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
+	runXingaiResponsesEarlyErrorRetry(t, "Your input exceeds the context window of this model. Please adjust your input and try again.", "invalid_request_error", "context_length_exceeded", http.StatusBadRequest)
+}
+
+func TestRelayHTTPResponsesOverloadedRetry(t *testing.T) {
+	for _, code := range []string{"server_is_overloaded", "servers_is_overloaded"} {
+		t.Run(code, func(t *testing.T) {
+			runXingaiResponsesEarlyErrorRetry(t, "Our servers are currently overloaded", "new_api_error", code, http.StatusBadGateway)
+		})
+	}
+}
+
+func runXingaiResponsesEarlyErrorRetry(t *testing.T, errorMessage, errorType, errorCode string, errorStatus int) {
+	t.Helper()
 	service.InitTokenEncoders()
 	for _, scenario := range []string{"before_output", "after_output", "after_tool", "after_reasoning", "empty_delta_done", "empty_completed", "empty_eof", "malformed", "flat_error", "unmatched_error", "budget_exhausted", "before_output_held_open", "after_output_held_open", "after_tool_held_open", "after_reasoning_held_open", "after_audit_held_open", "retry_disabled_held_open", "budget_exhausted_held_open"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -78,7 +91,6 @@ func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 			require.NoError(t, db.Create(&model.User{Id: 891, Username: "context-window-http-user", Quota: 1000000, Status: common.UserStatusEnabled}).Error)
 			require.NoError(t, db.Create(&model.Token{Id: 892, UserId: 891, Key: "context-window-http-local-only", RemainQuota: 1000000, Status: common.TokenStatusEnabled}).Error)
 
-			const errorMessage = "Your input exceeds the context window of this model. Please adjust your input and try again."
 			const requestBody = `{"model":"gpt-6.1-terra","stream":true,"input":"hi"}`
 			var mu sync.Mutex
 			var calls, bodies []string
@@ -116,13 +128,13 @@ func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 							_, _ = fmt.Fprint(w, "data: {invalid-json}\n\n")
 							return
 						case "flat_error":
-							_, _ = fmt.Fprintf(w, "data: {\"type\":\"error\",\"code\":\"context_length_exceeded\",\"message\":%q}\n\n", errorMessage)
+							_, _ = fmt.Fprintf(w, "data: {\"type\":\"error\",\"code\":%q,\"message\":%q}\n\n", errorCode, errorMessage)
 							return
 						case "unmatched_error":
 							_, _ = fmt.Fprint(w, "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"upstream could not produce output\"}}}\n\n")
 							return
 						}
-						_, _ = fmt.Fprintf(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":%q}}\n\n", errorMessage)
+						_, _ = fmt.Fprintf(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":%q,\"code\":%q,\"message\":%q}}\n\n", errorType, errorCode, errorMessage)
 						if heldOpen {
 							w.(http.Flusher).Flush()
 							<-r.Context().Done()
@@ -210,7 +222,7 @@ func TestRelayHTTPResponsesContextWindowRetry(t *testing.T) {
 			assert.Equal(t, []string{"893", "894"}, used)
 			assert.NotContains(t, body, "attempt-A", "failed attempt's buffered prelude must not leak")
 			if scenario == "budget_exhausted" {
-				assert.Equal(t, http.StatusBadRequest, response.StatusCode, body)
+				assert.Equal(t, errorStatus, response.StatusCode, body)
 				assert.Contains(t, body, errorMessage)
 				assert.NotContains(t, body, "hello")
 				return

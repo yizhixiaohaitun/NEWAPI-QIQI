@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -30,12 +31,22 @@ const flaggedPromptUpstreamBody = `{"error":{"message":"Invalid prompt: your pro
 // prompt 400 must still fail over through the real HTTP relay path, and only
 // while its keyword is configured.
 func TestRelayHTTPRetryKeywordFlaggedPrompt400(t *testing.T) {
-	for _, keywordEnabled := range []bool{true, false} {
-		name := "keyword_configured_fails_over"
-		if !keywordEnabled {
-			name = "keyword_removed_stays_final_400"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		body           string
+		status         int
+		keywordEnabled bool
+		wantRetry      bool
+	}{
+		{"keyword_configured_fails_over", flaggedPromptUpstreamBody, 400, true, true},
+		{"keyword_removed_stays_final_400", flaggedPromptUpstreamBody, 400, false, false},
+		{"plural_overload_without_message", `{"error":{"message":"busy","type":"new_api_error","code":"servers_is_overloaded"}}`, 503, false, true},
+		{"singular_overload_without_message", `{"error":{"message":"busy","type":"new_api_error","code":"server_is_overloaded"}}`, 503, false, true},
+		{"plural_overload_original_message", `{"error":{"message":"Our servers are currently overloaded","type":"new_api_error","code":"servers_is_overloaded"}}`, 503, false, true},
+		{"plural_overload_bad_request_final", `{"error":{"message":"busy","type":"new_api_error","code":"servers_is_overloaded"}}`, 400, false, false},
+		{"unrelated_server_error_final", `{"error":{"message":"busy","type":"new_api_error","code":"some_other_error"}}`, 503, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			oldMode := gin.Mode()
 			gin.SetMode(gin.TestMode)
 			oldDB, oldLogDB := model.DB, model.LOG_DB
@@ -48,8 +59,11 @@ func TestRelayHTTPRetryKeywordFlaggedPrompt400(t *testing.T) {
 			oldPing := operation_setting.GetGeneralSetting().PingIntervalEnabled
 			oldRetryRanges := operation_setting.AutomaticRetryStatusCodeRanges
 			oldKeywords := operation_setting.AutomaticRetryKeywordsToString()
+			oldAuto := model_setting.GetGlobalSettings().AutoChatToResponsesEnabled
+			model_setting.GetGlobalSettings().AutoChatToResponsesEnabled = false
 			oldAutoDisable := common.AutomaticDisableChannelEnabled
 			t.Cleanup(func() {
+				model_setting.GetGlobalSettings().AutoChatToResponsesEnabled = oldAuto
 				gin.SetMode(oldMode)
 				model.DB, model.LOG_DB = oldDB, oldLogDB
 				common.SetDatabaseTypes(oldMainType, oldLogType)
@@ -78,11 +92,14 @@ func TestRelayHTTPRetryKeywordFlaggedPrompt400(t *testing.T) {
 			// Production default ranges: 400 is NOT retryable by status code.
 			require.NoError(t, operation_setting.AutomaticRetryStatusCodesFromString("100-199,300-399,401-407,409-499,500-503,505-523,525-599"))
 			require.False(t, operation_setting.ShouldRetryByStatusCode(http.StatusBadRequest))
-			if keywordEnabled {
+			if tc.keywordEnabled {
 				// Admin pastes the message fragment; line format from the textarea.
 				operation_setting.AutomaticRetryKeywordsFromString("some other error\r\nYour prompt was flagged as potentially violating our usage policy\n")
 			} else {
 				operation_setting.AutomaticRetryKeywordsFromString("")
+			}
+			if strings.Contains(tc.name, "overload") || tc.name == "unrelated_server_error_final" {
+				require.NoError(t, operation_setting.AutomaticRetryStatusCodesFromString("429"))
 			}
 			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"retry-keyword-http":1}`))
 			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"gpt-6-astra":0}`))
@@ -96,8 +113,8 @@ func TestRelayHTTPRetryKeywordFlaggedPrompt400(t *testing.T) {
 			upstreamA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				record("A")
 				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = fmt.Fprint(w, flaggedPromptUpstreamBody)
+				w.WriteHeader(tc.status)
+				_, _ = fmt.Fprint(w, tc.body)
 			}))
 			defer upstreamA.Close()
 			upstreamB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +170,7 @@ func TestRelayHTTPRetryKeywordFlaggedPrompt400(t *testing.T) {
 			actual := append([]string(nil), calls...)
 			mu.Unlock()
 
-			if keywordEnabled {
+			if tc.wantRetry {
 				assert.Equal(t, http.StatusOK, response.StatusCode, body)
 				assert.Equal(t, []string{"A", "B"}, actual)
 				assert.Equal(t, []string{"893", "894"}, used)
@@ -161,7 +178,7 @@ func TestRelayHTTPRetryKeywordFlaggedPrompt400(t *testing.T) {
 				assert.NotContains(t, body, "flagged")
 				return
 			}
-			assert.Equal(t, http.StatusBadRequest, response.StatusCode, body)
+			assert.Equal(t, tc.status, response.StatusCode, body)
 			assert.Equal(t, []string{"A"}, actual)
 			assert.Equal(t, []string{"893"}, used)
 		})
