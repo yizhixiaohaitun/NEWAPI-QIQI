@@ -6,6 +6,12 @@
 
 ---
 
+## 额度增加日志
+
+- `model/log.go`：真实日志类型 `LogTypeQuotaIncrease=8`，管理员额度增加与通用管理类型3分开；新写审计保持管理员/目标用户/请求信息，历史记录在查询读取时归类，不迁移日志数据库。
+- 默认主题：`web/default/src/features/usage-logs/constants.ts` 统一类型标签/筛选，`src/routes/_authenticated/usage-logs/$section.tsx` 接受类型8；列表与详情仍显示管理员操作审计。经典主题：使用日志筛选/类型徽章/管理员详情同步支持类型8。
+- 回归：`web/default/src/features/usage-logs/lib/quota-increase.test.ts` 验证显示及真实类型筛选参数；后端额度增加专项覆盖历史分页、计数、私有字段、消费统计与减少/覆盖等不误归类。
+
 ## 📋 快速导航
 
 先读项目级规则，再读 ZERO 通用规则。

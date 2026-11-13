@@ -36,6 +36,7 @@ const logTypeValues = [
   '5',
   '6',
   '7',
+  '8',
   'zero_reply',
 ] as const
 const logTypeSearchSchema = z

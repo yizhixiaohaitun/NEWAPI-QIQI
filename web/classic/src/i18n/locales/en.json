@@ -3840,6 +3840,7 @@
     "在普通分组倍率或特殊倍率之后统一乘一次。0.8 表示八折；关闭后立即恢复原消耗价格，不影响充值倍率。": "Applies once to every group after its normal or special billing ratio. 0.8 means 20% off. It does not change top-up ratios. Turn off to restore original consumption prices immediately.",
     "启用节日折扣": "Enable festival discount",
     "折扣系数": "Discount factor",
-    "最终消耗 = 原消耗 × 系数": "Final consumption = original consumption × factor"
+    "最终消耗 = 原消耗 × 系数": "Final consumption = original consumption × factor",
+    "额度增加": "Quota Increase"
   }
-}
+}\n

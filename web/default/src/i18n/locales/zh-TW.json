@@ -5510,6 +5510,7 @@
     "The image file is empty": "圖片檔案不能為空",
     "The logo image must be 256 KiB or smaller": "徽標圖片不能超過 256 KiB",
     "Choose a PNG, JPEG, WebP, or GIF image": "請選擇 PNG、JPEG、WebP 或 GIF 圖片",
-    "The logo dimensions must not exceed 4096 x 4096 pixels": "徽標尺寸不能超過 4096 x 4096 像素"
+    "The logo dimensions must not exceed 4096 x 4096 pixels": "徽標尺寸不能超過 4096 x 4096 像素",
+    "Quota Increase": "額度增加"
   }
 }
