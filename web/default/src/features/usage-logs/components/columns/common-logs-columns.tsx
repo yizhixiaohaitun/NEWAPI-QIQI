@@ -124,9 +124,9 @@ function buildTypeDetailSegments(
   other: LogOtherData | null,
   t: (key: string, opts?: Record<string, unknown>) => string
 ): DetailSegment[] {
-  // Audit (type=3) and login (type=7) logs: render localized content from the
+  // Operation audit (type=3/8) and login (type=7) logs: render localized content from the
   // structured op descriptor instead of the raw (English-fallback) content.
-  if (log.type === 3 || log.type === 7) {
+  if (log.type === 3 || log.type === 7 || log.type === 8) {
     const text = renderAuditContent(other, t)
     return text ? [{ text }] : []
   }

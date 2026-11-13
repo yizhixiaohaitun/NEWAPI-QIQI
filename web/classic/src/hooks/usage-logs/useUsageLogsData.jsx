@@ -720,7 +720,7 @@ export const useLogsData = () => {
           });
         }
       }
-      if (isAdminUser && logs[i].type === 3 && other?.admin_info) {
+      if (isAdminUser && (logs[i].type === 3 || logs[i].type === 8) && other?.admin_info) {
         const adminInfo = other.admin_info;
         const hasUsername =
           adminInfo.admin_username !== undefined &&
