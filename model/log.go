@@ -82,15 +82,63 @@ type Log struct {
 
 // don't use iota, avoid change log type value
 const (
-	LogTypeUnknown = 0
-	LogTypeTopup   = 1
-	LogTypeConsume = 2
-	LogTypeManage  = 3
-	LogTypeSystem  = 4
-	LogTypeError   = 5
-	LogTypeRefund  = 6
-	LogTypeLogin   = 7
+	LogTypeUnknown       = 0
+	LogTypeTopup         = 1
+	LogTypeConsume       = 2
+	LogTypeManage        = 3
+	LogTypeSystem        = 4
+	LogTypeError         = 5
+	LogTypeRefund        = 6
+	LogTypeLogin         = 7
+	LogTypeQuotaIncrease = 8
 )
+
+const legacyQuotaIncreaseContentPrefix = "Increased user quota by "
+
+// logActionExpression extracts the structured audit action without relying on
+// LIKE over JSON text. The log database may be any of the supported dialects.
+func logActionExpression(column string) string {
+	switch common.LogDatabaseType() {
+	case common.DatabaseTypeMySQL:
+		return "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(CASE WHEN JSON_VALID(" + column + ") THEN " + column + " ELSE '{}' END, '$.op.action')), '')"
+	case common.DatabaseTypePostgreSQL:
+		// PostgreSQL has no portable safe-cast for arbitrary historical TEXT.
+		// Extract the generated op.action shape with a regex so empty, NULL, and
+		// malformed legacy values cannot abort the whole log query.
+		return `COALESCE(substring(COALESCE(` + column + `, '') from '"op"[[:space:]]*:[[:space:]]*\{[^}]*"action"[[:space:]]*:[[:space:]]*"([^"]*)"'), '')`
+	case common.DatabaseTypeClickHouse:
+		return "JSONExtractString(" + column + ", 'op', 'action')"
+	default:
+		return "COALESCE(json_extract(CASE WHEN json_valid(" + column + ") THEN " + column + " ELSE '{}' END, '$.op.action'), '')"
+	}
+}
+
+func quotaIncreaseLogPredicate(tablePrefix string) (string, []interface{}) {
+	action := logActionExpression(tablePrefix + "other")
+	contentColumn := tablePrefix + "content"
+	like := contentColumn + " LIKE ?"
+	if !common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		like += " ESCAPE '!'"
+	}
+	// The content fallback is only for old type=3 rows without structured op.
+	// A structured non-quota action always wins over the legacy text.
+	return "(" + action + " = ? OR (" + action + " = '' AND " + like + "))", []interface{}{"user.quota_add", legacyQuotaIncreaseContentPrefix + "%"}
+}
+
+func applyLogTypeFilter(tx *gorm.DB, logType int) *gorm.DB {
+	if logType != LogTypeManage && logType != LogTypeQuotaIncrease {
+		if logType == LogTypeUnknown {
+			return tx
+		}
+		return tx.Where("logs.type = ?", logType)
+	}
+
+	predicate, args := quotaIncreaseLogPredicate("logs.")
+	if logType == LogTypeQuotaIncrease {
+		return tx.Where("(logs.type = ? OR (logs.type = ? AND "+predicate+"))", append([]interface{}{LogTypeQuotaIncrease, LogTypeManage}, args...)...)
+	}
+	return tx.Where("logs.type = ? AND NOT "+predicate, append([]interface{}{LogTypeManage}, args...)...)
+}
 
 func ensureLogRequestId(log *Log) {
 	if log != nil && log.RequestId == "" {
@@ -220,7 +268,7 @@ func RecordLoginLog(userId int, username string, content string, ip string, acti
 	}
 }
 
-// RecordOperationAuditLog 记录管理/高危操作审计日志（type=LogTypeManage）。
+// RecordOperationAuditLog 记录管理/高危操作审计日志；额度增加使用 LogTypeQuotaIncrease，其他操作使用 LogTypeManage。
 // logUserId 为日志归属者，管理审计日志应归属实际操作者；目标资源/用户放入
 // action params。username 内部按 logUserId 查询。content 为英文兜底文本（导出/经典前端用）。
 // action+params 写入 Other.op，供前端本地化渲染（普通用户可见，不含敏感信息）。
@@ -237,11 +285,15 @@ func RecordOperationAuditLog(logUserId int, content string, ip string, action st
 	if len(auditInfo) > 0 {
 		other["audit_info"] = auditInfo
 	}
+	logType := LogTypeManage
+	if action == "user.quota_add" {
+		logType = LogTypeQuotaIncrease
+	}
 	log := &Log{
 		UserId:    logUserId,
 		Username:  username,
 		CreatedAt: common.GetTimestamp(),
-		Type:      LogTypeManage,
+		Type:      logType,
 		Content:   content,
 		Ip:        ip,
 		Other:     common.MapToJsonStr(other),
@@ -479,7 +531,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	} else if logType == LogTypeUnknown {
 		tx = LOG_DB
 	} else {
-		tx = LOG_DB.Where("logs.type = ?", logType)
+		tx = applyLogTypeFilter(LOG_DB, logType)
 	}
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
@@ -580,7 +632,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	} else if logType == LogTypeUnknown {
 		tx = LOG_DB.Where("logs.user_id = ?", userId)
 	} else {
-		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
+		tx = applyLogTypeFilter(LOG_DB.Where("logs.user_id = ?", userId), logType)
 	}
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
