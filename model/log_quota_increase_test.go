@@ -85,6 +85,21 @@ func TestQuotaIncreaseAuditTypeAndHistoricalFilters(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), total)
 	assert.Len(t, logs, 2)
+	for _, log := range logs {
+		assert.Equal(t, LogTypeQuotaIncrease, log.Type, "historical rows must display the same type as the filter")
+	}
+	allLogs, _, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 100, 0, "", "", "", false)
+	require.NoError(t, err)
+	quotaRows := 0
+	for _, log := range allLogs {
+		if log.Type == LogTypeQuotaIncrease {
+			quotaRows++
+		}
+	}
+	assert.Equal(t, 4, quotaRows, "all-types view also normalizes legacy quota increase badges")
+	var storedLegacy Log
+	require.NoError(t, LOG_DB.Where("content = ?", "Increased user quota by 12").First(&storedLegacy).Error)
+	assert.Equal(t, LogTypeManage, storedLegacy.Type, "normalization must not migrate the log database")
 
 	_, total, err = GetAllLogs(LogTypeManage, 0, 0, "", "", "", 0, 100, 0, "", "", "", false)
 	require.NoError(t, err)
@@ -95,6 +110,7 @@ func TestQuotaIncreaseAuditTypeAndHistoricalFilters(t *testing.T) {
 	assert.Equal(t, int64(3), userTotal, "self log query excludes another user's quota increase")
 	assert.Len(t, userLogs, 3)
 	for _, log := range userLogs {
+		assert.Equal(t, LogTypeQuotaIncrease, log.Type)
 		assert.NotContains(t, log.Other, "admin_info")
 		assert.NotContains(t, log.Other, "audit_info")
 		if log.Other != "null" {

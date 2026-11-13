@@ -140,6 +140,25 @@ func applyLogTypeFilter(tx *gorm.DB, logType int) *gorm.DB {
 	return tx.Where("logs.type = ? AND NOT "+predicate, append([]interface{}{LogTypeManage}, args...)...)
 }
 
+// normalizeQuotaIncreaseLogTypes only changes the returned view, never historical rows.
+// Keep badges/details and local table filtering consistent with the SQL type filter.
+func normalizeQuotaIncreaseLogTypes(logs []*Log) {
+	for _, log := range logs {
+		if log == nil || log.Type != LogTypeManage {
+			continue
+		}
+		action := ""
+		if other, err := common.StrToMap(log.Other); err == nil {
+			if op, ok := other["op"].(map[string]interface{}); ok && op["action"] != nil {
+				action = fmt.Sprint(op["action"])
+			}
+		}
+		if action == "user.quota_add" || (action == "" && strings.HasPrefix(log.Content, legacyQuotaIncreaseContentPrefix)) {
+			log.Type = LogTypeQuotaIncrease
+		}
+	}
+}
+
 func ensureLogRequestId(log *Log) {
 	if log != nil && log.RequestId == "" {
 		log.RequestId = common.NewRequestId()
@@ -577,6 +596,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		assignDisplayLogIds(logs, startIdx)
 	}
 
+	normalizeQuotaIncreaseLogTypes(logs)
 	channelIds := types.NewSet[int]()
 	for _, log := range logs {
 		if log.ChannelId != 0 {
@@ -671,6 +691,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		return nil, 0, errors.New("查询日志失败")
 	}
 
+	normalizeQuotaIncreaseLogTypes(logs)
 	formatUserLogs(logs, startIdx)
 	return logs, total, err
 }
