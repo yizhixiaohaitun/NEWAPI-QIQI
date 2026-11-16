@@ -119,6 +119,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 // GetRandomSatisfiedChannelExcluding selects normally while omitting channels
 // that already failed earlier in the same request.
 func GetRandomSatisfiedChannelExcluding(group string, model string, retry int, requestPath string, excluded map[int]bool) (*Channel, error) {
+	adaptiveEnabled := operation_setting.GetAdaptiveRoutingSetting().Enabled
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
 		return GetChannelExcluding(group, model, retry, requestPath, excluded)
@@ -156,7 +157,7 @@ func GetRandomSatisfiedChannelExcluding(group string, model string, retry int, r
 		retry = 0
 	}
 
-	if len(channels) == 1 && !operation_setting.GetAdaptiveRoutingSetting().Enabled {
+	if len(channels) == 1 && !adaptiveEnabled {
 		if channel, ok := channelsIDM[channels[0]]; ok {
 			return channel, nil
 		}
@@ -188,7 +189,7 @@ func GetRandomSatisfiedChannelExcluding(group string, model string, retry int, r
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
 			if channel.GetPriority() == targetPriority {
-				if !operation_setting.GetAdaptiveRoutingSetting().Enabled {
+				if !adaptiveEnabled {
 					sumWeight += channel.GetWeight()
 				}
 				targetChannels = append(targetChannels, channel)
@@ -202,7 +203,7 @@ func GetRandomSatisfiedChannelExcluding(group string, model string, retry int, r
 		return nil, errors.New(fmt.Sprintf("no channel found, group: %s, model: %s, priority: %d", group, model, targetPriority))
 	}
 
-	if operation_setting.GetAdaptiveRoutingSetting().Enabled {
+	if adaptiveEnabled {
 		candidates := make([]adaptiveCandidate, 0, len(targetChannels))
 		for _, channel := range targetChannels {
 			var weight uint

@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -68,6 +69,10 @@ func RelaySeedanceAsset(c *gin.Context) {
 		result, taskErr = relay.RelaySeedanceAsset(c, relayInfo)
 		requestContextErr := c.Request.Context().Err()
 		upstreamContextErr := upstreamCtx.Err()
+		outcome := service.AdaptiveAssetOutcome(taskErr, requestContextErr, requestUpstreamCtx.Err())
+		if outcome != service.AdaptiveRoutingIgnore {
+			model.RecordAdaptiveRoutingOutcome(channel.Id, relayInfo.OriginModelName, outcome == service.AdaptiveRoutingSuccess)
+		}
 		cancelUpstream()
 		if requestContextErr != nil {
 			taskErr = service.TaskErrorFromAPIError(service.NewClientClosedRequestError(requestContextErr))

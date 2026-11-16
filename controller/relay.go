@@ -207,6 +207,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		relayInfo.ResponsesStreamErrorBeforeCommit = false
 		relayInfo.FirstByteWatch = nil
+		relayInfo.StreamStatus = nil
 		c.Set("upstream_first_byte_timeout", false)
 		c.Set("upstream_stream_error_before_commit", false)
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
@@ -256,6 +257,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				relayInfo.ResetFirstResponseTime()
 				helper.ResetEventStreamHeaders(c)
 			}
+		}
+		outcome := service.AdaptiveRelayOutcome(newAPIError, relayInfo.StreamStatus, requestContextErr, requestUpstreamCtx.Err(), firstByteTimedOut)
+		if outcome != service.AdaptiveRoutingIgnore {
+			model.RecordAdaptiveRoutingOutcome(channel.Id, relayInfo.OriginModelName, outcome == service.AdaptiveRoutingSuccess)
 		}
 		cancelUpstream()
 		c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(nil))
