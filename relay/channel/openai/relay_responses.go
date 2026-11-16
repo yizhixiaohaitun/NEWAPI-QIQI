@@ -128,6 +128,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 		upstreamStreamErr := responsesStreamEventError(&streamResponse, data)
 		if upstreamStreamErr != nil {
+			info.StreamStatus.RecordUpstreamError(upstreamStreamErr)
 			if !retryEnabled {
 				recordResponsesStreamRetryRecommendation(c)
 				if !moderationFrame {

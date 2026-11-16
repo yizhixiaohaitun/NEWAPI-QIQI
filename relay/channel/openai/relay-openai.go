@@ -172,6 +172,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		var envelope dto.GeneralErrorResponse
 		if common.UnmarshalJsonStr(data, &envelope) == nil {
 			if upstreamError := envelope.TryToOpenAIError(); upstreamError != nil {
+				info.StreamStatus.RecordUpstreamError(types.WithOpenAIError(*upstreamError, responsesStreamErrorStatus(upstreamError)))
 				if retryWriter != nil && !retryWriter.committed {
 					streamErr = types.WithOpenAIError(*upstreamError, responsesStreamErrorStatus(upstreamError))
 					markResponsesStreamErrorBeforeCommit(c, info)

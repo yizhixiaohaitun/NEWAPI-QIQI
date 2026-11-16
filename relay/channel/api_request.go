@@ -562,6 +562,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		requestContext = info.UpstreamContext
 	}
 	req = req.WithContext(requestContext)
+	info.AdaptiveTransportDispatched = true
 	resp, err := client.Do(req)
 	if err != nil {
 		if info.FirstByteWatch != nil {

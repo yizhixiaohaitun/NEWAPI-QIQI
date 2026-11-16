@@ -49,6 +49,25 @@ func TestAdaptiveRelayOutcome(t *testing.T) {
 		})
 	}
 }
+func TestAdaptiveOriginalStatusAndTypedStreamFailure(t *testing.T) {
+	for _, tc := range []struct {
+		original int
+		mapping  string
+		want     AdaptiveRoutingOutcome
+	}{
+		{503, `{"503":"400"}`, AdaptiveRoutingFailure},
+		{400, `{"400":"503"}`, AdaptiveRoutingIgnore},
+	} {
+		err := types.WithOpenAIError(types.OpenAIError{Type: "server_error", Message: "upstream error"}, tc.original)
+		ResetStatusCode(err, tc.mapping)
+		assert.Equal(t, tc.want, AdaptiveRelayOutcome(err, nil, nil, nil, false))
+	}
+	stream := relaycommon.NewStreamStatus()
+	stream.RecordUpstreamError(types.WithOpenAIError(types.OpenAIError{Type: "server_error", Message: "busy"}, 503))
+	assert.Equal(t, AdaptiveRoutingFailure, AdaptiveRelayOutcome(nil, stream, nil, nil, false))
+	assert.Equal(t, AdaptiveRoutingIgnore, AdaptiveRelayOutcome(nil, stream, context.Canceled, nil, false))
+}
+
 func TestAdaptiveAssetOutcome(t *testing.T) {
 	assert.Equal(t, AdaptiveRoutingSuccess, AdaptiveAssetOutcome(nil, nil, nil))
 	assert.Equal(t, AdaptiveRoutingIgnore, AdaptiveAssetOutcome(&dto.TaskError{Code: "build_request_failed", StatusCode: 500}, nil, nil))

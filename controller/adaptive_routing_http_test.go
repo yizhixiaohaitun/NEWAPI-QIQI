@@ -107,4 +107,11 @@ func TestAdaptiveRoutingRealRelayHTTP(t *testing.T) {
 		require.Equal(t, 200, request())
 	}
 	require.Equal(t, 1.0, model.AdaptiveRoutingMultiplier(1983, "adaptive-http-model"))
+	// Build a proxy client failure before any HTTP transport. Five local
+	// failures must not become channel-health samples.
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 1983).Update("setting", `{"proxy":"invalid-proxy://bad"}`).Error)
+	for i := 0; i < 20; i++ {
+		require.NotEqual(t, 200, request())
+	}
+	require.Equal(t, 1.0, model.AdaptiveRoutingMultiplier(1983, "adaptive-http-model"))
 }

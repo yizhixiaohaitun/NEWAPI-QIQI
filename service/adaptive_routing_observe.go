@@ -41,6 +41,10 @@ func AdaptiveRelayOutcome(err *types.NewAPIError, stream *relaycommon.StreamStat
 		return AdaptiveRoutingFailure
 	}
 	if err != nil {
+		status := err.StatusCode
+		if err.OriginalStatusCode != 0 {
+			status = err.OriginalStatusCode
+		}
 		code := err.GetErrorCode()
 		switch code {
 		case types.ErrorCodeClientClosedRequest, types.ErrorCodeUpstreamTimeout, types.ErrorCodePromptBlocked, types.ErrorCodeInvalidRequest, types.ErrorCodeSensitiveWordsDetected, types.ErrorCodeInsufficientUserQuota, types.ErrorCodePreConsumeTokenQuotaFailed, types.ErrorCodeGetChannelFailed:
@@ -49,18 +53,32 @@ func AdaptiveRelayOutcome(err *types.NewAPIError, stream *relaycommon.StreamStat
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || adaptiveRoutingRefusal(err.Error()+" "+string(code)) {
 			return AdaptiveRoutingIgnore
 		}
-		if code == types.ErrorCodeFirstByteTimeout || code == types.ErrorCodeDoRequestFailed || code == types.ErrorCodeReadResponseBodyFailed {
+		if code == types.ErrorCodeFirstByteTimeout || code == types.ErrorCodeReadResponseBodyFailed {
 			return AdaptiveRoutingFailure
 		}
-		if err.GetErrorType() != types.ErrorTypeNewAPIError && (err.StatusCode == http.StatusTooManyRequests || err.StatusCode >= 500 && err.StatusCode <= 599) {
+		if code == types.ErrorCodeDoRequestFailed {
+			// The controller additionally requires an actual transport dispatch;
+			// this branch remains conservative for direct classifier callers.
 			return AdaptiveRoutingFailure
 		}
-		if code == types.ErrorCodeBadResponseStatusCode && (err.StatusCode == http.StatusTooManyRequests || err.StatusCode >= 500 && err.StatusCode <= 599) {
+		if err.GetErrorType() != types.ErrorTypeNewAPIError && (status == http.StatusTooManyRequests || status >= 500 && status <= 599) {
+			return AdaptiveRoutingFailure
+		}
+		if code == types.ErrorCodeBadResponseStatusCode && (status == http.StatusTooManyRequests || status >= 500 && status <= 599) {
 			return AdaptiveRoutingFailure
 		}
 		return AdaptiveRoutingIgnore
 	}
 	if stream != nil {
+		providerErrors := stream.UpstreamErrors()
+		if len(providerErrors) > 0 {
+			for _, providerErr := range providerErrors {
+				if AdaptiveRelayOutcome(providerErr, nil, nil, nil, false) == AdaptiveRoutingFailure {
+					return AdaptiveRoutingFailure
+				}
+			}
+			return AdaptiveRoutingIgnore
+		}
 		switch stream.EndReason {
 		case relaycommon.StreamEndReasonScannerErr:
 			if errors.Is(stream.EndError, context.Canceled) || errors.Is(stream.EndError, context.DeadlineExceeded) {

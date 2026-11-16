@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/QuantumNous/new-api/types"
 )
 
 type StreamEndReason string
@@ -33,9 +35,31 @@ type StreamStatus struct {
 	EndError  error
 	endMu     sync.RWMutex
 
-	mu         sync.Mutex
-	Errors     []StreamErrorEntry
-	ErrorCount int
+	mu             sync.Mutex
+	Errors         []StreamErrorEntry
+	ErrorCount     int
+	upstreamErrors []*types.NewAPIError
+}
+
+// RecordUpstreamError preserves typed provider failures separately from client writes.
+func (s *StreamStatus) RecordUpstreamError(err *types.NewAPIError) {
+	if s == nil || err == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.upstreamErrors) < maxStreamErrorEntries {
+		s.upstreamErrors = append(s.upstreamErrors, err)
+	}
+}
+
+func (s *StreamStatus) UpstreamErrors() []*types.NewAPIError {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*types.NewAPIError(nil), s.upstreamErrors...)
 }
 
 func NewStreamStatus() *StreamStatus {
