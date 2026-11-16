@@ -62,7 +62,6 @@ export const LOG_TYPE_ENUM = {
   ERROR: 5,
   REFUND: 6,
   LOGIN: 7,
-  QUOTA_INCREASE: 8,
 } as const
 
 /**
@@ -109,7 +108,6 @@ export const LOG_TYPES = [
   { value: 5, label: 'Error', color: 'red' },
   { value: 6, label: 'Refund', color: 'blue' },
   { value: 7, label: 'Login', color: 'teal' },
-  { value: 8, label: 'Quota Increase', color: 'cyan' },
 ] as const
 
 /**

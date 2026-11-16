@@ -36,13 +36,12 @@ const logTypeValues = [
   '5',
   '6',
   '7',
-  '8',
   'zero_reply',
 ] as const
 const logTypeSearchSchema = z
   .preprocess((value) => {
     if (value == null || value === '') return undefined
-    return (Array.isArray(value) ? value : [value]).map(String)
+    return Array.isArray(value) ? value : [value]
   }, z.array(z.enum(logTypeValues)).optional())
   .catch([])
 

@@ -65,7 +65,6 @@ const defaultModelSettings: ModelSettings = {
   'group_ratio_setting.festival_discount_enabled': false,
   'group_ratio_setting.festival_discount_factor': 1,
   'group_ratio_setting.group_special_usable_group': '{}',
-  'adaptive_routing_setting.enabled': false,
   RetryTimes: 0,
   ChannelDisableThreshold: '',
   AutomaticDisableChannelEnabled: false,

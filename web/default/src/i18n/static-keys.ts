@@ -60,7 +60,6 @@ export const STATIC_I18N_KEYS = [
   'Token-based',
   'Per Request',
   'All Types',
-  'Quota Increase',
   'Chat',
   'Response',
   'Anthropic',

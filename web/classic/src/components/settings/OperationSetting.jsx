@@ -69,7 +69,6 @@ const OperationSetting = () => {
     QuotaRemindThreshold: 0,
     AutomaticDisableChannelEnabled: false,
     AutomaticEnableChannelEnabled: false,
-    'adaptive_routing_setting.enabled': false,
     AutomaticDisableKeywords: '',
     AutomaticDisableStatusCodes: '401',
     AutomaticRetryStatusCodes:

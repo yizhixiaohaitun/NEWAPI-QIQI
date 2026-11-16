@@ -228,7 +228,6 @@ export type ModelSettings = {
   'group_ratio_setting.festival_discount_enabled': boolean
   'group_ratio_setting.festival_discount_factor': number
   'group_ratio_setting.group_special_usable_group': string
-  'adaptive_routing_setting.enabled': boolean
   RetryTimes: number
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
