@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
@@ -155,7 +156,7 @@ func GetRandomSatisfiedChannelExcluding(group string, model string, retry int, r
 		retry = 0
 	}
 
-	if len(channels) == 1 {
+	if len(channels) == 1 && !operation_setting.GetAdaptiveRoutingSetting().Enabled {
 		if channel, ok := channelsIDM[channels[0]]; ok {
 			return channel, nil
 		}
@@ -187,7 +188,9 @@ func GetRandomSatisfiedChannelExcluding(group string, model string, retry int, r
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
 			if channel.GetPriority() == targetPriority {
-				sumWeight += channel.GetWeight()
+				if !operation_setting.GetAdaptiveRoutingSetting().Enabled {
+					sumWeight += channel.GetWeight()
+				}
 				targetChannels = append(targetChannels, channel)
 			}
 		} else {
@@ -197,6 +200,22 @@ func GetRandomSatisfiedChannelExcluding(group string, model string, retry int, r
 
 	if len(targetChannels) == 0 {
 		return nil, errors.New(fmt.Sprintf("no channel found, group: %s, model: %s, priority: %d", group, model, targetPriority))
+	}
+
+	if operation_setting.GetAdaptiveRoutingSetting().Enabled {
+		candidates := make([]adaptiveCandidate, 0, len(targetChannels))
+		for _, channel := range targetChannels {
+			var weight uint
+			if channel.Weight != nil {
+				weight = *channel.Weight
+			}
+			candidates = append(candidates, adaptiveCandidate{id: channel.Id, weight: weight})
+		}
+		id := selectAdaptiveCandidate(candidates, model, time.Now())
+		if id == 0 {
+			return nil, nil
+		}
+		return channelsIDM[id], nil
 	}
 
 	// smoothing factor and adjustment
