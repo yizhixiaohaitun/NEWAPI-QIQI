@@ -45,6 +45,15 @@ func RecordAdaptiveRoutingOutcome(channelID int, modelName string, success bool)
 	adaptiveRouting.record(adaptiveKey{channelID, modelName}, success, time.Now())
 }
 
+// AdaptiveRoutingMultiplier reports the current effective-weight multiplier for
+// diagnostics. Disabled routing and channels without enough samples return one.
+func AdaptiveRoutingMultiplier(channelID int, modelName string) float64 {
+	if !operation_setting.GetAdaptiveRoutingSetting().Enabled {
+		return 1
+	}
+	return float64(adaptiveRouting.percent(adaptiveKey{channelID, modelName}, time.Now())) / 100
+}
+
 func (s *adaptiveStore) record(key adaptiveKey, success bool, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

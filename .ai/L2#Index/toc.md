@@ -6,6 +6,15 @@
 
 ---
 
+## 可选自适应渠道分流
+
+- `setting/operation_setting/adaptive_routing_setting.go` 注册 `adaptive_routing_setting.enabled`，默认关闭；关闭保留旧选路，开启只在现有同优先级候选池内调整有效权重，不写回手动配置，不新增重试或后台探测请求。
+- `model/adaptive_routing.go` 管理本进程内、按渠道及原始模型隔离的最近20次可归因结果，至少5次才降流；有效权重为基础权重乘成功比例，系数最低5%，不代表固定5%流量。仅成功探测逐次恢复；24小时无样本、进程重启或有界存储淘汰后视为冷启动。
+- `model/channel_cache.go` / `model/ability.go` 在已有分组、模型/路径过滤、优先级和请求内失败排除之后调用同一选择器。全零权重池仍按等权池处理，混合池的零权重不被自动放大；亲和与指定渠道机制维持既有约束。
+- `service/adaptive_routing_observe.go` 对同步每次上游尝试三态归因，`controller/relay.go` / `controller/seedance_asset.go` 在取消前采样；用户取消、请求总预算超时、普通参数/内容拒绝及本地错误不记失败。异步任务提交不采样；HTTP200流内不确定软错误不误记成功。每次重试清理上一尝试流状态。
+- 默认主题模型与路由 → 路由可靠性、经典主题监控设置提供 `自动分流` 开关；`routing-reliability-form.ts` 为默认主题表单映射/校验契约，独立翻译模块避免改大词库。
+- 回归入口：`model/adaptive_routing_test.go`、`model/adaptive_routing_distribution_test.go`、`service/adaptive_routing_observe_test.go`、`controller/adaptive_routing_http_test.go`，覆盖关闭、降流与回流、探测票数、模型隔离、容量/过期、并发、极端权重、两种选择路径及优先级和失败排除。真实Relay入口验证故障及恢复实际写入健康状态；前端表单测试与本地Chrome验证开关保存和刷新。
+
 ## 额度增加日志
 
 - `model/log.go`：真实日志类型 `LogTypeQuotaIncrease=8`，管理员额度增加与通用管理类型3分开；新写审计保持管理员/目标用户/请求信息，历史记录在查询读取时归类，不迁移日志数据库。
