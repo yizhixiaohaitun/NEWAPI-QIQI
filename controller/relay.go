@@ -208,6 +208,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.ResponsesStreamErrorBeforeCommit = false
 		relayInfo.FirstByteWatch = nil
 		relayInfo.StreamStatus = nil
+		relayInfo.AdaptiveTransportDispatched = false
 		c.Set("upstream_first_byte_timeout", false)
 		c.Set("upstream_stream_error_before_commit", false)
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
@@ -259,6 +260,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 		}
 		outcome := service.AdaptiveRelayOutcome(newAPIError, relayInfo.StreamStatus, requestContextErr, requestUpstreamCtx.Err(), firstByteTimedOut)
+		if newAPIError != nil && newAPIError.GetErrorCode() == types.ErrorCodeDoRequestFailed && !relayInfo.AdaptiveTransportDispatched {
+			outcome = service.AdaptiveRoutingIgnore
+		}
 		if outcome != service.AdaptiveRoutingIgnore {
 			model.RecordAdaptiveRoutingOutcome(channel.Id, relayInfo.OriginModelName, outcome == service.AdaptiveRoutingSuccess)
 		}
