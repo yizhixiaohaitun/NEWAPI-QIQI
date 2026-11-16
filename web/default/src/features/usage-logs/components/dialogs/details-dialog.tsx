@@ -483,7 +483,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const isRefund = props.log.type === 6
   const isConsume = props.log.type === 2
   const isTopup = props.log.type === 1
-  const isManage = props.log.type === 3
+  const isManage = props.log.type === 3 || props.log.type === 8
   const isSubscription = other?.billing_source === 'subscription'
   const isTieredBilling =
     isConsume &&
@@ -890,7 +890,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
           </DetailSection>
         )}
 
-        {/* Manage operator (type=3, admin only) */}
+        {/* Manage operator (type=3/8, admin only) */}
         {manageOperator && (
           <DetailRow
             label={
@@ -907,7 +907,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
           />
         )}
 
-        {/* Operation audit info (type=3, admin only) */}
+        {/* Operation audit info (type=3/8, admin only) */}
         {showManageAuditSection && (
           <DetailSection
             icon={<ShieldCheck className='size-3.5' aria-hidden='true' />}
