@@ -29,6 +29,12 @@ import {
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 import HttpStatusCodeRulesInput from '../../../components/settings/HttpStatusCodeRulesInput';
+import {
+  adaptiveRoutingKey,
+  adaptiveRoutingValue,
+  adaptiveRoutingOption,
+} from './adaptiveRoutingSetting';
+import '../../../i18n/adaptive-routing';
 
 export default function SettingsMonitoring(props) {
   const { t } = useTranslation();
@@ -38,6 +44,7 @@ export default function SettingsMonitoring(props) {
     QuotaRemindThreshold: '',
     AutomaticDisableChannelEnabled: false,
     AutomaticEnableChannelEnabled: false,
+    [adaptiveRoutingKey]: false,
     AutomaticDisableKeywords: '',
     AutomaticDisableStatusCodes: '401',
     AutomaticRetryStatusCodes:
@@ -86,10 +93,12 @@ export default function SettingsMonitoring(props) {
         };
         value = normalizedMap[item.key] ?? inputs[item.key];
       }
-      return API.put('/api/option/', {
-        key: item.key,
-        value,
-      });
+      return API.put(
+        '/api/option/',
+        item.key === adaptiveRoutingKey
+          ? adaptiveRoutingOption(inputs[item.key])
+          : { key: item.key, value },
+      );
     });
     setLoading(true);
     Promise.all(requestQueue)
@@ -118,6 +127,9 @@ export default function SettingsMonitoring(props) {
         currentInputs[key] = props.options[key];
       }
     }
+    currentInputs[adaptiveRoutingKey] = adaptiveRoutingValue(
+      props.options[adaptiveRoutingKey],
+    );
     setInputs(currentInputs);
     setInputsRow(structuredClone(currentInputs));
     refForm.current.setValues(currentInputs);
@@ -132,6 +144,22 @@ export default function SettingsMonitoring(props) {
           style={{ marginBottom: 15 }}
         >
           <Form.Section text={t('监控设置')}>
+            <Row gutter={16}>
+              <Col xs={24}>
+                <Form.Switch
+                  field={adaptiveRoutingKey}
+                  label={t('自动分流')}
+                  extraText={t(
+                    '同优先级渠道根据近期上游故障减少分流，保留少量探测；恢复后逐步回流。手动优先级和权重不变。短期状态仅保存在当前进程内，重启后重置。',
+                  )}
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  onChange={(value) =>
+                    setInputs({ ...inputs, [adaptiveRoutingKey]: value })
+                  }
+                />
+              </Col>
+            </Row>
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
