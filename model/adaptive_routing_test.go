@@ -54,7 +54,10 @@ func TestAdaptiveWeightsAndOverflow(t *testing.T) {
 	}
 	assert.Equal(t, 1, selectAdaptiveCandidateWithDraw(cs, "m", now, draw(499)))
 	assert.Equal(t, 2, selectAdaptiveCandidateWithDraw(cs, "m", now, draw(500)))
-	assert.Zero(t, selectAdaptiveCandidateWithDraw([]adaptiveCandidate{{3, 0}}, "m", now, draw(0)))
+	assert.Equal(t, 3, selectAdaptiveCandidateWithDraw([]adaptiveCandidate{{3, 0}}, "m", now, func(total *big.Int) *big.Int {
+		assert.Equal(t, big.NewInt(100), total)
+		return big.NewInt(0)
+	}))
 	bigCandidates := []adaptiveCandidate{{1, uint(math.MaxUint)}, {2, uint(math.MaxUint)}}
 	assert.Equal(t, 2, selectAdaptiveCandidateWithDraw(bigCandidates, "other", now, func(total *big.Int) *big.Int { return new(big.Int).Sub(total, big.NewInt(1)) }))
 }
@@ -110,7 +113,8 @@ func TestAdaptiveRoutingBothSelectorsAndSwitch(t *testing.T) {
 		assert.Equal(t, 903, c.Id)
 		c, e = GetRandomSatisfiedChannelExcluding("adaptive", "m", 0, "", map[int]bool{901: true})
 		require.NoError(t, e)
-		assert.Nil(t, c)
+		require.NotNil(t, c)
+		assert.Equal(t, 902, c.Id, "remaining all-zero tier retains legacy equal-pool behavior")
 		setting.Enabled = false
 		c, e = GetRandomSatisfiedChannelExcluding("adaptive", "m", 0, "", map[int]bool{901: true})
 		require.NoError(t, e)

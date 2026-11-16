@@ -122,8 +122,22 @@ func selectAdaptiveCandidate(candidates []adaptiveCandidate, model string, now t
 func selectAdaptiveCandidateWithDraw(candidates []adaptiveCandidate, model string, now time.Time, drawForTotal func(*big.Int) *big.Int) int {
 	weights := make([]*big.Int, len(candidates))
 	total := new(big.Int)
+	allZero := true
+	for _, c := range candidates {
+		if c.weight != 0 {
+			allZero = false
+			break
+		}
+	}
 	for i, c := range candidates {
-		weights[i] = new(big.Int).SetUint64(uint64(c.weight))
+		weight := c.weight
+		// Existing channels default to zero: an entirely zero-weight tier is
+		// an equal pool, not a disabled pool. Mixed zero/positive tiers retain
+		// zero exclusion, matching the memory selector's manual semantics.
+		if allZero {
+			weight = 1
+		}
+		weights[i] = new(big.Int).SetUint64(uint64(weight))
 		weights[i].Mul(weights[i], big.NewInt(adaptiveRouting.percent(adaptiveKey{c.id, model}, now)))
 		total.Add(total, weights[i])
 	}
