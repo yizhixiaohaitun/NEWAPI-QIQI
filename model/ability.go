@@ -201,6 +201,7 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 // GetChannelExcluding is the database-backed equivalent of the cache selector
 // with request-local failed channel filtering.
 func GetChannelExcluding(group string, model string, retry int, requestPath string, excluded map[int]bool) (*Channel, error) {
+	adaptiveEnabled := operation_setting.GetAdaptiveRoutingSetting().Enabled
 	var abilities []Ability
 
 	var err error
@@ -261,7 +262,7 @@ func GetChannelExcluding(group string, model string, retry int, requestPath stri
 	}
 	channel := Channel{}
 	if len(abilities) > 0 {
-		if operation_setting.GetAdaptiveRoutingSetting().Enabled {
+		if adaptiveEnabled {
 			candidates := make([]adaptiveCandidate, 0, len(abilities))
 			for _, ability := range abilities {
 				candidates = append(candidates, adaptiveCandidate{id: ability.ChannelId, weight: ability.Weight})
