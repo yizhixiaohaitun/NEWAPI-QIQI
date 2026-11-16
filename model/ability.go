@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -258,19 +261,30 @@ func GetChannelExcluding(group string, model string, retry int, requestPath stri
 	}
 	channel := Channel{}
 	if len(abilities) > 0 {
-		// Randomly choose one
-		weightSum := uint(0)
-		for _, ability_ := range abilities {
-			weightSum += ability_.Weight + 10
-		}
-		// Randomly choose one
-		weight := common.GetRandomInt(int(weightSum))
-		for _, ability_ := range abilities {
-			weight -= int(ability_.Weight) + 10
-			//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
-			if weight <= 0 {
-				channel.Id = ability_.ChannelId
-				break
+		if operation_setting.GetAdaptiveRoutingSetting().Enabled {
+			candidates := make([]adaptiveCandidate, 0, len(abilities))
+			for _, ability := range abilities {
+				candidates = append(candidates, adaptiveCandidate{id: ability.ChannelId, weight: ability.Weight})
+			}
+			channel.Id = selectAdaptiveCandidate(candidates, model, time.Now())
+			if channel.Id == 0 {
+				return nil, nil
+			}
+		} else {
+			// Randomly choose one
+			weightSum := uint(0)
+			for _, ability_ := range abilities {
+				weightSum += ability_.Weight + 10
+			}
+			// Randomly choose one
+			weight := common.GetRandomInt(int(weightSum))
+			for _, ability_ := range abilities {
+				weight -= int(ability_.Weight) + 10
+				//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
+				if weight <= 0 {
+					channel.Id = ability_.ChannelId
+					break
+				}
 			}
 		}
 	} else {
