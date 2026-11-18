@@ -126,9 +126,15 @@ type RelayInfo struct {
 	NonStreamUpstreamTimeout *int // nil inherits UpstreamTimeout for legacy tokens
 	UpstreamContext          context.Context
 	FirstByteWatch           *FirstByteWatch
-	StartTime                time.Time
-	FirstResponseTime        time.Time
-	isFirstResponse          bool
+	// ClaimStreamOutput is set only for isolated stream race attempts. The
+	// adapter calls it before writing its first effective protocol frame.
+	ClaimStreamOutput func() bool
+	// DeferStreamSettlement hands settlement to the request controller, which
+	// runs it once with the winning RelayInfo and original billing session.
+	DeferStreamSettlement func(func(*RelayInfo))
+	StartTime             time.Time
+	FirstResponseTime     time.Time
+	isFirstResponse       bool
 	//SendLastReasoningResponse bool
 	IsStream               bool
 	IsGeminiBatchEmbedding bool

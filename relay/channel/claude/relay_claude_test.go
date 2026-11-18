@@ -19,6 +19,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestClaudeHedgeEffectiveEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name, data string
+		want       bool
+	}{
+		{"message start", `{"type":"message_start","message":{"id":"msg"}}`, false},
+		{"empty text", `{"type":"content_block_start","content_block":{"type":"text","text":""}}`, false},
+		{"usage", `{"type":"message_delta","usage":{"output_tokens":12}}`, false},
+		{"signature only", `{"type":"content_block_delta","delta":{"type":"signature_delta","signature":"s"}}`, false},
+		{"ping", `{"type":"ping"}`, false},
+		{"whitespace text", `{"type":"content_block_delta","delta":{"type":"text_delta","text":"\n "}}`, true},
+		{"thinking", `{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"thinking"}}`, true},
+		{"empty thinking", `{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":""}}`, false},
+		{"tool use with empty input", `{"type":"content_block_start","content_block":{"type":"tool_use","id":"toolu_a","name":"lookup","input":{}}}`, true},
+		{"incomplete tool use", `{"type":"content_block_start","content_block":{"type":"tool_use","name":"lookup"}}`, false},
+		{"refusal", `{"type":"message_delta","delta":{"stop_reason":"refusal"}}`, true},
+		{"stop", `{"type":"message_stop"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var event dto.ClaudeResponse
+			require.NoError(t, json.Unmarshal([]byte(tc.data), &event))
+			require.Equal(t, tc.want, claudeStreamHasOutput(&event))
+		})
+	}
+}
+
 func commonPointer[T any](value T) *T {
 	return &value
 }

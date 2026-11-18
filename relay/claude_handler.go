@@ -254,7 +254,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if newAPIError == nil {
 			break
 		}
-		if attempt == 0 && len(retrySource) > 0 && !c.Writer.Written() &&
+		if info.ClaimStreamOutput == nil && attempt == 0 && len(retrySource) > 0 && !c.Writer.Written() &&
 			c.Request.Context().Err() == nil && (info.UpstreamContext == nil || info.UpstreamContext.Err() == nil) &&
 			isClaudeThinkingSignatureRejection(newAPIError) {
 			if body, changed, toolRecovery := prepareClaudeSignatureRecovery(retrySource); changed && claimClaudeSignatureRetry(c, info.ChannelId) {
@@ -268,6 +268,10 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return newAPIError
 	}
 
-	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
+	if info.DeferStreamSettlement != nil {
+		info.DeferStreamSettlement(func(winner *relaycommon.RelayInfo) { service.PostTextConsumeQuota(c, winner, usage.(*dto.Usage), nil) })
+	} else {
+		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
+	}
 	return nil
 }

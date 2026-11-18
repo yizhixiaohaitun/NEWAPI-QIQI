@@ -2,10 +2,14 @@ package common
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"time"
 )
+
+// ErrStreamRaceLost is a normal speculative cancellation, not a channel failure.
+var ErrStreamRaceLost = errors.New("stream race lost")
 
 // FirstByteWatch bounds an HTTP attempt only until any upstream body byte is
 // received. Even metadata or moderation bytes stop it: replaying after those

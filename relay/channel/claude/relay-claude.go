@@ -2,6 +2,7 @@ package claude
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -234,6 +235,18 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	if stopDetails != nil && strings.TrimSpace(stopDetails.Explanation) != "" {
 		claudeInfo.ResponseText.WriteString(stopDetails.Explanation)
 	}
+	if info.ClaimStreamOutput != nil && !c.Writer.Written() {
+		switch {
+		case claudeResponse.Type == "error":
+			return types.NewErrorWithStatusCode(errors.New("invalid upstream stream error frame"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		case claudeStreamHasOutput(&claudeResponse):
+			if !info.ClaimStreamOutput() {
+				return types.NewError(relaycommon.ErrStreamRaceLost, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
+			}
+		case claudeResponse.Type == "message_stop":
+			return types.NewErrorWithStatusCode(errors.New("upstream stream ended before effective output"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		}
+	}
 	if info.RelayFormat == types.RelayFormatClaude {
 		FormatClaudeResponseInfo(&claudeResponse, nil, claudeInfo)
 
@@ -297,6 +310,40 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		}
 	}
 	return nil
+}
+
+// Usage, structural frames and signatures alone cannot win. Preserve refusal
+// and new block/delta types conservatively rather than silently replaying them.
+func claudeStreamHasOutput(event *dto.ClaudeResponse) bool {
+	if event.StopDetails != nil || event.StopReason == "refusal" || (event.Delta != nil && event.Delta.StopReason != nil && *event.Delta.StopReason == "refusal") {
+		return true
+	}
+	var block *dto.ClaudeMediaMessage
+	switch event.Type {
+	case "content_block_start":
+		block = event.ContentBlock
+	case "content_block_delta":
+		block = event.Delta
+	default:
+		return false
+	}
+	if block == nil {
+		return false
+	}
+	switch block.Type {
+	case "text", "text_delta":
+		return block.GetText() != ""
+	case "thinking", "thinking_delta":
+		return block.Thinking != nil && *block.Thinking != ""
+	case "input_json_delta":
+		return block.PartialJson != nil && *block.PartialJson != ""
+	case "tool_use", "server_tool_use":
+		return block.Id != "" && block.Name != ""
+	case "signature_delta":
+		return false
+	default:
+		return block.Type != ""
+	}
 }
 
 func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo) {
