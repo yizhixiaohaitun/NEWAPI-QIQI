@@ -573,7 +573,9 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		if info.FirstByteWatch != nil {
 			info.FirstByteWatch.Stop()
 		}
-		logger.LogError(c, "do request failed: "+err.Error())
+		if !errors.Is(context.Cause(requestContext), common.ErrStreamRaceLost) {
+			logger.LogError(c, "do request failed: "+err.Error())
+		}
 		// No upstream HTTP response was received. Report a gateway failure,
 		// not an application 500 or a fabricated upstream status.
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeDoRequestFailed, http.StatusBadGateway,

@@ -2,6 +2,10 @@ package constant
 
 // FirstByteTimeout is the per-attempt upstream HTTP body wait in seconds.
 var FirstByteTimeout = 90
+
+// StreamHedgeDelayMS enables delayed backup for supported native SSE streams.
+// Zero (the default) preserves ordinary sequential retries.
+var StreamHedgeDelayMS int
 var StreamingTimeout int
 var DifyDebug bool
 var MaxFileDownloadMB int

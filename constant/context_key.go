@@ -24,6 +24,7 @@ const (
 	ContextKeyTokenNonStreamUpstreamTimeout    ContextKey = "token_non_stream_upstream_timeout"
 	ContextKeyTokenRequestCompatibilityEnabled ContextKey = "token_request_compatibility_enabled"
 	ContextKeyUpstreamCancel                   ContextKey = "upstream_cancel"
+	ContextKeyStreamHedgeWinner                ContextKey = "stream_hedge_winner"
 
 	/* channel related keys */
 	ContextKeyChannelId                ContextKey = "channel_id"

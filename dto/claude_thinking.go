@@ -20,6 +20,9 @@ func ClaudeRequiresAdaptiveThinking(model string) bool {
 	return claudeAdaptiveVersion(model) != ""
 }
 
+// IsClaudeOpus55 recognizes the supported Opus 5.5 model spellings.
+func IsClaudeOpus55(model string) bool { return claudeAdaptiveVersion(model) == "5-5" }
+
 func claudeAdaptiveVersion(model string) string {
 	model = strings.TrimSuffix(model, "-thinking")
 	model, _, _ = reasoning.TrimEffortSuffix(model)
