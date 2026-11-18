@@ -177,8 +177,7 @@ func settleInvitationByInviteeId(inviteeId int) (bool, error) {
 		}
 
 		if settled.InviteeReward > 0 {
-			result = tx.Model(&User{}).Where("id = ?", settled.InviteeId).
-				Update("quota", gorm.Expr("quota + ?", settled.InviteeReward))
+			result = updateUserBalance(tx, settled.InviteeId, gorm.Expr("quota + ?", settled.InviteeReward), nil)
 			if result.Error != nil {
 				return result.Error
 			}
