@@ -234,23 +234,35 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		// Each channel attempt gets its own cancel handle, while inheriting the
 		// single request-wide deadline above. Idle stream cutoffs can therefore
 		// cancel the active real upstream without resetting the total budget.
-		upstreamCtx, cancelUpstream := context.WithCancel(requestUpstreamCtx)
-		relayInfo.UpstreamContext = upstreamCtx
-		c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(cancelUpstream))
+		var attempt *streamRaceAttempt
+		if retryParam.GetRetry() == 0 && constant.StreamHedgeDelayMS > 0 {
+			attempt = raceRelayStream(c, relayInfo, channel, requestUpstreamCtx, bodyStorage, time.Duration(constant.StreamHedgeDelayMS)*time.Millisecond)
+		}
+		var upstreamContextErr error
+		var firstByteTimedOut bool
+		if attempt != nil {
+			channel, newAPIError = attempt.channel, attempt.err
+			upstreamContextErr = attempt.contextErr
+		} else {
+			upstreamCtx, cancelUpstream := context.WithCancel(requestUpstreamCtx)
+			relayInfo.UpstreamContext = upstreamCtx
+			c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(cancelUpstream))
 
-		switch relayFormat {
-		case types.RelayFormatOpenAIRealtime:
-			newAPIError = relay.WssHelper(c, relayInfo)
-		case types.RelayFormatClaude:
-			newAPIError = relay.ClaudeHelper(c, relayInfo)
-		case types.RelayFormatGemini:
-			newAPIError = geminiRelayHandler(c, relayInfo)
-		default:
-			newAPIError = relayHandler(c, relayInfo)
+			switch relayFormat {
+			case types.RelayFormatOpenAIRealtime:
+				newAPIError = relay.WssHelper(c, relayInfo)
+			case types.RelayFormatClaude:
+				newAPIError = relay.ClaudeHelper(c, relayInfo)
+			case types.RelayFormatGemini:
+				newAPIError = geminiRelayHandler(c, relayInfo)
+			default:
+				newAPIError = relayHandler(c, relayInfo)
+			}
+			upstreamContextErr = upstreamCtx.Err()
+			firstByteTimedOut = relayInfo.FirstByteWatch != nil && relayInfo.FirstByteWatch.Finish()
+			cancelUpstream()
 		}
 		requestContextErr := c.Request.Context().Err()
-		upstreamContextErr := upstreamCtx.Err()
-		firstByteTimedOut := relayInfo.FirstByteWatch != nil && relayInfo.FirstByteWatch.Finish()
 		if firstByteTimedOut && requestContextErr == nil && requestUpstreamCtx.Err() == nil {
 			newAPIError = types.NewErrorWithStatusCode(errors.New("upstream timed out before the first response byte"), types.ErrorCodeFirstByteTimeout, http.StatusGatewayTimeout)
 			if !c.Writer.Written() {
@@ -266,7 +278,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if outcome != service.AdaptiveRoutingIgnore {
 			model.RecordAdaptiveRoutingOutcome(channel.Id, relayInfo.OriginModelName, outcome == service.AdaptiveRoutingSuccess)
 		}
-		cancelUpstream()
 		c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(nil))
 		// A completed handler may finish billing after the client has read the
 		// response and closed its connection. Do not turn success into a 499.
@@ -291,9 +302,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			retryLimit = 1
 		}
 
-		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		isMultiKey := channel.ChannelInfo.IsMultiKey
+		if attempt != nil {
+			isMultiKey = common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
+		}
+		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, isMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
-		if !shouldRetry(c, newAPIError, retryLimit-retryParam.GetRetry()) {
+		if attempt != nil || !shouldRetry(c, newAPIError, retryLimit-retryParam.GetRetry()) {
 			break
 		}
 		markChannelFailedForRetry(c, channel)

@@ -303,7 +303,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		}
 
 		if err := scanner.Err(); err != nil {
-			if err != io.EOF {
+			if err != io.EOF && (info.UpstreamContext == nil || !errors.Is(context.Cause(info.UpstreamContext), relaycommon.ErrStreamRaceLost)) {
 				logger.LogError(c, "scanner error: "+err.Error())
 				switch {
 				case info.UpstreamContext != nil && errors.Is(info.UpstreamContext.Err(), context.DeadlineExceeded):
@@ -340,6 +340,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	}
 
 	cleanup()
+	if info.UpstreamContext != nil && errors.Is(context.Cause(info.UpstreamContext), relaycommon.ErrStreamRaceLost) {
+		return
+	}
 	if info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors() {
 		logger.LogInfo(c, fmt.Sprintf("stream ended: %s", info.StreamStatus.Summary()))
 	} else {
