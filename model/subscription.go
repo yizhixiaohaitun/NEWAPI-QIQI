@@ -231,7 +231,7 @@ func (o *SubscriptionOrder) Insert() error {
 	if o.CreateTime == 0 {
 		o.CreateTime = common.GetTimestamp()
 	}
-	return DB.Create(o).Error
+	return createPayableOrder(o.UserId, o)
 }
 
 func (o *SubscriptionOrder) Update() error {
@@ -768,8 +768,7 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 			return errors.New("余额不足")
 		}
 		if requiredQuota > 0 {
-			if err := tx.Model(&User{}).Where("id = ?", userId).
-				Update("quota", gorm.Expr("quota - ?", requiredQuota)).Error; err != nil {
+			if err := updateUserBalance(tx, userId, gorm.Expr("quota - ?", requiredQuota), nil).Error; err != nil {
 				return err
 			}
 		}

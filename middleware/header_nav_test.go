@@ -6,10 +6,13 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func withHeaderNavModules(t *testing.T, raw string) {
@@ -59,6 +62,15 @@ func performHeaderNavRequest(t *testing.T, handler gin.HandlerFunc, authenticate
 
 	var cookies []*http.Cookie
 	if authenticated {
+		db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		require.NoError(t, err)
+		sqlDB, err := db.DB()
+		require.NoError(t, err)
+		previous := model.DB
+		model.DB = db
+		t.Cleanup(func() { model.DB = previous; _ = sqlDB.Close() })
+		require.NoError(t, db.AutoMigrate(&model.User{}))
+		require.NoError(t, db.Create(&model.User{Id: 1, Username: "tester"}).Error)
 		loginRecorder := httptest.NewRecorder()
 		loginRequest := httptest.NewRequest(http.MethodGet, "/login", nil)
 		router.ServeHTTP(loginRecorder, loginRequest)

@@ -48,9 +48,7 @@ var (
 )
 
 func (topUp *TopUp) Insert() error {
-	var err error
-	err = DB.Create(topUp).Error
-	return err
+	return createPayableOrder(topUp.UserId, topUp)
 }
 
 func (topUp *TopUp) Update() error {
@@ -141,7 +139,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		}
 
 		quota = topUp.Money * common.QuotaPerUnit
-		err = tx.Model(&User{}).Where("id = ?", topUp.UserId).Updates(map[string]interface{}{"stripe_customer": customerId, "quota": gorm.Expr("quota + ?", quota)}).Error
+		err = creditUserBalance(tx, topUp.UserId, gorm.Expr("quota + ?", quota), map[string]any{"stripe_customer": customerId})
 		if err != nil {
 			return err
 		}
@@ -371,7 +369,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		}
 
 		// 增加用户额度（立即写库，保持一致性）
-		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+		if err := creditUserBalance(tx, topUp.UserId, gorm.Expr("quota + ?", quotaToAdd), nil); err != nil {
 			return err
 		}
 
@@ -427,9 +425,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		quota = topUp.Amount
 
 		// 构建更新字段，优先使用邮箱，如果邮箱为空则使用用户名
-		updateFields := map[string]interface{}{
-			"quota": gorm.Expr("quota + ?", quota),
-		}
+		updateFields := make(map[string]any)
 
 		// 如果有客户邮箱，尝试更新用户邮箱（仅当用户邮箱为空时）
 		if customerEmail != "" {
@@ -446,7 +442,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			}
 		}
 
-		err = tx.Model(&User{}).Where("id = ?", topUp.UserId).Updates(updateFields).Error
+		err = creditUserBalance(tx, topUp.UserId, gorm.Expr("quota + ?", quota), updateFields)
 		if err != nil {
 			return err
 		}
@@ -508,7 +504,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return err
 		}
 
-		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+		if err := creditUserBalance(tx, topUp.UserId, gorm.Expr("quota + ?", quotaToAdd), nil); err != nil {
 			return err
 		}
 
@@ -569,7 +565,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return err
 		}
 
-		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+		if err := creditUserBalance(tx, topUp.UserId, gorm.Expr("quota + ?", quotaToAdd), nil); err != nil {
 			return err
 		}
 
