@@ -320,7 +320,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
 		preserveClaudeStreamError(c, info, claudeResponse, data)
-		return types.WithClaudeError(*claudeError, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
+		return types.WithClaudeError(*claudeError, types.ClaudeErrorStatus(claudeError.Type), types.ErrOptionWithSkipRetry())
 	}
 	if claudeStreamFrameUnsafe(&claudeResponse, data) {
 		commitClaudeUnsafeFrame(c, info)
@@ -505,7 +505,11 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+		status := types.ClaudeErrorStatus(claudeError.Type)
+		if httpResp != nil && httpResp.StatusCode >= 400 && httpResp.StatusCode <= 599 {
+			status = httpResp.StatusCode
+		}
+		return types.WithClaudeError(*claudeError, status)
 	}
 	maybeMarkClaudeRefusal(c, claudeResponse.StopReason)
 	if claudeInfo.Usage == nil {

@@ -574,7 +574,10 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 			info.FirstByteWatch.Stop()
 		}
 		logger.LogError(c, "do request failed: "+err.Error())
-		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
+		// No upstream HTTP response was received. Report a gateway failure,
+		// not an application 500 or a fabricated upstream status.
+		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeDoRequestFailed, http.StatusBadGateway,
+			types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
 	if resp == nil {
 		return nil, errors.New("resp is nil")

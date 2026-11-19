@@ -50,6 +50,31 @@ func claudeErrorTypeForStatus(status int) string {
 	}
 }
 
+// ClaudeErrorStatus classifies Claude error bodies delivered without a non-2xx
+// HTTP status, e.g. errors embedded in an otherwise successful response.
+func ClaudeErrorStatus(errorType string) int {
+	switch errorType {
+	case "invalid_request_error":
+		return http.StatusBadRequest
+	case "authentication_error":
+		return http.StatusUnauthorized
+	case "permission_error":
+		return http.StatusForbidden
+	case "not_found_error":
+		return http.StatusNotFound
+	case "request_too_large":
+		return http.StatusRequestEntityTooLarge
+	case "rate_limit_error":
+		return http.StatusTooManyRequests
+	case "overloaded_error":
+		return 529
+	case "api_error":
+		return http.StatusInternalServerError
+	default:
+		return http.StatusBadGateway
+	}
+}
+
 func protocolClaudeErrorType(value string, status int) string {
 	switch value {
 	case "invalid_request_error", "authentication_error", "permission_error", "not_found_error", "request_too_large", "rate_limit_error", "api_error", "overloaded_error":
