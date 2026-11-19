@@ -3,7 +3,7 @@ name: Build NEWAPI-QIQI image
 on:
   push:
     branches:
-      - main
+      - release/status-mapping-89-20261119
   workflow_dispatch:
 
 permissions:
@@ -48,10 +48,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=main
-            type=raw,value=local-riskfix-final-20260718
             type=raw,value=${{ steps.version.outputs.version }}
-            type=raw,value=sha-${{ steps.version.outputs.short_sha }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -68,6 +65,4 @@ jobs:
         run: |
           echo "### NEWAPI-QIQI image" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- ghcr.io/yizhixiaohaitun/newapi-qiqi:main" >> "$GITHUB_STEP_SUMMARY"
           echo "- ghcr.io/yizhixiaohaitun/newapi-qiqi:${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- ghcr.io/yizhixiaohaitun/newapi-qiqi:sha-${{ steps.version.outputs.short_sha }}" >> "$GITHUB_STEP_SUMMARY"
