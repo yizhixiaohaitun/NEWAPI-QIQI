@@ -152,6 +152,22 @@ func TestSanitizeFinalRelayError(t *testing.T) {
 	assert.Equal(t, types.ErrorCodeUpstreamResourceInsufficient, markedRaw.GetErrorCode())
 	assert.Contains(t, markedRaw.Error(), "upstream-example")
 
+	for _, tc := range []struct {
+		mapping string
+		status  int
+	}{
+		{`{"403":429}`, http.StatusTooManyRequests},
+		{`{"403":403}`, http.StatusForbidden},
+		{`{"403":503}`, http.StatusServiceUnavailable},
+	} {
+		mapped := newRawUpstreamResourceInsufficientError(http.StatusForbidden, raw)
+		ResetStatusCode(mapped, tc.mapping)
+		public := SanitizeFinalRelayError(mapped)
+		assert.Equal(t, tc.status, public.StatusCode)
+		assert.Equal(t, upstreamResourceInsufficientMessage, public.Error())
+		assert.NotContains(t, PublicRelayErrorLogContent(mapped), "upstream-example")
+	}
+
 	nonQuota := types.NewOpenAIError(errors.New("invalid API key"), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
 	assert.Same(t, nonQuota, SanitizeFinalRelayError(nonQuota))
 

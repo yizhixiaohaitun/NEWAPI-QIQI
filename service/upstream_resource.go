@@ -67,11 +67,15 @@ func SanitizeFinalRelayError(err *types.NewAPIError) *types.NewAPIError {
 		err.GetErrorCode() == types.ErrorCodePreConsumeTokenQuotaFailed {
 		return err
 	}
-	if err.GetErrorCode() == types.ErrorCodeUpstreamResourceInsufficient {
-		return NewUpstreamResourceInsufficientError()
-	}
-	if IsUpstreamResourceInsufficient(err.StatusCode, err.ErrorWithStatusCode()) {
-		return NewUpstreamResourceInsufficientError()
+	if err.GetErrorCode() == types.ErrorCodeUpstreamResourceInsufficient ||
+		IsUpstreamResourceInsufficient(err.StatusCode, err.ErrorWithStatusCode()) {
+		public := NewUpstreamResourceInsufficientError()
+		// Redact the provider's billing details without undoing the channel's
+		// explicit status mapping (including a configured identity mapping).
+		if err.OriginalStatusCode != 0 {
+			public.StatusCode = err.StatusCode
+		}
+		return public
 	}
 
 	// Some adaptors keep a short Err while retaining the provider's nested
