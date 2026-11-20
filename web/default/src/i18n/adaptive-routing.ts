@@ -9,6 +9,9 @@ export const adaptiveRoutingTranslations = {
       'Among channels with the same priority, recent upstream failures reduce traffic while retaining a small amount for probing. Traffic returns gradually after recovery. Manual priorities and weights are unchanged. Short-term state is local to this process and resets on restart.',
   },
   zhCN: {
+    'Channel retry policy (JSON)': '渠道重试规则（JSON）',
+    'Channel retry policy help':
+      '粘贴 JSON 数组。添加流式重试时请保留已有报错规则。保存后立即对新请求生效，无需重启。',
     'Automatic traffic routing': '自动分流',
     'Among channels with the same priority, recent upstream failures reduce traffic while retaining a small amount for probing. Traffic returns gradually after recovery. Manual priorities and weights are unchanged. Short-term state is local to this process and resets on restart.':
       '仅对同优先级渠道生效：根据近期上游故障减少异常渠道流量，同时保留少量请求用于探测；上游恢复后逐步回流。手动设置的优先级和权重不会改变。短期状态仅保存在当前进程内，重启后重置，也不会在多节点间共享。',

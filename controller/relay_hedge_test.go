@@ -30,7 +30,7 @@ func TestStreamRaceFirstEffectiveOutputWins(t *testing.T) {
 	defer cancel()
 	primaryCtx, primaryCancel := context.WithCancelCause(ctx)
 	backupCtx, backupCancel := context.WithCancelCause(ctx)
-	r := &streamRace{ctx: ctx, cancel: [2]context.CancelCauseFunc{primaryCancel, backupCancel}, lanes: [2]context.Context{primaryCtx, backupCtx}}
+	r := &streamRace{ctx: ctx, started: 1, cancel: [maxStreamRaceLanes]context.CancelCauseFunc{primaryCancel, backupCancel}, lanes: [maxStreamRaceLanes]context.Context{primaryCtx, backupCtx}}
 	require.True(t, r.startBackup())
 	require.True(t, r.claim(2))
 	require.ErrorIs(t, context.Cause(primaryCtx), relaycommon.ErrStreamRaceLost)
@@ -43,9 +43,9 @@ func TestStreamRaceBackupCanWinAfterPrimaryFinished(t *testing.T) {
 	backupCtx, backupCancel := context.WithCancelCause(context.Background())
 	defer primaryCancel(nil)
 	defer backupCancel(nil)
-	r := &streamRace{ctx: context.Background(), cancel: [2]context.CancelCauseFunc{primaryCancel, backupCancel}, lanes: [2]context.Context{primaryCtx, backupCtx}}
+	r := &streamRace{ctx: context.Background(), started: 1, cancel: [maxStreamRaceLanes]context.CancelCauseFunc{primaryCancel, backupCancel}, lanes: [maxStreamRaceLanes]context.Context{primaryCtx, backupCtx}}
 	require.True(t, r.startBackup())
-	r.primaryDone = true
+	r.done[0] = true
 	require.True(t, r.claim(2))
 	require.ErrorIs(t, context.Cause(primaryCtx), relaycommon.ErrStreamRaceLost)
 }
@@ -55,8 +55,8 @@ func TestStreamRaceDoesNotStartAfterPrimaryFinished(t *testing.T) {
 	defer cancel()
 	primaryCtx, primaryCancel := context.WithCancelCause(ctx)
 	backupCtx, backupCancel := context.WithCancelCause(ctx)
-	r := &streamRace{ctx: ctx, cancel: [2]context.CancelCauseFunc{primaryCancel, backupCancel}, lanes: [2]context.Context{primaryCtx, backupCtx}}
-	r.primaryDone = true
+	r := &streamRace{ctx: ctx, started: 1, cancel: [maxStreamRaceLanes]context.CancelCauseFunc{primaryCancel, backupCancel}, lanes: [maxStreamRaceLanes]context.Context{primaryCtx, backupCtx}}
+	r.done[0] = true
 	require.False(t, r.startBackup())
 	require.False(t, r.claim(2))
 	require.Nil(t, context.Cause(primaryCtx))
@@ -74,8 +74,16 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 	oldPing := *operation_setting.GetGeneralSetting()
 	oldRetryStatuses := operation_setting.AutomaticRetryStatusCodesToString()
 	oldGlobal := *model_setting.GetGlobalSettings()
+	common.OptionMapRWMutex.Lock()
+	oldOptions := common.OptionMap
+	common.OptionMap = make(map[string]string)
+	common.OptionMapRWMutex.Unlock()
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = oldDB, oldLogDB
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = oldOptions
+		common.OptionMapRWMutex.Unlock()
+		require.NoError(t, operation_setting.SetChannelRetryPolicy(operation_setting.DefaultChannelRetryPolicy))
 		common.SetDatabaseTypes(oldMain, oldLogType)
 		common.MemoryCacheEnabled, common.RedisEnabled, common.BatchUpdateEnabled = oldCache, oldRedis, oldBatch
 		common.RetryTimes, constant.CountToken, common.LogConsumeEnabled, constant.ErrorLogEnabled = oldRetry, oldCount, oldLog, oldError
@@ -88,7 +96,7 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 	})
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	db := openRequestCompatibilitySQLite(t, ":memory:")
-	require.NoError(t, db.AutoMigrate(&model.Ability{}, &model.Channel{}, &model.User{}, &model.Token{}, &model.Log{}, &model.ChannelPurityGroup{}, &model.ChannelPurityMember{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.Ability{}, &model.Channel{}, &model.User{}, &model.Token{}, &model.Log{}, &model.ChannelPurityGroup{}, &model.ChannelPurityMember{}))
 	model.DB, model.LOG_DB = db, db
 	common.MemoryCacheEnabled, common.RedisEnabled, common.BatchUpdateEnabled = false, false, false
 	common.RetryTimes, constant.CountToken, common.LogConsumeEnabled, constant.ErrorLogEnabled = 5, false, true, false
@@ -121,9 +129,15 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 		{"no_retry_budget", 0, false, 429, false}, {"committed_error", 1, false, 200, false},
 		{"request_deadline_cancels_both", 0, true, 500, false},
 		{"upstream_gateway_timeout", 0, false, 504, false},
+		{"json_same_channel_wins", 2, true, 200, false},
+		{"json_next_channel_wins", 3, true, 200, true},
+		{"json_budget_only_allows_same_channel", 1, true, 200, false},
+		{"json_zero_disables_startup_setting", 1, false, 200, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const primaryID, backupID, fallbackID = 983, 984, 985
+			sameChannel := strings.HasPrefix(tc.name, "json_") && tc.backup
+			var primaryRequests atomic.Int32
 			var calls [3]atomic.Int32
 			var bodies [3]atomic.Pointer[string]
 			started := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
@@ -131,8 +145,15 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 			canceled := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 			defer cancel()
-			makeUpstream := func(lane int) *httptest.Server {
+			makeUpstream := func(endpoint int) *httptest.Server {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					lane := endpoint
+					if sameChannel && endpoint == 0 && primaryRequests.Add(1) > 1 {
+						lane = 1
+					}
+					if sameChannel && endpoint == 1 {
+						lane = 2
+					}
 					if calls[lane].Add(1) != 1 {
 						w.WriteHeader(500)
 						return
@@ -169,6 +190,39 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 						}
 					}
 					switch tc.name {
+					case "json_same_channel_wins":
+						if lane == 0 {
+							<-r.Context().Done()
+							close(canceled[lane])
+							return
+						}
+					case "json_next_channel_wins":
+						if lane < 2 {
+							<-r.Context().Done()
+							close(canceled[lane])
+							return
+						}
+						wait(started[0])
+						wait(started[1])
+					case "json_budget_only_allows_same_channel":
+						if lane == 0 {
+							wait(started[1])
+							select {
+							case <-time.After(180 * time.Millisecond):
+							case <-r.Context().Done():
+								return
+							}
+						} else {
+							<-r.Context().Done()
+							close(canceled[lane])
+							return
+						}
+					case "json_zero_disables_startup_setting":
+						select {
+						case <-time.After(140 * time.Millisecond):
+						case <-r.Context().Done():
+							return
+						}
 					case "primary_output_timeout_backup_rate_limit":
 						if lane == 0 {
 							<-r.Context().Done()
@@ -247,6 +301,19 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 			case "no_retry_budget":
 				common.RetryTimes = 0
 			}
+			policy := operation_setting.DefaultChannelRetryPolicy
+			if sameChannel {
+				constant.StreamHedgeDelayMS = 0
+				policy = `[{"stream_hedge":{"delay_ms":70,"retry_same_channel_first":true}}]`
+			}
+			if tc.name == "json_budget_only_allows_same_channel" {
+				common.RetryTimes = 1
+			}
+			if tc.name == "json_zero_disables_startup_setting" {
+				policy = `[{"stream_hedge":{"delay_ms":0}}]`
+			}
+			// The controller uses the freshly saved snapshot in the same process.
+			require.NoError(t, model.UpdateOption(operation_setting.ChannelRetryPolicyOption, policy))
 			require.NoError(t, db.Exec("DELETE FROM channels").Error)
 			require.NoError(t, db.Exec("DELETE FROM abilities").Error)
 			require.NoError(t, db.Exec("DELETE FROM logs").Error)
@@ -317,8 +384,13 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 			case "client_cancels", "request_deadline_cancels_both":
 				waitCanceled(0)
 				waitCanceled(1)
-			case "backup_wins", "primary_output_timeout_backup_rate_limit":
+			case "backup_wins", "primary_output_timeout_backup_rate_limit", "json_same_channel_wins":
 				waitCanceled(0)
+			case "json_next_channel_wins":
+				waitCanceled(0)
+				waitCanceled(1)
+			case "json_budget_only_allows_same_channel":
+				waitCanceled(1)
 			}
 			var logs []model.Log
 			require.NoError(t, db.Where("type = ?", model.LogTypeConsume).Find(&logs).Error)
@@ -342,7 +414,11 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 					require.Empty(t, logs)
 				} else {
 					require.Len(t, logs, 1)
-					require.Equal(t, primaryID+tc.winner-1, logs[0].ChannelId)
+					wantChannelID := primaryID + tc.winner - 1
+					if sameChannel && tc.winner > 1 {
+						wantChannelID--
+					}
+					require.Equal(t, wantChannelID, logs[0].ChannelId)
 				}
 			}
 		})

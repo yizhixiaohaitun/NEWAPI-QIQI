@@ -41,3 +41,37 @@ func TestChannelRetryPolicyValidationAndFirstMatch(t *testing.T) {
 	require.NoError(t, SetChannelRetryPolicy(DefaultChannelRetryPolicy))
 	check(7, 429, "rate_limit", "Server is BUSY NOW", false, false)
 }
+
+func TestChannelRetryPolicyStreamHedge(t *testing.T) {
+	previous := channelRetryPolicy.Load()
+	t.Cleanup(func() { channelRetryPolicy.Store(previous) })
+	assertHedge := func(delay int, same, configured bool) {
+		t.Helper()
+		gotDelay, gotSame, gotConfigured := GetChannelRetryStreamHedge()
+		require.Equal(t, delay, gotDelay)
+		require.Equal(t, same, gotSame)
+		require.Equal(t, configured, gotConfigured)
+	}
+	require.NoError(t, SetChannelRetryPolicy(`[{"status":429,"action":"stop"},{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true}},{"status":429,"action":"retry"}]`))
+	assertHedge(15000, true, true)
+	retry, matched := MatchChannelRetryPolicy(1, 429, "", "")
+	require.True(t, matched)
+	require.False(t, retry)
+	for _, invalid := range []string{
+		`[{"stream_hedge":null}]`, `[{"stream_hedge":{}}]`, `[{"stream_hedge":{"delay_ms":null}}]`,
+		`[{"stream_hedge":{"delay_ms":"15000"}}]`, `[{"stream_hedge":{"delay_ms":15.1}}]`,
+		`[{"stream_hedge":{"delay_ms":-1}}]`, `[{"stream_hedge":{"delay_ms":300001}}]`,
+		`[{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":null}}]`,
+		`[{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":"true"}}]`,
+		`[{"stream_hedge":{"delay_ms":15000,"unknown":true}}]`,
+		`[{"stream_hedge":{"delay_ms":15000},"status":429}]`,
+		`[{"stream_hedge":{"delay_ms":15000}},{"stream_hedge":{"delay_ms":0}}]`,
+	} {
+		require.Error(t, SetChannelRetryPolicy(invalid), invalid)
+		assertHedge(15000, true, true)
+	}
+	require.NoError(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":0}}]`))
+	assertHedge(0, false, true)
+	require.NoError(t, SetChannelRetryPolicy(`[]`))
+	assertHedge(0, false, false)
+}

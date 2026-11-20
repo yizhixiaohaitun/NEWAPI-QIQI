@@ -25,24 +25,31 @@ import (
 
 // Only the winner may touch the real response writer. Both the timer and
 // protocol callbacks arbitrate under the same lock, independently of I/O.
+const maxStreamRaceLanes = 3
+
 type streamRace struct {
-	mu            sync.Mutex
-	ctx           context.Context
-	cancel        [2]context.CancelCauseFunc
-	lanes         [2]context.Context
-	winner        int // 0 = unclaimed, 1 = primary, 2 = backup
-	primaryDone   bool
-	backupStarted bool
+	mu      sync.Mutex
+	ctx     context.Context
+	cancel  [maxStreamRaceLanes]context.CancelCauseFunc
+	lanes   [maxStreamRaceLanes]context.Context
+	winner  int // 0 = unclaimed; lanes are one-based
+	started int // starts at 1 for the original request
+	done    [maxStreamRaceLanes]bool
 }
 
 func (r *streamRace) startBackup() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.backupStarted || r.winner != 0 || r.primaryDone || r.ctx.Err() != nil {
+	if r.started >= maxStreamRaceLanes || r.winner != 0 || r.ctx.Err() != nil {
 		return false
 	}
-	r.backupStarted = true
-	return true
+	for lane := 0; lane < r.started; lane++ {
+		if !r.done[lane] && r.lanes[lane].Err() == nil {
+			r.started++
+			return true
+		}
+	}
+	return false
 }
 
 func (r *streamRace) claim(lane int) bool {
@@ -51,11 +58,15 @@ func (r *streamRace) claim(lane int) bool {
 	if r.winner != 0 {
 		return r.winner == lane
 	}
-	if r.ctx.Err() != nil || r.lanes[lane-1].Err() != nil || (lane == 2 && !r.backupStarted) {
+	if lane > r.started || r.ctx.Err() != nil || r.lanes[lane-1].Err() != nil {
 		return false
 	}
 	r.winner = lane
-	r.cancel[2-lane](relaycommon.ErrStreamRaceLost)
+	for i, cancel := range r.cancel {
+		if i != lane-1 && cancel != nil {
+			cancel(relaycommon.ErrStreamRaceLost)
+		}
+	}
 	return true
 }
 
@@ -240,10 +251,10 @@ func (a *streamRaceAttempt) run(r *streamRace, lane int, ctx context.Context) {
 	a.info.DeferStreamSettlement = nil
 }
 
-// A nil attempt means the ordinary relay path should run. A non-nil backup
-// channel tells the caller to account for it in the shared retry budget.
-func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model.Channel, budget context.Context, storage common.BodyStorage, wait time.Duration) (*streamRaceAttempt, *model.Channel) {
-	if wait <= 0 || !canRaceStream(c, info, primary) || storage.IsDisk() || storage.Size() > 1<<20 {
+// A nil attempt means the ordinary relay path should run. The returned
+// backups are actual attempts, each counted against the shared retry budget.
+func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model.Channel, budget context.Context, storage common.BodyStorage, wait time.Duration, sameChannelFirst bool, retries int) (*streamRaceAttempt, []*model.Channel) {
+	if !canRaceStream(c, info, primary) || storage.IsDisk() || storage.Size() > 1<<20 {
 		return nil, nil
 	}
 	body, err := storage.Bytes()
@@ -258,72 +269,103 @@ func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model
 		return nil, nil
 	}
 
+	count := 2
+	if sameChannelFirst && retries > 1 {
+		count = 3
+	}
+	ctx, cancel := context.WithCancel(budget)
+	r := &streamRace{ctx: ctx, started: 1}
+	var attempts [maxStreamRaceLanes]*streamRaceAttempt
 	header, status := c.Writer.Header(), c.Writer.Status()
-	a := newStreamRaceAttempt(c, info, c.Writer, header, status, body)
-	b := newStreamRaceAttempt(c, info, c.Writer, header, status, body)
-	a.channel = primary
-	ctxA, cancelA := context.WithCancelCause(budget)
-	ctxB, cancelB := context.WithCancelCause(budget)
-	r := &streamRace{ctx: budget, cancel: [2]context.CancelCauseFunc{cancelA, cancelB}, lanes: [2]context.Context{ctxA, ctxB}}
-	primaryDone, backupDone := make(chan struct{}), make(chan struct{})
+	for i := range count {
+		attempts[i] = newStreamRaceAttempt(c, info, c.Writer, header, status, body)
+		r.lanes[i], r.cancel[i] = context.WithCancelCause(ctx)
+	}
+	attempts[0].channel = primary
+	completed := make(chan struct{}, count)
+	var workers sync.WaitGroup
+	var runnerPanic any
+	var panicOnce sync.Once
+	launch := func(i int) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			defer func() {
+				if p := recover(); p != nil {
+					panicOnce.Do(func() { runnerPanic = p })
+					cancel()
+				}
+				r.mu.Lock()
+				r.done[i] = true
+				r.mu.Unlock()
+				completed <- struct{}{}
+			}()
+			attempts[i].run(r, i+1, r.lanes[i])
+		}()
+	}
+	defer func() { cancel(); workers.Wait() }()
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
-	var backupPanic any
-	go func() {
-		defer close(backupDone)
-		defer func() { backupPanic = recover() }()
+	launch(0)
+	running := 1
+	timerC := timer.C
+	for running > 0 {
 		select {
-		case <-primaryDone:
-			return
-		case <-ctxB.Done():
-			return
-		case <-timer.C:
+		case <-ctx.Done():
+			running = 0
+		case <-completed:
+			running--
+			r.mu.Lock()
+			won := r.winner != 0
+			r.mu.Unlock()
+			if won {
+				timer.Stop()
+				timerC = nil
+			}
+		case <-timerC:
+			timerC = nil
+			i := r.started
+			if r.lanes[i].Err() != nil {
+				continue
+			}
+			candidate := attempts[i]
+			channel := primary
+			if !sameChannelFirst || i != 1 {
+				channel, err = model.GetRandomSatisfiedChannelExcluding(group, info.OriginModelName, 0, c.Request.URL.Path, map[int]bool{primary.Id: true})
+				if err != nil || channel == nil || !nativeRaceStream(&candidate.info, channel.Id, channel.Type) {
+					continue
+				}
+				candidate.c.Set(string(constant.ContextKeyChannelOrganization), "")
+				candidate.c.Set(string(constant.ContextKeyChannelMultiKeyIndex), 0)
+				if err := middleware.SetupContextForSelectedChannel(candidate.c, channel, candidate.info.OriginModelName); err != nil {
+					continue
+				}
+			}
+			// The same-channel attempt reuses the selected channel configuration
+			// captured before the primary began, including its existing key.
+			if !r.startBackup() {
+				continue
+			}
+			candidate.channel = channel
+			candidate.info.RetryIndex += i
+			service.MarkChannelAffinityUsed(candidate.c, group, channel.Id)
+			logger.LogInfo(candidate.c, "stream backup started")
+			launch(i)
+			running++
+			if i+1 < count {
+				timer.Reset(wait)
+				timerC = timer.C
+			}
 		}
-		if ctxB.Err() != nil {
-			return
-		}
-		channel, err := model.GetRandomSatisfiedChannelExcluding(group, b.info.OriginModelName, 0, b.c.Request.URL.Path, map[int]bool{primary.Id: true})
-		if err != nil || channel == nil || channel.Type != primary.Type {
-			return
-		}
-		b.c.Set(string(constant.ContextKeyChannelOrganization), "")
-		b.c.Set(string(constant.ContextKeyChannelMultiKeyIndex), 0)
-		// SetupContextForSelectedChannel only sets provider-specific values for
-		// the selected type; clear the primary lane's type-specific leftovers.
-		for _, key := range []string{"api_version", "region", "plugin", "bot_id"} {
-			b.c.Set(key, "")
-		}
-		if err := middleware.SetupContextForSelectedChannel(b.c, channel, b.info.OriginModelName); err != nil {
-			return
-		}
-		if !nativeRaceStream(&b.info, channel.Id, channel.Type) || !r.startBackup() {
-			common.CleanupBodyStorage(b.c)
-			return
-		}
-		b.channel = channel
-		b.info.RetryIndex++
-		service.MarkChannelAffinityUsed(b.c, group, channel.Id)
-		logger.LogInfo(b.c, "stream backup started")
-		b.run(r, 2, ctxB)
-	}()
-	defer func() {
-		cancelA(nil)
-		cancelB(nil)
-		<-backupDone
-	}()
-	a.run(r, 1, ctxA)
-	r.mu.Lock()
-	r.primaryDone = true
-	r.mu.Unlock()
-	close(primaryDone)
-	<-backupDone
-	if backupPanic != nil {
-		panic(backupPanic)
+	}
+	workers.Wait()
+	if runnerPanic != nil {
+		panic(runnerPanic)
 	}
 
-	result := a
-	if r.winner == 2 {
-		result = b
+	result := attempts[0]
+	if r.winner != 0 {
+		result = attempts[r.winner-1]
 	}
 	if r.winner == 0 && result.err == nil {
 		result.err = types.NewErrorWithStatusCode(errors.New("upstream stream ended before effective output"), types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
@@ -333,8 +375,12 @@ func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model
 			c.Set(k, v)
 		}
 	}
-	if r.backupStarted {
-		addUsedChannel(c, b.channel.Id)
+	var backups []*model.Channel
+	for _, attempt := range attempts[1:r.started] {
+		backups = append(backups, attempt.channel)
+		addUsedChannel(c, attempt.channel.Id)
+	}
+	if len(backups) != 0 {
 		addUsed := c.GetStringSlice("use_channel")
 		result.c.Set("use_channel", addUsed)
 		if r.winner == 0 {
@@ -350,5 +396,5 @@ func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model
 	if r.winner != 0 && result.err == nil && result.settle != nil {
 		result.settle(info)
 	}
-	return result, b.channel
+	return result, backups
 }

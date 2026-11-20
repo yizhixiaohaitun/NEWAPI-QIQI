@@ -7,6 +7,7 @@ test('schema and option parsing preserve both switch states', async () => {
     await import('./routing-reliability-form')
   const defaults = {
     RetryTimes: 0,
+    ChannelRetryPolicy: '[]',
     ChannelDisableThreshold: '',
     AutomaticDisableChannelEnabled: false,
     AutomaticEnableChannelEnabled: false,
@@ -19,6 +20,11 @@ test('schema and option parsing preserve both switch states', async () => {
     'monitor_setting.channel_test_mode': 'scheduled_all' as const,
     'adaptive_routing_setting.enabled': false,
   }
+  const policy = '[{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true}}]'
+  const loadedPolicy = getOptionValue([{ key: 'ChannelRetryPolicy', value: policy }], defaults)
+  const policyForm = buildFormDefaults(loadedPolicy)
+  expect(normalizeFormValues(routingReliabilitySchema.parse(policyForm)).ChannelRetryPolicy).toBe(policy)
+  expect(routingReliabilitySchema.safeParse({ ...policyForm, ChannelRetryPolicy: '{}' }).success).toBe(false)
   for (const enabled of [false, true]) {
     const loaded = getOptionValue(
       [{ key: 'adaptive_routing_setting.enabled', value: String(enabled) }],

@@ -67,6 +67,7 @@ const defaultModelSettings: ModelSettings = {
   'group_ratio_setting.group_special_usable_group': '{}',
   'adaptive_routing_setting.enabled': false,
   RetryTimes: 0,
+  ChannelRetryPolicy: '[]',
   ChannelDisableThreshold: '',
   AutomaticDisableChannelEnabled: false,
   AutomaticEnableChannelEnabled: false,

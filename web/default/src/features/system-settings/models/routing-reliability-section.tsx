@@ -220,6 +220,32 @@ export function RoutingReliabilitySection({
             </div>
             <FormField
               control={form.control}
+              name='ChannelRetryPolicy'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    {t('Channel retry policy (JSON)')}
+                  </FormLabel>
+                  <FormControl>
+                    <Textarea
+                      rows={5}
+                      className='font-mono'
+                      spellCheck={false}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Channel retry policy help',
+                      'Paste a JSON array. Keep any existing error rules when adding a stream retry entry. Saved changes apply to new requests without restarting.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
               name='AutomaticRetryKeywords'
               render={({ field }) => (
                 <FormItem>
