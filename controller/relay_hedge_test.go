@@ -72,6 +72,7 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 	oldHedge, oldIdle := constant.StreamHedgeDelayMS, constant.StreamingTimeout
 	oldRatios, oldPrices := ratio_setting.GroupRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
 	oldPing := *operation_setting.GetGeneralSetting()
+	oldRetryStatuses := operation_setting.AutomaticRetryStatusCodesToString()
 	oldGlobal := *model_setting.GetGlobalSettings()
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = oldDB, oldLogDB
@@ -80,6 +81,7 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 		common.RetryTimes, constant.CountToken, common.LogConsumeEnabled, constant.ErrorLogEnabled = oldRetry, oldCount, oldLog, oldError
 		constant.StreamHedgeDelayMS, constant.StreamingTimeout = oldHedge, oldIdle
 		*operation_setting.GetGeneralSetting() = oldPing
+		require.NoError(t, operation_setting.AutomaticRetryStatusCodesFromString(oldRetryStatuses))
 		*model_setting.GetGlobalSettings() = oldGlobal
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldRatios))
 		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(oldPrices))
@@ -91,6 +93,7 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 	common.MemoryCacheEnabled, common.RedisEnabled, common.BatchUpdateEnabled = false, false, false
 	common.RetryTimes, constant.CountToken, common.LogConsumeEnabled, constant.ErrorLogEnabled = 5, false, true, false
 	constant.StreamingTimeout = 5
+	require.NoError(t, operation_setting.AutomaticRetryStatusCodesFromString("429,502"))
 	operation_setting.GetGeneralSetting().PingIntervalEnabled = true
 	operation_setting.GetGeneralSetting().PingIntervalSeconds = 1
 	model_setting.GetGlobalSettings().AutoChatToResponsesEnabled = false
@@ -101,24 +104,31 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 
 	const payload = `{"model":"claude-opus-5-5","stream":true,"max_tokens":64,"messages":[{"role":"user","content":"replayed body"}]}`
 	for _, tc := range []struct {
-		name   string
-		winner int
-		backup bool
-		status int
+		name     string
+		winner   int
+		backup   bool
+		status   int
+		fallback bool
 	}{
-		{"backup_wins", 2, true, 200}, {"primary_wins_after_backup_error", 1, true, 200},
-		{"backup_wins_after_primary_empty", 2, true, 200}, {"both_empty", 0, true, 502},
-		{"effective_before_threshold", 1, false, 200}, {"disabled", 1, false, 200},
-		{"pinned", 1, false, 200}, {"client_cancels", 0, true, 499},
-		{"primary_empty_before_threshold", 0, false, 502},
+		{"backup_wins", 2, true, 200, false}, {"primary_wins_after_backup_error", 1, true, 200, false},
+		{"backup_wins_after_primary_empty", 2, true, 200, false}, {"both_empty", 0, true, 502, false},
+		{"effective_before_threshold", 1, false, 200, false}, {"disabled", 1, false, 200, false},
+		{"pinned", 1, false, 200, false}, {"client_cancels", 0, true, 499, false},
+		{"primary_empty_before_threshold", 0, false, 502, false},
+		{"primary_rate_limit_before_threshold", 2, true, 200, false},
+		{"both_rate_limited", 3, true, 200, true}, {"retry_budget_spent_by_backup", 0, true, 429, false},
+		{"primary_output_timeout_backup_rate_limit", 3, true, 200, true},
+		{"no_retry_budget", 0, false, 429, false}, {"committed_error", 1, false, 200, false},
+		{"request_deadline_cancels_both", 0, true, 500, false},
+		{"upstream_gateway_timeout", 0, false, 504, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			const primaryID, backupID = 983, 984
-			var calls [2]atomic.Int32
-			var bodies [2]atomic.Pointer[string]
-			started := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
-			finished := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
-			canceled := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+			const primaryID, backupID, fallbackID = 983, 984, 985
+			var calls [3]atomic.Int32
+			var bodies [3]atomic.Pointer[string]
+			started := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
+			finished := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
+			canceled := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 			defer cancel()
 			makeUpstream := func(lane int) *httptest.Server {
@@ -131,7 +141,19 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 					body, _ := io.ReadAll(r.Body)
 					text := string(body)
 					bodies[lane].Store(&text)
-					label := []string{"primary", "backup"}[lane]
+					label := []string{"primary", "backup", "fallback"}[lane]
+					if tc.name == "upstream_gateway_timeout" {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusGatewayTimeout)
+						_, _ = io.WriteString(w, `{"type":"error","error":{"type":"api_error","message":"local gateway timeout"}}`)
+						return
+					}
+					if (tc.name == "primary_rate_limit_before_threshold" || tc.name == "no_retry_budget") && lane == 0 {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusTooManyRequests)
+						_, _ = io.WriteString(w, `{"type":"error","error":{"type":"rate_limit_error","message":"local rate limit"}}`)
+						return
+					}
 					w.Header().Set("Content-Type", "text/event-stream")
 					w.Header().Set(common.RequestIdKey, label+"-request-id")
 					send := func(data string) { _, _ = io.WriteString(w, "data: "+data+"\r\n\r\n"); w.(http.Flusher).Flush() }
@@ -147,10 +169,26 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 						}
 					}
 					switch tc.name {
+					case "primary_output_timeout_backup_rate_limit":
+						if lane == 0 {
+							<-r.Context().Done()
+							close(canceled[lane])
+							return
+						}
+						if lane == 1 {
+							send(`{"type":"error","error":{"type":"rate_limit_error","message":"local rate limit"}}`)
+							return
+						}
+					case "both_rate_limited", "retry_budget_spent_by_backup":
+						if lane < 2 {
+							wait(started[1])
+							send(`{"type":"error","error":{"type":"rate_limit_error","message":"local rate limit"}}`)
+							return
+						}
 					case "primary_empty_before_threshold":
 						send(`{"type":"message_stop"}`)
 						return
-					case "client_cancels":
+					case "client_cancels", "request_deadline_cancels_both":
 						wait(r.Context().Done())
 						<-r.Context().Done()
 						close(canceled[lane])
@@ -181,20 +219,33 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 						}
 					}
 					send(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"` + label + `-visible"}}`)
+					if tc.name == "committed_error" {
+						send(`{"type":"error","error":{"type":"rate_limit_error","message":"local rate limit"}}`)
+						return
+					}
 					send(`{"type":"content_block_stop","index":0}`)
 					send(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}`)
 					send(`{"type":"message_stop"}`)
 				}))
 			}
-			a, b := makeUpstream(0), makeUpstream(1)
+			a, b, third := makeUpstream(0), makeUpstream(1), makeUpstream(2)
 			defer a.Close()
 			defer b.Close()
+			defer third.Close()
 			constant.StreamHedgeDelayMS = 70
+			constant.StreamingTimeout = 5
+			common.RetryTimes = 5
 			switch tc.name {
+			case "primary_output_timeout_backup_rate_limit":
+				constant.StreamingTimeout = 1
 			case "disabled":
 				constant.StreamHedgeDelayMS = 0
-			case "effective_before_threshold", "primary_empty_before_threshold":
+			case "effective_before_threshold", "primary_empty_before_threshold", "primary_rate_limit_before_threshold", "committed_error", "upstream_gateway_timeout":
 				constant.StreamHedgeDelayMS = 2000
+			case "retry_budget_spent_by_backup":
+				common.RetryTimes = 1
+			case "no_retry_budget":
+				common.RetryTimes = 0
 			}
 			require.NoError(t, db.Exec("DELETE FROM channels").Error)
 			require.NoError(t, db.Exec("DELETE FROM abilities").Error)
@@ -202,6 +253,11 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 			high, low, weight := int64(10), int64(0), uint(1)
 			require.NoError(t, db.Create(&[]model.Channel{{Id: primaryID, Type: constant.ChannelTypeAnthropic, Name: "primary", Key: "key-a", BaseURL: &a.URL, Group: "hedge-test", Models: "claude-opus-5-5", Status: common.ChannelStatusEnabled, Priority: &high, Weight: &weight}, {Id: backupID, Type: constant.ChannelTypeAnthropic, Name: "backup", Key: "key-b", BaseURL: &b.URL, Group: "hedge-test", Models: "claude-opus-5-5", Status: common.ChannelStatusEnabled, Priority: &low, Weight: &weight}}).Error)
 			require.NoError(t, db.Create(&[]model.Ability{{Group: "hedge-test", Model: "claude-opus-5-5", ChannelId: primaryID, Enabled: true, Priority: &high, Weight: 1}, {Group: "hedge-test", Model: "claude-opus-5-5", ChannelId: backupID, Enabled: true, Priority: &low, Weight: 1}}).Error)
+			if tc.fallback || tc.name == "retry_budget_spent_by_backup" || tc.name == "committed_error" || tc.name == "request_deadline_cancels_both" {
+				last := int64(-1)
+				require.NoError(t, db.Create(&model.Channel{Id: fallbackID, Type: constant.ChannelTypeAnthropic, Name: "fallback", Key: "key-c", BaseURL: &third.URL, Group: "hedge-test", Models: "claude-opus-5-5", Status: common.ChannelStatusEnabled, Priority: &last, Weight: &weight}).Error)
+				require.NoError(t, db.Create(&model.Ability{Group: "hedge-test", Model: "claude-opus-5-5", ChannelId: fallbackID, Enabled: true, Priority: &last, Weight: 1}).Error)
+			}
 			service.InitHttpClient()
 			router := gin.New()
 			router.POST("/v1/messages", func(c *gin.Context) {
@@ -215,6 +271,9 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 				common.SetContextKey(c, constant.ContextKeyTokenKey, "hedge-test")
 				if tc.name == "pinned" {
 					common.SetContextKey(c, constant.ContextKeyTokenSpecificChannelId, "983")
+				}
+				if tc.name == "request_deadline_cancels_both" {
+					common.SetContextKey(c, constant.ContextKeyTokenUpstreamTimeout, 1)
 				}
 				c.Next()
 			}, middleware.Distribute(), func(c *gin.Context) { Relay(c, types.RelayFormatClaude) })
@@ -240,6 +299,12 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 			} else {
 				require.Zero(t, calls[1].Load())
 			}
+			if tc.fallback {
+				require.EqualValues(t, 1, calls[2].Load())
+				require.JSONEq(t, *bodies[0].Load(), *bodies[2].Load())
+			} else {
+				require.Zero(t, calls[2].Load())
+			}
 			waitCanceled := func(lane int) {
 				t.Helper()
 				select {
@@ -248,26 +313,37 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 					t.Fatal("upstream was not canceled")
 				}
 			}
-			if tc.name == "backup_wins" || tc.name == "client_cancels" {
+			switch tc.name {
+			case "client_cancels", "request_deadline_cancels_both":
 				waitCanceled(0)
-			}
-			if tc.name == "client_cancels" {
 				waitCanceled(1)
+			case "backup_wins", "primary_output_timeout_backup_rate_limit":
+				waitCanceled(0)
 			}
 			var logs []model.Log
 			require.NoError(t, db.Where("type = ?", model.LogTypeConsume).Find(&logs).Error)
 			if tc.winner == 0 {
-				require.NotContains(t, out.Header().Get("Content-Type"), "text/event-stream")
+				if tc.name != "no_retry_budget" { // The ordinary path does not use a private stream writer.
+					require.NotContains(t, out.Header().Get("Content-Type"), "text/event-stream")
+				}
 				require.NotContains(t, out.Body.String(), "-preamble")
 				require.Empty(t, logs)
 			} else {
-				label, loser := []string{"primary", "backup"}[tc.winner-1], []string{"backup", "primary"}[tc.winner-1]
+				label := []string{"primary", "backup", "fallback"}[tc.winner-1]
 				require.Contains(t, out.Header().Get("Content-Type"), "text/event-stream")
 				require.Equal(t, 1, strings.Count(out.Body.String(), label+"-preamble"))
 				require.Equal(t, 1, strings.Count(out.Body.String(), label+"-visible"))
-				require.NotContains(t, out.Body.String(), loser+"-preamble")
-				require.Len(t, logs, 1)
-				require.Equal(t, primaryID+tc.winner-1, logs[0].ChannelId)
+				for _, other := range []string{"primary", "backup", "fallback"} {
+					if other != label {
+						require.NotContains(t, out.Body.String(), other+"-preamble")
+					}
+				}
+				if tc.name == "committed_error" {
+					require.Empty(t, logs)
+				} else {
+					require.Len(t, logs, 1)
+					require.Equal(t, primaryID+tc.winner-1, logs[0].ChannelId)
+				}
 			}
 		})
 	}

@@ -137,6 +137,11 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - `relay/channel/claude/relay-claude.go#HandleClaudeResponseData`：OpenAI 格式调用上述转换；Claude 原生格式无减免配置时继续直接透传上游响应字节；配置固定输入减免时仅按下述公开 usage 规则同步计数，不修改正文或拒绝解释。
 - 回归入口：`service/relayconvert/internal/claude_messages/to_oai_chat_resp_test.go` 覆盖精确空拒绝、解释逐字保留且不重复、已有正文和普通结束；`relay/channel/claude/relay_claude_test.go` 从真实非流式 handler 覆盖 OpenAI 可见性与 Claude 原生字节不变。
 
+### Claude Opus 5.5 原生流并行重试
+
+- `controller/relay_hedge.go`：`STREAM_HEDGE_DELAY_MS` 默认关闭；启用且有重试额度时，同分组未提交有效输出的 Claude Opus 5.5 原生流最多启动一条延迟备用渠道。只发布最先产出有效内容的一路并取消另一路，备用消耗一格重试额度，与主路共用同一请求总时限。
+- `controller/relay.go`：初始并行阶段未提交时，普通可重试错误和单路有效输出等待超时可以在剩余预算内继续换渠道，排除该阶段已尝试的单 key 渠道；上游真实 HTTP 504、请求总超时、亲和及指定渠道仍沿用原有停止策略。已提交不重放。回归 `controller/relay_hedge_test.go`。
+
 ### 分组与渠道重试选择链路
 
 - `middleware/distributor.go#Distribute`：首次随机选择或渠道亲和命中时，在请求上下文记录实际 auto 分组；亲和命中同时记录配置索引及已访问分组。
