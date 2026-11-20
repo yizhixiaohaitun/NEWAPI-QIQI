@@ -320,8 +320,13 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
+		status := types.ClaudeErrorStatus(claudeError.Type)
+		// The race owns unpublished frames; leave pre-commit failures to the relay retry policy.
+		if info.ClaimStreamOutput != nil && !c.Writer.Written() {
+			return types.WithClaudeError(*claudeError, status)
+		}
 		preserveClaudeStreamError(c, info, claudeResponse, data)
-		return types.WithClaudeError(*claudeError, types.ClaudeErrorStatus(claudeError.Type), types.ErrOptionWithSkipRetry())
+		return types.WithClaudeError(*claudeError, status, types.ErrOptionWithSkipRetry())
 	}
 	if claudeStreamFrameUnsafe(&claudeResponse, data) {
 		commitClaudeUnsafeFrame(c, info)
