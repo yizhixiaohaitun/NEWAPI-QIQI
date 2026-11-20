@@ -227,8 +227,11 @@ func (a *streamRaceAttempt) run(r *streamRace, lane int, ctx context.Context) {
 	a.contextErr = ctx.Err()
 	if publishErr != nil {
 		a.err = types.NewError(publishErr, types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry())
-	} else if errors.Is(context.Cause(ctx), errRaceNoOutputTimeout) {
-		a.err = types.NewErrorWithStatusCode(errRaceNoOutputTimeout, types.ErrorCodeBadResponseBody, http.StatusGatewayTimeout, types.ErrOptionWithSkipRetry())
+	} else if errors.Is(context.Cause(ctx), errRaceNoOutputTimeout) ||
+		(!a.writer.selected && a.info.StreamStatus != nil && a.info.StreamStatus.EndReason == relaycommon.StreamEndReasonTimeout) {
+		// The scanner's idle timer may fire just before the lane's output
+		// timer. Before commitment either one is a local per-lane timeout.
+		a.err = types.NewErrorWithStatusCode(errRaceNoOutputTimeout, types.ErrorCodeStreamOutputTimeout, http.StatusGatewayTimeout)
 	} else if a.writer.overflow {
 		a.err = types.NewErrorWithStatusCode(errRacePreambleTooLarge, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
 	}
@@ -237,22 +240,22 @@ func (a *streamRaceAttempt) run(r *streamRace, lane int, ctx context.Context) {
 	a.info.DeferStreamSettlement = nil
 }
 
-// A nil result means that the ordinary relay path should run. The supplied
-// timer is created only after request state has been isolated.
-func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model.Channel, budget context.Context, storage common.BodyStorage, wait time.Duration) *streamRaceAttempt {
+// A nil attempt means the ordinary relay path should run. A non-nil backup
+// channel tells the caller to account for it in the shared retry budget.
+func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model.Channel, budget context.Context, storage common.BodyStorage, wait time.Duration) (*streamRaceAttempt, *model.Channel) {
 	if wait <= 0 || !canRaceStream(c, info, primary) || storage.IsDisk() || storage.Size() > 1<<20 {
-		return nil
+		return nil, nil
 	}
 	body, err := storage.Bytes()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	group := info.UsingGroup
 	if autoGroup := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); autoGroup != "" {
 		group = autoGroup
 	}
 	if group == "" || group == "auto" {
-		return nil
+		return nil, nil
 	}
 
 	header, status := c.Writer.Header(), c.Writer.Status()
@@ -347,5 +350,5 @@ func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model
 	if r.winner != 0 && result.err == nil && result.settle != nil {
 		result.settle(info)
 	}
-	return result
+	return result, b.channel
 }

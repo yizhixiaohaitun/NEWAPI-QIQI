@@ -235,8 +235,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		// single request-wide deadline above. Idle stream cutoffs can therefore
 		// cancel the active real upstream without resetting the total budget.
 		var attempt *streamRaceAttempt
-		if retryParam.GetRetry() == 0 && constant.StreamHedgeDelayMS > 0 {
-			attempt = raceRelayStream(c, relayInfo, channel, requestUpstreamCtx, bodyStorage, time.Duration(constant.StreamHedgeDelayMS)*time.Millisecond)
+		var racedBackup *model.Channel
+		if retryParam.GetRetry() == 0 && retryLimit > 0 && constant.StreamHedgeDelayMS > 0 {
+			attempt, racedBackup = raceRelayStream(c, relayInfo, channel, requestUpstreamCtx, bodyStorage, time.Duration(constant.StreamHedgeDelayMS)*time.Millisecond)
+			if racedBackup != nil {
+				// The delayed backup is the first retry, not extra budget.
+				retryParam.IncreaseRetry()
+			}
 		}
 		var upstreamContextErr error
 		var firstByteTimedOut bool
@@ -308,10 +313,17 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, isMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
-		if attempt != nil || !shouldRetry(c, newAPIError, retryLimit-retryParam.GetRetry()) {
+		if (attempt != nil && c.Writer.Written()) || !shouldRetry(c, newAPIError, retryLimit-retryParam.GetRetry()) {
 			break
 		}
-		markChannelFailedForRetry(c, channel)
+		if !isMultiKey {
+			service.MarkChannelFailed(c, channel.Id)
+		}
+		markChannelFailedForRetry(c, racedBackup)
+		if attempt != nil {
+			// Buffered frames from a failed lane were never sent downstream.
+			relayInfo.ResetFirstResponseTime()
+		}
 		if !retryParam.IncreaseRetry() {
 			break
 		}
@@ -468,6 +480,11 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 			}
 		}
 		return c != nil && c.GetBool("upstream_first_byte_timeout") && c.Writer != nil && !c.Writer.Written()
+	}
+	// A local no-output cutoff only cancels one hedge lane. A provider's
+	// ordinary HTTP 504 still follows the configured status-code policy.
+	if openaiErr.GetErrorCode() == types.ErrorCodeStreamOutputTimeout {
+		return c != nil && c.Writer != nil && !c.Writer.Written()
 	}
 	// A stream failure caught before any downstream output is safe to retry
 	// under the dedicated switch/budget, regardless of provider status/text.
