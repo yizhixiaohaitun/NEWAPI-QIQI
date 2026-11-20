@@ -3,7 +3,7 @@ name: Build NEWAPI-QIQI image
 on:
   push:
     branches:
-      - release/status-mapping-89-20261119
+      - release/stream-retry-89-20261120
   workflow_dispatch:
 
 permissions:
