@@ -96,6 +96,37 @@ func TestChannelErrorsRespectExplicitRetryStops(t *testing.T) {
 	assert.False(t, shouldRetry(ctx, skipChannelErr, 1), "explicit skip-retry must win over channel:error")
 }
 
+func TestChannelRetryPolicyDoesNotOverrideSafetyStops(t *testing.T) {
+	require.NoError(t, operation_setting.SetChannelRetryPolicy(`[{"message_contains":"policy test", "action":"retry"}]`))
+	t.Cleanup(func() {
+		require.NoError(t, operation_setting.SetChannelRetryPolicy(operation_setting.DefaultChannelRetryPolicy))
+	})
+	ordinary := types.NewErrorWithStatusCode(fmt.Errorf("policy test"), types.ErrorCodeInvalidRequest, http.StatusBadRequest)
+	newContext := func() *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		return c
+	}
+	assert.True(t, shouldRetry(newContext(), ordinary, 1))
+	assert.False(t, shouldRetry(newContext(), ordinary, 0))
+	pinned := newContext()
+	pinned.Set("specific_channel_id", 12)
+	assert.False(t, shouldRetry(pinned, ordinary, 1))
+	committed := newContext()
+	_, err := committed.Writer.Write([]byte("already sent"))
+	require.NoError(t, err)
+	assert.False(t, shouldRetry(committed, ordinary, 1))
+	cancelled := newContext()
+	reqCtx, cancel := context.WithCancel(cancelled.Request.Context())
+	cancel()
+	cancelled.Request = cancelled.Request.WithContext(reqCtx)
+	assert.False(t, shouldRetry(cancelled, ordinary, 1))
+	for _, code := range []types.ErrorCode{types.ErrorCodeBadResponseBody, types.ErrorCodeClientClosedRequest, types.ErrorCodeUpstreamTimeout} {
+		err := types.NewErrorWithStatusCode(fmt.Errorf("policy test"), code, http.StatusBadRequest)
+		assert.False(t, shouldRetry(newContext(), err, 1), code)
+	}
+}
+
 func TestUpstreamPreConsumeFailureRetriesWhenForbidden(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))

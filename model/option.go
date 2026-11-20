@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -28,6 +29,9 @@ func ParseRetryTimes(value string) (int, error) {
 	}
 	return retryTimes, nil
 }
+
+// Keep policy writes and the periodic database snapshot ordered in this process.
+var channelRetryPolicyUpdateMu sync.Mutex
 
 func AllOption() ([]*Option, error) {
 	var options []*Option
@@ -184,6 +188,7 @@ func InitOptionMap() {
 	common.OptionMap["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
 	common.OptionMap["AutomaticRetryStatusCodes"] = operation_setting.AutomaticRetryStatusCodesToString()
 	common.OptionMap["AutomaticRetryKeywords"] = operation_setting.AutomaticRetryKeywordsToString()
+	common.OptionMap[operation_setting.ChannelRetryPolicyOption] = operation_setting.DefaultChannelRetryPolicy
 	common.OptionMap["ExposeRatioEnabled"] = strconv.FormatBool(ratio_setting.IsExposeRatioEnabled())
 
 	// 自动添加所有注册的模型配置
@@ -197,8 +202,25 @@ func InitOptionMap() {
 }
 
 func loadOptionsFromDatabase() {
-	options, _ := AllOption()
+	channelRetryPolicyUpdateMu.Lock()
+	options, err := AllOption()
+	if err == nil {
+		policy := operation_setting.DefaultChannelRetryPolicy
+		for _, option := range options {
+			if option.Key == operation_setting.ChannelRetryPolicyOption {
+				policy = option.Value
+				break
+			}
+		}
+		if err := updateOptionMap(operation_setting.ChannelRetryPolicyOption, policy); err != nil {
+			common.SysLog("failed to update option map: " + err.Error())
+		}
+	}
+	channelRetryPolicyUpdateMu.Unlock()
 	for _, option := range options {
+		if option.Key == operation_setting.ChannelRetryPolicyOption {
+			continue
+		}
 		err := updateOptionMap(option.Key, option.Value)
 		if err != nil {
 			common.SysLog("failed to update option map: " + err.Error())
@@ -215,6 +237,13 @@ func SyncOptions(frequency int) {
 }
 
 func UpdateOption(key string, value string) error {
+	if key == operation_setting.ChannelRetryPolicyOption {
+		if err := operation_setting.ValidateChannelRetryPolicy(value); err != nil {
+			return err
+		}
+		channelRetryPolicyUpdateMu.Lock()
+		defer channelRetryPolicyUpdateMu.Unlock()
+	}
 	if key == "RetryTimes" {
 		if _, err := ParseRetryTimes(value); err != nil {
 			return err
@@ -244,6 +273,13 @@ func UpdateOption(key string, value string) error {
 func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
+	}
+	if value, ok := values[operation_setting.ChannelRetryPolicyOption]; ok {
+		if err := operation_setting.ValidateChannelRetryPolicy(value); err != nil {
+			return err
+		}
+		channelRetryPolicyUpdateMu.Lock()
+		defer channelRetryPolicyUpdateMu.Unlock()
 	}
 	if value, ok := values["RetryTimes"]; ok {
 		if _, err := ParseRetryTimes(value); err != nil {
@@ -286,6 +322,13 @@ func updateOptionMap(key string, value string) (err error) {
 
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
+	if key == operation_setting.ChannelRetryPolicyOption {
+		if err := operation_setting.SetChannelRetryPolicy(value); err != nil {
+			return err
+		}
+		common.OptionMap[key] = value
+		return nil
+	}
 	common.OptionMap[key] = value
 
 	// 检查是否是模型配置 - 使用更规范的方式处理

@@ -511,6 +511,18 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if types.IsChannelError(openaiErr) {
 		return true
 	}
+	// JSON policy overrides only ordinary error rules, never the dedicated
+	// timeout/stream/channel paths above or a response already sent downstream.
+	if c != nil && c.Writer != nil && !c.Writer.Written() &&
+		!operation_setting.IsAlwaysSkipRetryCode(openaiErr.GetErrorCode()) &&
+		!operation_setting.IsAlwaysSkipRetryStatusCode(openaiErr.StatusCode) {
+		if retry, matched := operation_setting.MatchChannelRetryPolicy(
+			common.GetContextKeyInt(c, constant.ContextKeyChannelId), openaiErr.StatusCode,
+			string(openaiErr.GetErrorCode()), openaiErr.Error(),
+		); matched {
+			return retry
+		}
+	}
 	// Admin-configured error text (e.g. the intermittent 400 "prompt was
 	// flagged") retries on another channel regardless of status code rules.
 	if operation_setting.ShouldRetryByErrorMessage(openaiErr.Error(), openaiErr.ToOpenAIError().Message) {

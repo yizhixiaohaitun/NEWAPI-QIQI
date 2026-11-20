@@ -45,6 +45,7 @@ func TestRelayHTTPRetryKeywordFlaggedPrompt400(t *testing.T) {
 		{"plural_overload_original_message", `{"error":{"message":"Our servers are currently overloaded","type":"new_api_error","code":"servers_is_overloaded"}}`, 503, false, true},
 		{"plural_overload_bad_request_final", `{"error":{"message":"busy","type":"new_api_error","code":"servers_is_overloaded"}}`, 400, false, false},
 		{"unrelated_server_error_final", `{"error":{"message":"busy","type":"new_api_error","code":"some_other_error"}}`, 503, false, false},
+		{"json_policy_hot_update", `{"error":{"message":"Channel temporarily busy","type":"invalid_request_error","code":"relay_busy"}}`, 400, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			oldMode := gin.Mode()
@@ -81,7 +82,7 @@ func TestRelayHTTPRetryKeywordFlaggedPrompt400(t *testing.T) {
 
 			common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 			db := openRequestCompatibilitySQLite(t, ":memory:")
-			require.NoError(t, db.AutoMigrate(&model.Ability{}, &model.Channel{}, &model.User{}, &model.Token{}, &model.Log{}, &model.ChannelPurityGroup{}, &model.ChannelPurityMember{}))
+			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.Ability{}, &model.Channel{}, &model.User{}, &model.Token{}, &model.Log{}, &model.ChannelPurityGroup{}, &model.ChannelPurityMember{}))
 			model.DB, model.LOG_DB = db, db
 			common.MemoryCacheEnabled, common.RedisEnabled, common.BatchUpdateEnabled = false, false, false
 			common.RetryTimes, constant.CountToken, common.LogConsumeEnabled = 2, false, true
@@ -136,6 +137,19 @@ func TestRelayHTTPRetryKeywordFlaggedPrompt400(t *testing.T) {
 			service.InitHttpClient()
 			finished := make(chan []string, 1)
 			router := gin.New()
+			if tc.name == "json_policy_hot_update" {
+				common.OptionMapRWMutex.Lock()
+				oldOptions := common.OptionMap
+				common.OptionMap = make(map[string]string)
+				common.OptionMapRWMutex.Unlock()
+				t.Cleanup(func() {
+					common.OptionMapRWMutex.Lock()
+					common.OptionMap = oldOptions
+					common.OptionMapRWMutex.Unlock()
+					require.NoError(t, operation_setting.SetChannelRetryPolicy(operation_setting.DefaultChannelRetryPolicy))
+				})
+				router.PUT("/api/option/", UpdateOption)
+			}
 			router.POST("/v1/chat/completions", func(c *gin.Context) {
 				common.SetContextKey(c, constant.ContextKeyUsingGroup, "retry-keyword-http")
 				common.SetContextKey(c, constant.ContextKeyTokenGroup, "retry-keyword-http")
@@ -154,33 +168,72 @@ func TestRelayHTTPRetryKeywordFlaggedPrompt400(t *testing.T) {
 			defer gateway.Close()
 			client := gateway.Client()
 			client.Timeout = 10 * time.Second
-			response, err := client.Post(gateway.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"gpt-6-astra","messages":[{"role":"user","content":"hi"}]}`))
-			require.NoError(t, err)
-			defer response.Body.Close()
-			bodyBytes, err := io.ReadAll(response.Body)
-			require.NoError(t, err)
-			body := string(bodyBytes)
-			var used []string
-			select {
-			case used = <-finished:
-			case <-time.After(10 * time.Second):
-				t.Fatal("local relay handler did not finish")
-			}
-			mu.Lock()
-			actual := append([]string(nil), calls...)
-			mu.Unlock()
+			checkRelay := func(wantRetry bool) {
+				t.Helper()
+				response, err := client.Post(gateway.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"gpt-6-astra","messages":[{"role":"user","content":"hi"}]}`))
+				require.NoError(t, err)
+				defer response.Body.Close()
+				bodyBytes, err := io.ReadAll(response.Body)
+				require.NoError(t, err)
+				body := string(bodyBytes)
+				var used []string
+				select {
+				case used = <-finished:
+				case <-time.After(10 * time.Second):
+					t.Fatal("local relay handler did not finish")
+				}
+				mu.Lock()
+				actual := append([]string(nil), calls...)
+				calls = nil
+				mu.Unlock()
 
-			if tc.wantRetry {
-				assert.Equal(t, http.StatusOK, response.StatusCode, body)
-				assert.Equal(t, []string{"A", "B"}, actual)
-				assert.Equal(t, []string{"893", "894"}, used)
-				assert.Contains(t, body, `"content":"hello"`)
-				assert.NotContains(t, body, "flagged")
+				if wantRetry {
+					assert.Equal(t, http.StatusOK, response.StatusCode, body)
+					assert.Equal(t, []string{"A", "B"}, actual)
+					assert.Equal(t, []string{"893", "894"}, used)
+					assert.Contains(t, body, `"content":"hello"`)
+					assert.NotContains(t, body, "flagged")
+					return
+				}
+				assert.Equal(t, tc.status, response.StatusCode, body)
+				assert.Equal(t, []string{"A"}, actual)
+				assert.Equal(t, []string{"893"}, used)
+			}
+			checkRelay(tc.wantRetry)
+			if tc.name != "json_policy_hot_update" {
 				return
 			}
-			assert.Equal(t, tc.status, response.StatusCode, body)
-			assert.Equal(t, []string{"A"}, actual)
-			assert.Equal(t, []string{"893"}, used)
+			putPolicy := func(rules string, wantSuccess bool, wantStored string) {
+				t.Helper()
+				body, err := common.Marshal(OptionUpdateRequest{Key: operation_setting.ChannelRetryPolicyOption, Value: rules})
+				require.NoError(t, err)
+				req, err := http.NewRequest(http.MethodPut, gateway.URL+"/api/option/", strings.NewReader(string(body)))
+				require.NoError(t, err)
+				req.Header.Set("Content-Type", "application/json")
+				res, err := client.Do(req)
+				require.NoError(t, err)
+				defer res.Body.Close()
+				var result struct{ Success bool }
+				require.NoError(t, common.DecodeJson(res.Body, &result))
+				require.Equal(t, wantSuccess, result.Success, rules)
+				var saved model.Option
+				require.NoError(t, db.First(&saved, "key = ?", operation_setting.ChannelRetryPolicyOption).Error)
+				require.Equal(t, wantStored, saved.Value)
+			}
+			unmatched := `[{"channel_id":894,"status":400,"action":"retry"}]`
+			putPolicy(unmatched, true, unmatched)
+			checkRelay(false)
+			retry := `[{"channel_id":893,"status":400,"error_code":"relay_busy","message_contains":"Temporarily BUSY","action":"retry"}]`
+			putPolicy(retry, true, retry)
+			checkRelay(true)
+			putPolicy(`[{"channelid":893,"status":400,"action":"stop"}]`, false, retry)
+			checkRelay(true)
+			stop := `[{"channel_id":893,"status":400,"action":"stop"}]`
+			operation_setting.AutomaticRetryKeywordsFromString("temporarily busy")
+			putPolicy(stop, true, stop)
+			checkRelay(false)
+			putPolicy(`[]`, true, `[]`)
+			checkRelay(true)
 		})
 	}
 }
