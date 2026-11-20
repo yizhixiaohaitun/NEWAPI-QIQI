@@ -76,6 +76,7 @@ const MODELS_SECTIONS = [
           'adaptive_routing_setting.enabled':
             settings['adaptive_routing_setting.enabled'],
           RetryTimes: settings.RetryTimes,
+          ChannelRetryPolicy: settings.ChannelRetryPolicy,
           ChannelDisableThreshold: settings.ChannelDisableThreshold,
           AutomaticDisableChannelEnabled:
             settings.AutomaticDisableChannelEnabled,

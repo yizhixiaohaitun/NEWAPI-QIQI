@@ -188,6 +188,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 	retryLimit := common.RetryTimes
+	hedgeDelayMS, hedgeSameChannelFirst, hedgeConfigured := operation_setting.GetChannelRetryStreamHedge()
+	if !hedgeConfigured {
+		hedgeDelayMS = constant.StreamHedgeDelayMS
+	}
 
 	// The token timeout is a deadline for the whole downstream request, not for
 	// each selected channel. Keep it outside the retry loop so retries consume
@@ -235,11 +239,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		// single request-wide deadline above. Idle stream cutoffs can therefore
 		// cancel the active real upstream without resetting the total budget.
 		var attempt *streamRaceAttempt
-		var racedBackup *model.Channel
-		if retryParam.GetRetry() == 0 && retryLimit > 0 && constant.StreamHedgeDelayMS > 0 {
-			attempt, racedBackup = raceRelayStream(c, relayInfo, channel, requestUpstreamCtx, bodyStorage, time.Duration(constant.StreamHedgeDelayMS)*time.Millisecond)
-			if racedBackup != nil {
-				// The delayed backup is the first retry, not extra budget.
+		var racedBackups []*model.Channel
+		if retryParam.GetRetry() == 0 && retryLimit > 0 && hedgeDelayMS > 0 {
+			attempt, racedBackups = raceRelayStream(c, relayInfo, channel, requestUpstreamCtx, bodyStorage,
+				time.Duration(hedgeDelayMS)*time.Millisecond, hedgeSameChannelFirst, retryLimit)
+			for range racedBackups {
+				// Each delayed attempt consumes a slot from the shared retry budget.
 				retryParam.IncreaseRetry()
 			}
 		}
@@ -319,7 +324,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if !isMultiKey {
 			service.MarkChannelFailed(c, channel.Id)
 		}
-		markChannelFailedForRetry(c, racedBackup)
+		for _, backup := range racedBackups {
+			if backup.Id != channel.Id {
+				markChannelFailedForRetry(c, backup)
+			}
+		}
 		if attempt != nil {
 			// Buffered frames from a failed lane were never sent downstream.
 			relayInfo.ResetFirstResponseTime()

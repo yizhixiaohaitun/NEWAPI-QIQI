@@ -207,6 +207,7 @@ export function ModelMutateDrawer({
       'grok.violation_deduction_enabled': false,
       'grok.violation_deduction_amount': 0,
       RetryTimes: 0,
+      ChannelRetryPolicy: '[]',
       ChannelDisableThreshold: '',
       AutomaticDisableChannelEnabled: false,
       AutomaticEnableChannelEnabled: false,

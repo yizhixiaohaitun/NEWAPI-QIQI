@@ -25,9 +25,16 @@ type channelRetryRule struct {
 
 // Only complete, validated snapshots are published. Requests never need the
 // option-map lock or a database lookup to make a retry decision.
-var channelRetryPolicy atomic.Pointer[[]channelRetryRule]
+type channelRetrySnapshot struct {
+	rules                 []channelRetryRule
+	hedgeDelayMS          int
+	hedgeSameChannelFirst bool
+	hedgeConfigured       bool
+}
 
-func parseChannelRetryPolicy(value string) ([]channelRetryRule, error) {
+var channelRetryPolicy atomic.Pointer[channelRetrySnapshot]
+
+func parseChannelRetryPolicy(value string) (*channelRetrySnapshot, error) {
 	if len(value) > 64*1024 {
 		return nil, fmt.Errorf("channel retry policy exceeds 64 KiB")
 	}
@@ -35,11 +42,39 @@ func parseChannelRetryPolicy(value string) ([]channelRetryRule, error) {
 	if common.GetJsonType([]byte(value)) != "array" || common.UnmarshalJsonStr(value, &items) != nil {
 		return nil, fmt.Errorf("channel retry policy must be a JSON array of rules")
 	}
-	if len(items) > maxChannelRetryRules {
+	if len(items) > maxChannelRetryRules+1 {
 		return nil, fmt.Errorf("channel retry policy accepts at most %d rules", maxChannelRetryRules)
 	}
-	rules := make([]channelRetryRule, 0, len(items))
+	snapshot := &channelRetrySnapshot{rules: make([]channelRetryRule, 0, len(items))}
 	for i, item := range items {
+		if raw, ok := item["stream_hedge"]; ok {
+			if len(item) != 1 || snapshot.hedgeConfigured {
+				return nil, fmt.Errorf("stream_hedge must be the only field of a single dedicated entry")
+			}
+			var fields map[string]json.RawMessage
+			if common.GetJsonType(raw) != "object" || common.Unmarshal(raw, &fields) != nil {
+				return nil, fmt.Errorf("stream_hedge must be an object")
+			}
+			for key, value := range fields {
+				var dst any
+				switch key {
+				case "delay_ms":
+					dst = &snapshot.hedgeDelayMS
+				case "retry_same_channel_first":
+					dst = &snapshot.hedgeSameChannelFirst
+				default:
+					return nil, fmt.Errorf("stream_hedge: unknown field %q", key)
+				}
+				if common.GetJsonType(value) == "null" || common.Unmarshal(value, dst) != nil {
+					return nil, fmt.Errorf("stream_hedge: invalid value for %q", key)
+				}
+			}
+			if _, ok := fields["delay_ms"]; !ok || snapshot.hedgeDelayMS < 0 || snapshot.hedgeDelayMS > 300_000 {
+				return nil, fmt.Errorf("stream_hedge.delay_ms must be an integer between 0 and 300000")
+			}
+			snapshot.hedgeConfigured = true
+			continue
+		}
 		var rule channelRetryRule
 		var action string
 		for key, raw := range item {
@@ -86,9 +121,12 @@ func parseChannelRetryPolicy(value string) ([]channelRetryRule, error) {
 		default:
 			return nil, fmt.Errorf("channel retry rule %d: action must be retry or stop", i+1)
 		}
-		rules = append(rules, rule)
+		snapshot.rules = append(snapshot.rules, rule)
 	}
-	return rules, nil
+	if len(snapshot.rules) > maxChannelRetryRules {
+		return nil, fmt.Errorf("channel retry policy accepts at most %d rules", maxChannelRetryRules)
+	}
+	return snapshot, nil
 }
 
 func ValidateChannelRetryPolicy(value string) error {
@@ -97,24 +135,33 @@ func ValidateChannelRetryPolicy(value string) error {
 }
 
 func SetChannelRetryPolicy(value string) error {
-	rules, err := parseChannelRetryPolicy(value)
+	snapshot, err := parseChannelRetryPolicy(value)
 	if err != nil {
 		return err
 	}
-	channelRetryPolicy.Store(&rules)
+	channelRetryPolicy.Store(snapshot)
 	return nil
+}
+
+// GetChannelRetryStreamHedge distinguishes an explicit zero from the absent
+// setting, which keeps the server's legacy startup behavior.
+func GetChannelRetryStreamHedge() (delayMS int, sameChannelFirst bool, configured bool) {
+	if snapshot := channelRetryPolicy.Load(); snapshot != nil {
+		return snapshot.hedgeDelayMS, snapshot.hedgeSameChannelFirst, snapshot.hedgeConfigured
+	}
+	return 0, false, false
 }
 
 // MatchChannelRetryPolicy returns the first matching action. All fields on a
 // rule must match. A miss leaves the original keyword/status policy in charge.
 func MatchChannelRetryPolicy(channelID, status int, errorCode, message string) (retry, matched bool) {
-	rules := channelRetryPolicy.Load()
-	if rules == nil || len(*rules) == 0 || status < 400 || status > 599 {
+	snapshot := channelRetryPolicy.Load()
+	if snapshot == nil || len(snapshot.rules) == 0 || status < 400 || status > 599 {
 		return false, false
 	}
 	errorCode = strings.ToLower(strings.TrimSpace(errorCode))
 	message = strings.ToLower(message)
-	for _, rule := range *rules {
+	for _, rule := range snapshot.rules {
 		if rule.channelID != 0 && rule.channelID != channelID || rule.status != 0 && rule.status != status ||
 			rule.errorCode != "" && rule.errorCode != errorCode || rule.messageContains != "" && !strings.Contains(message, rule.messageContains) {
 			continue

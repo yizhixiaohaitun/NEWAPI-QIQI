@@ -32,6 +32,13 @@ export const routingReliabilitySchema = z
   .object({
     adaptive_routing_setting: z.object({ enabled: z.boolean() }),
     RetryTimes: z.coerce.number().int().min(0),
+    ChannelRetryPolicy: z.string().refine((value) => {
+      try {
+        return Array.isArray(JSON.parse(value))
+      } catch {
+        return false
+      }
+    }, 'Enter a valid JSON array'),
     ChannelDisableThreshold: numericString,
     AutomaticDisableChannelEnabled: z.boolean(),
     AutomaticEnableChannelEnabled: z.boolean(),
@@ -83,6 +90,7 @@ export type RoutingReliabilitySectionProps = {
   defaultValues: {
     'adaptive_routing_setting.enabled': boolean
     RetryTimes: number
+    ChannelRetryPolicy: string
     ChannelDisableThreshold: string
     AutomaticDisableChannelEnabled: boolean
     AutomaticEnableChannelEnabled: boolean
@@ -103,6 +111,7 @@ function normalizeLineEndings(value: string) {
 export type NormalizedRoutingReliabilityValues = {
   'adaptive_routing_setting.enabled': boolean
   RetryTimes: number
+  ChannelRetryPolicy: string
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
@@ -134,6 +143,7 @@ export const buildFormDefaults = (
     enabled: defaults['adaptive_routing_setting.enabled'] ?? false,
   },
   RetryTimes: defaults.RetryTimes ?? 0,
+  ChannelRetryPolicy: (defaults.ChannelRetryPolicy ?? '[]').trim(),
   ChannelDisableThreshold: defaults.ChannelDisableThreshold ?? '',
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
@@ -162,6 +172,7 @@ export const normalizeDefaults = (
   'adaptive_routing_setting.enabled':
     defaults['adaptive_routing_setting.enabled'] ?? false,
   RetryTimes: defaults.RetryTimes ?? 0,
+  ChannelRetryPolicy: (defaults.ChannelRetryPolicy ?? '[]').trim(),
   ChannelDisableThreshold: (defaults.ChannelDisableThreshold ?? '').trim(),
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
@@ -191,6 +202,7 @@ export const normalizeFormValues = (
 ): NormalizedRoutingReliabilityValues => ({
   'adaptive_routing_setting.enabled': values.adaptive_routing_setting.enabled,
   RetryTimes: values.RetryTimes,
+  ChannelRetryPolicy: values.ChannelRetryPolicy.trim(),
   ChannelDisableThreshold: values.ChannelDisableThreshold.trim(),
   AutomaticDisableChannelEnabled: values.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: values.AutomaticEnableChannelEnabled,
