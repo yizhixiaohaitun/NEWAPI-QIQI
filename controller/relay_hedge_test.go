@@ -2,9 +2,11 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -144,6 +146,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 		{"legacy_fable_not_enabled", 1, false, 200, false},
 		{"json_parallel_fable", 3, true, 200, true},
 		{"json_parallel_claude_scope_alias", 3, true, 200, true},
+		{"json_parallel_all_claude_alias", 3, true, 200, true},
 		{"json_parallel_all_chat_alias", 3, true, 200, true},
 		{"json_parallel_all_responses_alias", 3, true, 200, true},
 		{"json_parallel_all_gemini_alias", 3, true, 200, true},
@@ -175,7 +178,15 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			started := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 			finished := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 			canceled := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
-			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+			testDeadline, delayMS := 4*time.Second, 160
+			// Optional full-delay validation with the exact customer configuration.
+			realDelay := allProtocols && os.Getenv("NEWAPI_TEST_HEDGE_REAL_DELAY") == "1"
+			if realDelay {
+				constant.StreamingTimeout = 30
+				testDeadline, delayMS = 30*time.Second, 15000
+				t.Cleanup(func() { constant.StreamingTimeout = 5 })
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), testDeadline)
 			defer cancel()
 			makeUpstream := func(endpoint int) *httptest.Server {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -361,7 +372,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			defer b.Close()
 			defer third.Close()
 			constant.StreamHedgeDelayMS = 70
-			constant.StreamingTimeout = 5
+			if !realDelay {
+				constant.StreamingTimeout = 5
+			}
 			common.RetryTimes = 5
 			switch tc.name {
 			case "primary_output_timeout_backup_rate_limit":
@@ -386,7 +399,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 					policy = `[{"stream_hedge":{"delay_ms":160,"retry_same_channel_first":true,"parallel_backup_scope":"claude"}}]`
 				}
 				if allProtocols {
-					policy = `[{"stream_hedge":{"delay_ms":160,"retry_same_channel_first":true,"parallel_backup_scope":"all"}}]`
+					policy = fmt.Sprintf(`[{"stream_hedge":{"delay_ms":%d,"retry_same_channel_first":true,"parallel_backup_scope":"all"}}]`, delayMS)
 				}
 			}
 			if tc.name == "json_budget_only_allows_same_channel" || tc.name == "json_parallel_fable_one_slot" {
@@ -473,6 +486,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 				}()
 			}
 			out := httptest.NewRecorder()
+			gatedAt := time.Now()
 			router.ServeHTTP(out, req)
 			require.Equal(t, tc.status, out.Code, out.Body.String())
 			require.EqualValues(t, 1, calls[0].Load())
@@ -490,6 +504,14 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 				require.Zero(t, calls[2].Load())
 			}
 			if parallel && tc.fallback {
+				if realDelay {
+					for lane := 1; lane <= 2; lane++ {
+						elapsed := time.Unix(0, arrived[lane].Load()).Sub(gatedAt)
+						t.Logf("backup %d about %.3f seconds after ingress", lane, elapsed.Seconds())
+						require.GreaterOrEqual(t, elapsed, 15*time.Second)
+						require.Less(t, elapsed, 16*time.Second)
+					}
+				}
 				require.Less(t, time.Duration(max(arrived[2].Load()-arrived[1].Load(), arrived[1].Load()-arrived[2].Load())), 110*time.Millisecond)
 			}
 			waitCanceled := func(lane int) {

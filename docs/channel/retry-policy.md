@@ -24,11 +24,16 @@
 [{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,"parallel_backup_scope":"claude"}}]
 ```
 
-`parallel_backup_scope` 与旧的 `parallel_backup_models` 二选一，且要求 `retry_same_channel_first: true`。已有 `models` 仍是有效的精确名字限制；希望免维护名单则一并移除 `models`。未设置范围或名单时不会同时发两路备用。旧版网关不读这个新字段；升级前仍用精确名单，回滚前先移除新字段。
+将范围值改为 `all`，可覆盖符合条件的 Claude Messages、OpenAI Chat Completions、OpenAI Responses 和 Gemini `streamGenerateContent`，按原生流式协议和渠道适配器判断，不按品牌名或前缀判断。非流式、跨协议转换和有状态请求仍沿用普通路径。例如，Responses 必须显式发送 `store: false`，不接受挂接已有会话或由上游执行的内置工具；不满足条件的渠道或请求不重复发出。
 
-- `models` 按请求中的模型名精确匹配，包含别名时须各自列出。空数组 `[]` 对任何模型都不启用；省略 `models` 则适用于所有符合条件的 Claude 原生流式请求，不再限制 Opus。升级前如果已有不带 `models` 的流式规则、但希望维持指定模型范围，请在升级后补上对应名单。非流式及其他协议不受这个选项控制。
-- 按示例开启后，匹配的请求在十五秒仍无有效内容时，保留原请求，并行重试同一渠道一次。再等十五秒仍无有效内容，并有第二次重试额度和同组可用的兼容备用渠道时，才启动下一渠道，不会跨分组。显式报错仍受既有重试限制；一旦有一路输出有效内容，就只转发这一路并取消其余请求。
-- 如要第一个间隔结束时同时启动两条备用，设置 `retry_same_channel_first: true`，并在 `parallel_backup_models` 中明确列出适用模型，例如 `"parallel_backup_models": ["claude-fable-5-2"]`。省略或传空数组保留原时序；如果同时设置了 `models`，并行名单必须是它的子集。仅有一次重试额度或没有合格第二渠道时，只发同渠道备用。额外备用只在本次实际分组内选路（包括 `auto` 令牌），不改变普通报错重试的权限。回滚到不识别新字段的网关前，必须移除 `parallel_backup_models`（不能只设为空数组）。
+```json
+[{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,"parallel_backup_scope":"all"}}]
+```
+
+`parallel_backup_scope` 与旧的 `parallel_backup_models` 二选一，且要求 `retry_same_channel_first: true`。现有八九站版本尚不识别新字段；本地新版升级前仍用精确名单，回滚前先移除新字段。
+
+- `models` 可选，按请求中的模型名（含别名）精确匹配。留空数组 `[]` 不对任何模型启用；省略则不限制名字，仍受协议和安全条件限制。旧 `parallel_backup_models` 只支持 Claude 原生流且在同时填写 `models` 时须为其子集。
+- 开启范围或精确并行名单后，第一段十五秒内没有有效内容，就保留原请求并同时启动同渠道和另一个同组兼容渠道的备用。仅有一次重试额度或没有合格第二渠道时，只发同渠道备用。备用只在本次实际分组内选路（包括 `auto` 令牌），不扩大路由权限。若不填范围且并行名单未配置或为空，同渠道优先模式仍先开一路，再等一个间隔才寻找另一路。回滚到不识别名单的网关前须移除 `parallel_backup_models`，不能只置为空数组。
 - 心跳、空文本、只有开头元数据不算有效内容。重试共用原请求总时限，每次备用占用一次原有重试额度。平台只结算获胜的一路；上游可能对已接收的并行请求各自计费。
 - `delay_ms` 必填，为 0 到 300000 的整数；0 显式关闭，包括覆盖启动参数。`retry_same_channel_first` 缺省为 `false`，表示一次延迟后直接尝试不同渠道。移除 `stream_hedge` 后恢复原 `STREAM_HEDGE_DELAY_MS` 行为（未设时默认关闭）。指定渠道、禁止换渠道的亲和配置和已提交响应仍不参加竞速。
 - 同一数组只允许一个 `stream_hedge` 项，不能与报错匹配字段混写在同一对象中。

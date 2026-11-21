@@ -3,9 +3,12 @@ package controller
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
@@ -154,32 +158,128 @@ func (w *raceStreamWriter) publish(c *gin.Context) error {
 
 // A race is limited to the first attempt and native HTTP SSE adapters. Never
 // race a pinned resource or bypass an affinity rule that prevents retries.
-func canRaceStream(c *gin.Context, info *relaycommon.RelayInfo, channel *model.Channel) bool {
+func canRaceStream(c *gin.Context, info *relaycommon.RelayInfo, channel *model.Channel, allProtocols bool) bool {
 	if info.PurityDetectionRequest || !info.IsStream || c.Writer.Written() || service.ShouldSkipRetryAfterChannelAffinityFailure(c) || service.ShouldProtectResponsesStateAffinity(c) {
 		return false
 	}
 	if _, pinned := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId); pinned {
 		return false
 	}
-	return nativeRaceStream(info, channel.Id, channel.Type)
+	return nativeRaceStream(c, info, channel, allProtocols)
 }
 
-func nativeRaceStream(info *relaycommon.RelayInfo, id, channelType int) bool {
-	return info.RelayFormat == types.RelayFormatClaude &&
-		channelType == constant.ChannelTypeAnthropic && !service.ShouldChatCompletionsUseResponsesGlobal(id, channelType, info.OriginModelName)
+func nativeRaceStream(c *gin.Context, info *relaycommon.RelayInfo, channel *model.Channel, allProtocols bool) bool {
+	if service.ShouldChatCompletionsUseResponsesGlobal(channel.Id, channel.Type, info.OriginModelName) {
+		return false
+	}
+	if info.RelayFormat == types.RelayFormatClaude {
+		return channel.Type == constant.ChannelTypeAnthropic
+	}
+	if !allProtocols {
+		return false
+	}
+	// Use the effective overrides after distributor/affinity merged its template.
+	setting, _ := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting)
+	other, _ := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelOtherSetting)
+	overrides := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
+	switch info.RelayFormat {
+	case types.RelayFormatOpenAI:
+		return info.RelayMode == relayconstant.RelayModeChatCompletions && channel.Type == constant.ChannelTypeOpenAI && relay.NativeChatStreamForHedge(c, info, setting, overrides)
+	case types.RelayFormatOpenAIResponses:
+		return info.RelayMode == relayconstant.RelayModeResponses && channel.Type == constant.ChannelTypeOpenAI && !other.DisableStore && relay.StreamHedgeHeaderOnlyOverrides(overrides)
+	case types.RelayFormatGemini:
+		return info.RelayMode == relayconstant.RelayModeGemini && channel.Type == constant.ChannelTypeGemini && strings.HasSuffix(c.Request.URL.Path, ":streamGenerateContent") && relay.StreamHedgeHeaderOnlyOverrides(overrides)
+	}
+	return false
+}
+
+// Check the original wire body, including fields not represented by the DTO.
+// Responses defaults to persistent storage, so only explicit store:false is safe.
+func statelessStreamRace(format types.RelayFormat, body []byte) bool {
+	if format == types.RelayFormatClaude {
+		return true
+	}
+	var req map[string]json.RawMessage
+	if json.Unmarshal(body, &req) != nil || req == nil {
+		return false
+	}
+	fields := make(map[string]json.RawMessage, len(req))
+	for key, value := range req {
+		key = strings.ToLower(key)
+		if _, duplicate := fields[key]; duplicate {
+			return false
+		}
+		fields[key] = value
+		switch key {
+		case "conversation", "previous_response_id", "cachedcontent", "cached_content", "context_management", "prompt", "extra_body":
+			if string(value) != "null" {
+				return false
+			}
+		case "store", "background":
+			if string(value) != "false" && string(value) != "null" {
+				return false
+			}
+		}
+	}
+	if format == types.RelayFormatGemini {
+		var tools []map[string]json.RawMessage
+		if raw := fields["tools"]; len(raw) != 0 && json.Unmarshal(raw, &tools) != nil {
+			return false
+		}
+		for _, tool := range tools {
+			for name := range tool {
+				if name != "functionDeclarations" && name != "function_declarations" {
+					return false // Never duplicate a provider-executed tool.
+				}
+			}
+		}
+		return true
+	}
+	if format == types.RelayFormatOpenAIResponses && string(fields["store"]) != "false" {
+		return false
+	}
+	var tools []struct {
+		Type string `json:"type"`
+	}
+	if raw := fields["tools"]; len(raw) != 0 && json.Unmarshal(raw, &tools) != nil {
+		return false
+	}
+	for _, tool := range tools {
+		if tool.Type != "function" {
+			return false
+		}
+	}
+	var input any
+	if raw := fields["input"]; len(raw) != 0 && json.Unmarshal(raw, &input) != nil {
+		return false
+	}
+	if items, ok := input.([]any); ok {
+		for _, item := range items {
+			if obj, ok := item.(map[string]any); ok {
+				kind, _ := obj["type"].(string)
+				if kind == "item_reference" || strings.HasPrefix(kind, "mcp_") || obj["id"] != nil || obj["encrypted_content"] != nil {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 type streamRaceAttempt struct {
-	c          *gin.Context
-	info       relaycommon.RelayInfo
-	channel    *model.Channel
-	writer     *raceStreamWriter
-	settle     func(*relaycommon.RelayInfo)
-	err        *types.NewAPIError
-	contextErr error
+	c                 *gin.Context
+	info              relaycommon.RelayInfo
+	channel           *model.Channel
+	allProtocols      bool
+	billing           relaycommon.BillingSettler
+	firstByteTimedOut bool
+	writer            *raceStreamWriter
+	settle            func(*relaycommon.RelayInfo)
+	err               *types.NewAPIError
+	contextErr        error
 }
 
-func newStreamRaceAttempt(c *gin.Context, info *relaycommon.RelayInfo, writer gin.ResponseWriter, header http.Header, status int, body []byte) *streamRaceAttempt {
+func newStreamRaceAttempt(c *gin.Context, info *relaycommon.RelayInfo, writer gin.ResponseWriter, header http.Header, status int, body []byte, allProtocols bool) (*streamRaceAttempt, error) {
 	local := c.Copy()
 	local.Request = c.Request.Clone(c.Request.Context())
 	local.Request.Body = io.NopCloser(bytes.NewReader(body))
@@ -187,14 +287,45 @@ func newStreamRaceAttempt(c *gin.Context, info *relaycommon.RelayInfo, writer gi
 	local.Set(common.KeyRequestBody, nil)
 	w := &raceStreamWriter{ResponseWriter: writer, header: header.Clone(), status: status}
 	local.Writer = w
-	a := &streamRaceAttempt{c: local, info: *info, writer: w}
+	a := &streamRaceAttempt{c: local, info: *info, writer: w, allProtocols: allProtocols, billing: info.Billing}
 	a.info.RequestConversionChain = append([]types.RelayFormat(nil), info.RequestConversionChain...)
-	// InitChannelMeta resets the request's model; give each lane its own DTO.
-	if req, ok := info.Request.(*dto.ClaudeRequest); ok {
-		copy := *req
-		a.info.Request = &copy
+	// Legacy Claude already isolates its mutable request via a per-helper copy.
+	if !allProtocols {
+		if req, ok := info.Request.(*dto.ClaudeRequest); ok {
+			copy := *req
+			a.info.Request = &copy
+		}
+		return a, nil
 	}
-	return a
+	a.info.Billing = nil // Only restore on the controller, after all lanes have joined.
+	a.info.RequestHeaders = maps.Clone(info.RequestHeaders)
+	a.info.RuntimeHeadersOverride = maps.Clone(info.RuntimeHeadersOverride)
+	a.info.ParamOverrideAudit = append([]string(nil), info.ParamOverrideAudit...)
+	if info.ResponsesUsageInfo != nil {
+		state := *info.ResponsesUsageInfo
+		state.BuiltInTools = maps.Clone(state.BuiltInTools)
+		for k, v := range state.BuiltInTools {
+			if v != nil {
+				tool := *v
+				state.BuiltInTools[k] = &tool
+			}
+		}
+		a.info.ResponsesUsageInfo = &state
+	}
+	var err error
+	switch req := info.Request.(type) {
+	case *dto.ClaudeRequest:
+		a.info.Request, err = common.DeepCopy(req)
+	case *dto.GeneralOpenAIRequest:
+		a.info.Request, err = common.DeepCopy(req)
+	case *dto.OpenAIResponsesRequest:
+		a.info.Request, err = common.DeepCopy(req)
+	case *dto.GeminiChatRequest:
+		a.info.Request, err = common.DeepCopy(req)
+	default:
+		err = errors.New("unsupported stream race request")
+	}
+	return a, err
 }
 
 func (a *streamRaceAttempt) run(r *streamRace, lane int, ctx context.Context) {
@@ -234,10 +365,26 @@ func (a *streamRaceAttempt) run(r *streamRace, lane int, ctx context.Context) {
 	}
 	a.info.DeferStreamSettlement = func(settle func(*relaycommon.RelayInfo)) { a.settle = settle }
 	a.c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(func() { r.cancel[lane-1](nil) }))
-	a.err = relay.ClaudeHelper(a.c, &a.info)
+	switch a.info.RelayFormat {
+	case types.RelayFormatOpenAI:
+		a.err = relay.TextHelper(a.c, &a.info)
+	case types.RelayFormatOpenAIResponses:
+		a.err = relay.ResponsesHelper(a.c, &a.info)
+	case types.RelayFormatGemini:
+		a.err = relay.GeminiHelper(a.c, &a.info)
+	default:
+		a.err = relay.ClaudeHelper(a.c, &a.info)
+	}
+	if a.allProtocols {
+		a.firstByteTimedOut = a.info.FirstByteWatch != nil && a.info.FirstByteWatch.Finish()
+	}
 	a.contextErr = ctx.Err()
 	if publishErr != nil {
 		a.err = types.NewError(publishErr, types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry())
+	} else if a.firstByteTimedOut && !a.writer.selected && r.ctx.Err() == nil {
+		a.c.Set("upstream_first_byte_timeout", true)
+		a.info.ResetFirstResponseTime()
+		a.err = types.NewErrorWithStatusCode(errors.New("upstream timed out before the first response byte"), types.ErrorCodeFirstByteTimeout, http.StatusGatewayTimeout)
 	} else if errors.Is(context.Cause(ctx), errRaceNoOutputTimeout) ||
 		(!a.writer.selected && a.info.StreamStatus != nil && a.info.StreamStatus.EndReason == relaycommon.StreamEndReasonTimeout) {
 		// The scanner's idle timer may fire just before the lane's output
@@ -252,12 +399,15 @@ func (a *streamRaceAttempt) run(r *streamRace, lane int, ctx context.Context) {
 }
 
 func (a *streamRaceAttempt) prepareBackupChannel(channel *model.Channel) bool {
-	if channel == nil || !nativeRaceStream(&a.info, channel.Id, channel.Type) {
+	if channel == nil || (!a.allProtocols && !nativeRaceStream(a.c, &a.info, channel, false)) {
 		return false
 	}
 	a.c.Set(string(constant.ContextKeyChannelOrganization), "")
 	a.c.Set(string(constant.ContextKeyChannelMultiKeyIndex), 0)
 	if err := middleware.SetupContextForSelectedChannel(a.c, channel, a.info.OriginModelName); err != nil {
+		return false
+	}
+	if a.allProtocols && !nativeRaceStream(a.c, &a.info, channel, true) {
 		return false
 	}
 	a.channel = channel
@@ -282,12 +432,12 @@ func (a *streamRaceAttempt) prepareParallelAlternate(ctx context.Context, group 
 
 // A nil attempt means the ordinary relay path should run. The returned
 // backups are actual attempts, each counted against the shared retry budget.
-func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model.Channel, budget context.Context, storage common.BodyStorage, wait time.Duration, sameChannelFirst, parallelBackups bool, retries int) (*streamRaceAttempt, []*model.Channel) {
-	if !canRaceStream(c, info, primary) || storage.IsDisk() || storage.Size() > 1<<20 {
+func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model.Channel, budget context.Context, storage common.BodyStorage, wait time.Duration, sameChannelFirst, parallelBackups, allProtocols bool, retries int) (*streamRaceAttempt, []*model.Channel) {
+	if !canRaceStream(c, info, primary, allProtocols) || storage.IsDisk() || storage.Size() > 1<<20 {
 		return nil, nil
 	}
 	body, err := storage.Bytes()
-	if err != nil {
+	if err != nil || (allProtocols && !statelessStreamRace(info.RelayFormat, body)) {
 		return nil, nil
 	}
 	group := info.UsingGroup
@@ -307,7 +457,11 @@ func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model
 	var attempts [maxStreamRaceLanes]*streamRaceAttempt
 	header, status := c.Writer.Header(), c.Writer.Status()
 	for i := range count {
-		attempts[i] = newStreamRaceAttempt(c, info, c.Writer, header, status, body)
+		attempts[i], err = newStreamRaceAttempt(c, info, c.Writer, header, status, body, allProtocols)
+		if err != nil {
+			cancel()
+			return nil, nil
+		}
 		r.lanes[i], r.cancel[i] = context.WithCancelCause(ctx)
 	}
 	attempts[0].channel = primary
@@ -428,6 +582,9 @@ func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model
 		}
 	}
 	*info = result.info
+	if allProtocols {
+		info.Billing = result.billing
+	}
 	if r.winner != 0 && c.Writer.Written() {
 		c.Set(string(constant.ContextKeyStreamHedgeWinner), result.channel.Id)
 	}

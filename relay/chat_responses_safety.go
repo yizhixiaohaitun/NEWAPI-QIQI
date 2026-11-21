@@ -5,9 +5,35 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/gin-gonic/gin"
 )
+
+// NativeChatStreamForHedge excludes body overrides and the same automatic
+// bridge that TextHelper would select for this channel.
+func NativeChatStreamForHedge(c *gin.Context, info *relaycommon.RelayInfo, setting dto.ChannelSettings, overrides map[string]interface{}) bool {
+	if !headerOnlyOverrides(overrides) {
+		return false
+	}
+	global := model_setting.GetGlobalSettings()
+	if global.PassThroughRequestEnabled || setting.PassThroughBodyEnabled {
+		return false
+	}
+	if !global.AutoChatToResponsesEnabled {
+		return true
+	}
+	candidate := *info
+	candidate.ChannelMeta = &relaycommon.ChannelMeta{ChannelSetting: setting, ParamOverride: overrides}
+	return !safeChatResponsesBridge(c, &candidate)
+}
+
+// StreamHedgeHeaderOnlyOverrides ensures channels cannot add persistent state
+// or disable streaming after the incoming request passed the eligibility gate.
+func StreamHedgeHeaderOnlyOverrides(overrides map[string]interface{}) bool {
+	return headerOnlyOverrides(overrides)
+}
 
 // Only automatically bridge requests whose complete wire representation is known
 // to survive the conversion. Unknown fields and channel overrides keep the chat path.

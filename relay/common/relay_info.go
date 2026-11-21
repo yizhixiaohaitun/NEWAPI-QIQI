@@ -128,7 +128,8 @@ type RelayInfo struct {
 	FirstByteWatch           *FirstByteWatch
 	// ClaimStreamOutput is set only for isolated stream race attempts. The
 	// adapter calls it before writing its first effective protocol frame.
-	ClaimStreamOutput func() bool
+	ClaimStreamOutput            func() bool
+	EffectiveStreamOutputClaimed bool
 	// DeferStreamSettlement hands settlement to the request controller, which
 	// runs it once with the winning RelayInfo and original billing session.
 	DeferStreamSettlement func(func(*RelayInfo))
@@ -723,6 +724,20 @@ func (info *RelayInfo) SetEstimatePromptTokens(promptTokens int) {
 
 func (info *RelayInfo) GetEstimatePromptTokens() int {
 	return info.estimatePromptTokens
+}
+
+// TryClaimEffectiveStreamOutput selects a racing adapter before it emits output.
+// Non-racing adapters keep their normal streaming behavior.
+func (info *RelayInfo) TryClaimEffectiveStreamOutput() bool {
+	if info.ClaimStreamOutput == nil || info.EffectiveStreamOutputClaimed {
+		return true
+	}
+	if !info.ClaimStreamOutput() {
+		return false
+	}
+	info.EffectiveStreamOutputClaimed = true
+	info.SetFirstResponseTime()
+	return true
 }
 
 func (info *RelayInfo) SetFirstResponseTime() {

@@ -108,6 +108,10 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 		moderationFrame := streamDataContainsModerationMetadata(data)
+		if moderationFrame && !info.TryClaimEffectiveStreamOutput() {
+			sr.Stop(relaycommon.ErrStreamRaceLost)
+			return
+		}
 		if moderationFrame {
 			c.Set("upstream_moderation_committed", true)
 			// Commit before error handling and forward the exact JSON. This frame
@@ -129,7 +133,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		upstreamStreamErr := responsesStreamEventError(&streamResponse, data)
 		if upstreamStreamErr != nil {
 			info.StreamStatus.RecordUpstreamError(upstreamStreamErr)
-			if !retryEnabled {
+			if !retryEnabled && (info.ClaimStreamOutput == nil || info.EffectiveStreamOutputClaimed) {
 				recordResponsesStreamRetryRecommendation(c)
 				if !moderationFrame {
 					sendResponsesStreamData(c, info, streamResponse, data)
@@ -139,7 +143,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				sr.Stop(upstreamStreamErr)
 				return
 			}
-			if retryWriter != nil && !retryWriter.committed {
+			if (retryWriter != nil && !retryWriter.committed) || (info.ClaimStreamOutput != nil && !info.EffectiveStreamOutputClaimed) {
 				streamErr = upstreamStreamErr
 				markResponsesStreamErrorBeforeCommit(c, info)
 				sr.Stop(streamErr)
@@ -154,12 +158,18 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 
+		if info.ClaimStreamOutput != nil && responsesStreamRaceHasOutput(&streamResponse, data) && !info.TryClaimEffectiveStreamOutput() {
+			sr.Stop(relaycommon.ErrStreamRaceLost)
+			return
+		}
 		if retryWriter != nil && !retryWriter.committed && responsesStreamDataCommitsOutput(&streamResponse, data) {
-			// Commit time is the real first byte; keep the scanner's received count.
-			received := info.ReceivedResponseCount
-			info.ResetFirstResponseTime()
-			info.ReceivedResponseCount = received
-			info.SetFirstResponseTime()
+			if info.ClaimStreamOutput == nil {
+				// Commit time is the real first byte; keep the scanner's received count.
+				received := info.ReceivedResponseCount
+				info.ResetFirstResponseTime()
+				info.ReceivedResponseCount = received
+				info.SetFirstResponseTime()
+			}
 			if err := retryWriter.Commit(); err != nil {
 				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 				sr.Stop(streamErr)
@@ -215,7 +225,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		markResponsesStreamErrorBeforeCommit(c, info)
 		return nil, streamErr
 	}
-	recordResponsesStateChannelAffinity(c, info, affinityAliases)
+	if info.ClaimStreamOutput == nil || info.EffectiveStreamOutputClaimed {
+		recordResponsesStateChannelAffinity(c, info, affinityAliases)
+	}
 
 	if usage.CompletionTokens == 0 {
 		// 计算输出文本的 token 数量

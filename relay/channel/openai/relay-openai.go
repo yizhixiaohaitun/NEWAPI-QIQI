@@ -144,6 +144,10 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		moderationFrame := streamDataContainsModerationMetadata(data)
+		if moderationFrame && !info.TryClaimEffectiveStreamOutput() {
+			sr.Stop(relaycommon.ErrStreamRaceLost)
+			return
+		}
 		if moderationFrame {
 			if lastStreamData != "" {
 				if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
@@ -173,7 +177,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		if common.UnmarshalJsonStr(data, &envelope) == nil {
 			if upstreamError := envelope.TryToOpenAIError(); upstreamError != nil {
 				info.StreamStatus.RecordUpstreamError(types.WithOpenAIError(*upstreamError, responsesStreamErrorStatus(upstreamError)))
-				if retryWriter != nil && !retryWriter.committed {
+				if (retryWriter != nil && !retryWriter.committed) || (info.ClaimStreamOutput != nil && !info.EffectiveStreamOutputClaimed) {
 					streamErr = types.WithOpenAIError(*upstreamError, responsesStreamErrorStatus(upstreamError))
 					markResponsesStreamErrorBeforeCommit(c, info)
 					sr.Stop(streamErr)
@@ -184,12 +188,18 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 				sr.Error(types.WithOpenAIError(*upstreamError, responsesStreamErrorStatus(upstreamError)))
 			}
 		}
+		if info.ClaimStreamOutput != nil && chatStreamRaceHasOutput(data) && !info.TryClaimEffectiveStreamOutput() {
+			sr.Stop(relaycommon.ErrStreamRaceLost)
+			return
+		}
 		if retryWriter != nil && !retryWriter.committed && chatStreamDataCommitsOutput(data) {
-			// Commit time is the real first byte; keep the scanner's received count.
-			received := info.ReceivedResponseCount
-			info.ResetFirstResponseTime()
-			info.ReceivedResponseCount = received
-			info.SetFirstResponseTime()
+			if info.ClaimStreamOutput == nil {
+				// Commit time is the real first byte; keep the scanner's received count.
+				received := info.ReceivedResponseCount
+				info.ResetFirstResponseTime()
+				info.ReceivedResponseCount = received
+				info.SetFirstResponseTime()
+			}
 			if err := retryWriter.Commit(); err != nil {
 				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 				sr.Stop(streamErr)

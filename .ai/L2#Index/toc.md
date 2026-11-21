@@ -142,9 +142,10 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - `relay/channel/claude/relay-claude.go#HandleClaudeResponseData`：OpenAI 格式调用上述转换；Claude 原生格式无减免配置时继续直接透传上游响应字节；配置固定输入减免时仅按下述公开 usage 规则同步计数，不修改正文或拒绝解释。
 - 回归入口：`service/relayconvert/internal/claude_messages/to_oai_chat_resp_test.go` 覆盖精确空拒绝、解释逐字保留且不重复、已有正文和普通结束；`relay/channel/claude/relay_claude_test.go` 从真实非流式 handler 覆盖 OpenAI 可见性与 Claude 原生字节不变。
 
-### Claude Opus 5.5 原生流并行重试
+### 原生流十五秒双备用
 
-- `controller/relay_hedge.go`：默认关闭。未配置 JSON `stream_hedge` 时沿用 `STREAM_HEDGE_DELAY_MS` 的单次换路备用；开启 `retry_same_channel_first` 后，初始 Claude 原生流按同一间隔先试原渠道、再试同组其他兼容渠道；显式列入 `stream_hedge.parallel_backup_models` 的型号同一间隔同时启动两条备用。并行备用只在本次实际分组内选路，不扩大跨组权限。只发布最先产出有效内容的一路并取消其余请求；每个备用消耗一次既有重试额度并共用请求总时限。
+- `setting/operation_setting/channel_retry_policy.go`：可按模型精确名单，也可通过 `stream_hedge.parallel_backup_scope` 选 `claude` 或 `all`，无需写模型名。未配置 JSON 时保留 Opus 5.5 的启动参数行为；只配置旧名单双备用时仍限 Claude 原生流。
+- `controller/relay_hedge.go`：在 `all` 模式增加原生 OpenAI Chat Completions、无状态 Responses 和 Gemini `streamGenerateContent`，不改变非流式或不合格请求。备用只在本次实际分组内选路，不扩大跨组权限。各路先缓冲自己的元数据；只发布最先产出有效内容的一路并取消其余请求，只结算胜出一路，每个备用占用一次既有重试额度并共用总时限。
 - `controller/relay.go`：初始并行阶段未提交时，普通可重试错误和单路有效输出等待超时可以在剩余预算内继续换渠道，排除该阶段已尝试的单 key 渠道；上游真实 HTTP 504、请求总超时、亲和及指定渠道仍沿用原有停止策略。已提交不重放。回归 `controller/relay_hedge_test.go`。
 
 ### 分组与渠道重试选择链路
@@ -281,7 +282,7 @@ API路径：/api/admin/users/config/levels
 
 ### 上游错误换渠道重试（2026-10-29）
 
-- JSON 可选规则 `ChannelRetryPolicy`：`setting/operation_setting/channel_retry_policy.go` 校验并原子发布普通报错规则和可选 `stream_hedge`；`model/option.go` 负责落库、启动加载与定期同步。`controller/relay.go#shouldRetry` 仍在专用重试路径之后匹配普通报错；Relay 入口按客户端模型名读取 `stream_hedge.models`（省略不限符合条件的模型、空数组不启用任何模型）；仅无流式 JSON 规则时保留旧启动参数的 Opus 范围。原生 Claude 协议、同组选择、计费与请求总时限不变。默认主题「模型与路由 → 路由可靠性」使用 `routing-reliability-form.ts` 映射 JSON 编辑框；使用说明见 `docs/channel/retry-policy.md`。配置、落库和实际换路回归见 `setting/operation_setting/channel_retry_policy_test.go`、`model/option_channel_retry_policy_test.go`、`controller/relay_retry_keyword_http_test.go`、`controller/relay_hedge_test.go`。
+- JSON 可选规则 `ChannelRetryPolicy`：`setting/operation_setting/channel_retry_policy.go` 校验并原子发布普通报错规则和可选 `stream_hedge`；`model/option.go` 负责落库、启动加载与定期同步。`controller/relay.go#shouldRetry` 仍在专用重试路径之后匹配普通报错；Relay 入口按客户端模型名读取 `stream_hedge.models`（省略不限符合条件的模型、空数组不启用任何模型）；仅无流式 JSON 规则时保留旧启动参数的 Opus 范围。`parallel_backup_scope` 可选择 Claude 或全部受支持的原生流协议进行同组双备用；同组选路权限、计费及请求总时限不变。默认主题「模型与路由 → 路由可靠性」使用 `routing-reliability-form.ts` 映射 JSON 编辑框；使用说明见 `docs/channel/retry-policy.md`。配置、落库和实际换路回归见 `setting/operation_setting/channel_retry_policy_test.go`、`model/option_channel_retry_policy_test.go`、`controller/relay_retry_keyword_http_test.go`、`controller/relay_hedge_test.go`。
 - 上游过载码：`controller/relay.go#shouldRetry` 明确识别 `server_is_overloaded` 与 `servers_is_overloaded`，仅429或5xx且未提交输出时重试；取消、超时、指定渠道、亲和停止、SkipRetry、预算及审核已提交继续优先停止。回归 `controller/relay_overload_retry_test.go`、`controller/relay_retry_keyword_http_test.go`（关闭自动协议转换与通用5xx策略验证代码识别）、`controller/relay_responses_context_window_retry_test.go`（两码SSE/输出边界）。
 - 报错关键词：`setting/operation_setting/retry_keywords.go` 保存 `AutomaticRetryKeywords`（每行一条、忽略大小写子串，默认含 prompt 被判违规文案），`model/option.go` 落库加载，`controller/relay.go` 在状态码规则之外命中关键词即换渠道；两套后台设置页均为多行输入框。回归 `setting/operation_setting/retry_keywords_test.go`、`controller/relay_retry_keyword_http_test.go`。
 - HTTP 200 流内限流错误：`relay/channel/openai/stream_retry.go` 缓冲尚无可见输出的 Chat 帧，`relay-openai.go`/`relay_responses.go` 在输出前遇到 error envelope 时不外泄前导帧并返回可重试错误，已有正文后保持原流不换渠道；`relay/compatible_handler.go` 开启时延迟流头。复用 Responses 流错误重试开关。回归 `relay/channel/openai/stream_retry_test.go`、`controller/relay_chat_stream_rate_limit_retry_test.go`、`controller/relay_stream_rate_limit_http_test.go`。HTTP 200 Responses 流内上下文窗口报错、纯空结束及无有效输出前的解析失败，使用同一开关和独立流错误预算，不再只依赖关键词；普通 HTTP 400 不因此全局重试。`relay_responses.go` 依据原始 JSON 区分空增量/空结束与正文、思考、拒绝、工具及多模态输出，保留扁平或嵌套错误原文；已输出、未知事件、4 MiB 缓冲上限提交、客户端取消、超时、指定渠道、亲和禁止和预算耗尽均保留禁止重放边界。回归 `relay/channel/openai/relay_responses_empty_retry_test.go`、`controller/relay_empty_stream_retry_test.go`、`controller/relay_responses_context_window_retry_test.go` 覆盖同一客户端连接切换渠道、失败前导帧隔离、原输入保留、空流与错误格式、真实输出后不重放和独立预算耗尽。

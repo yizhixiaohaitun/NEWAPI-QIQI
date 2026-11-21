@@ -229,6 +229,16 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		return nil
 	}
 
+	if info.DeferStreamSettlement != nil {
+		info.DeferStreamSettlement(func(winner *relaycommon.RelayInfo) {
+			if strings.HasPrefix(winner.OriginModelName, "gpt-4o-audio") {
+				service.PostAudioConsumeQuota(c, winner, usageDto, "")
+			} else {
+				service.PostTextConsumeQuota(c, winner, usageDto, nil)
+			}
+		})
+		return nil
+	}
 	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
 		service.PostAudioConsumeQuota(c, info, usageDto, "")
 	} else {

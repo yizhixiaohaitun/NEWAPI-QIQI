@@ -209,6 +209,10 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return openaiErr
 	}
 
+	if info.DeferStreamSettlement != nil {
+		info.DeferStreamSettlement(func(winner *relaycommon.RelayInfo) { service.PostTextConsumeQuota(c, winner, usage.(*dto.Usage), nil) })
+		return nil
+	}
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
 	return nil
 }

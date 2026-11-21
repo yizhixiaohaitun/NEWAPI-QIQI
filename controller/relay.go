@@ -244,7 +244,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if retryParam.GetRetry() == 0 && retryLimit > 0 && hedgeDelayMS > 0 {
 			attempt, racedBackups = raceRelayStream(c, relayInfo, channel, requestUpstreamCtx, bodyStorage,
 				time.Duration(hedgeDelayMS)*time.Millisecond, hedgeSameChannelFirst,
-				hedgeParallelScope != operation_setting.StreamHedgeParallelOff, retryLimit)
+				hedgeParallelScope != operation_setting.StreamHedgeParallelOff,
+				hedgeParallelScope == operation_setting.StreamHedgeParallelAll, retryLimit)
 			for range racedBackups {
 				// Each delayed attempt consumes a slot from the shared retry budget.
 				retryParam.IncreaseRetry()
@@ -255,6 +256,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if attempt != nil {
 			channel, newAPIError = attempt.channel, attempt.err
 			upstreamContextErr = attempt.contextErr
+			firstByteTimedOut = attempt.firstByteTimedOut
 		} else {
 			upstreamCtx, cancelUpstream := context.WithCancel(requestUpstreamCtx)
 			relayInfo.UpstreamContext = upstreamCtx
