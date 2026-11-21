@@ -3,6 +3,7 @@ package operation_setting
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -30,6 +31,7 @@ type channelRetrySnapshot struct {
 	hedgeDelayMS          int
 	hedgeSameChannelFirst bool
 	hedgeConfigured       bool
+	hedgeModels           []string
 }
 
 var channelRetryPolicy atomic.Pointer[channelRetrySnapshot]
@@ -62,6 +64,8 @@ func parseChannelRetryPolicy(value string) (*channelRetrySnapshot, error) {
 					dst = &snapshot.hedgeDelayMS
 				case "retry_same_channel_first":
 					dst = &snapshot.hedgeSameChannelFirst
+				case "models":
+					dst = &snapshot.hedgeModels
 				default:
 					return nil, fmt.Errorf("stream_hedge: unknown field %q", key)
 				}
@@ -71,6 +75,13 @@ func parseChannelRetryPolicy(value string) (*channelRetrySnapshot, error) {
 			}
 			if _, ok := fields["delay_ms"]; !ok || snapshot.hedgeDelayMS < 0 || snapshot.hedgeDelayMS > 300_000 {
 				return nil, fmt.Errorf("stream_hedge.delay_ms must be an integer between 0 and 300000")
+			}
+			for i, model := range snapshot.hedgeModels {
+				model = strings.TrimSpace(model)
+				if model == "" {
+					return nil, fmt.Errorf("stream_hedge.models must contain non-blank model names")
+				}
+				snapshot.hedgeModels[i] = model
 			}
 			snapshot.hedgeConfigured = true
 			continue
@@ -143,13 +154,18 @@ func SetChannelRetryPolicy(value string) error {
 	return nil
 }
 
-// GetChannelRetryStreamHedge distinguishes an explicit zero from the absent
-// setting, which keeps the server's legacy startup behavior.
-func GetChannelRetryStreamHedge() (delayMS int, sameChannelFirst bool, configured bool) {
-	if snapshot := channelRetryPolicy.Load(); snapshot != nil {
-		return snapshot.hedgeDelayMS, snapshot.hedgeSameChannelFirst, snapshot.hedgeConfigured
+// GetChannelRetryStreamHedge resolves the JSON entry for the requested model.
+// An explicit disable or a model outside the list must not fall back to the
+// legacy startup setting. Only an absent JSON entry allows that fallback.
+func GetChannelRetryStreamHedge(model string) (delayMS int, sameChannelFirst bool, configured bool) {
+	snapshot := channelRetryPolicy.Load()
+	if snapshot == nil || !snapshot.hedgeConfigured {
+		return 0, false, false
 	}
-	return 0, false, false
+	if snapshot.hedgeModels != nil && !slices.Contains(snapshot.hedgeModels, model) {
+		return 0, false, true
+	}
+	return snapshot.hedgeDelayMS, snapshot.hedgeSameChannelFirst, true
 }
 
 // MatchChannelRetryPolicy returns the first matching action. All fields on a

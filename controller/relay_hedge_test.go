@@ -64,7 +64,7 @@ func TestStreamRaceDoesNotStartAfterPrimaryFinished(t *testing.T) {
 }
 
 // Exercise the real controller, routing, upstream HTTP cancellation and billing.
-func TestClaudeOpus55HedgeHTTP(t *testing.T) {
+func TestClaudeHedgeHTTP(t *testing.T) {
 	oldDB, oldLogDB := model.DB, model.LOG_DB
 	oldMain, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
 	oldCache, oldRedis, oldBatch := common.MemoryCacheEnabled, common.RedisEnabled, common.BatchUpdateEnabled
@@ -106,11 +106,11 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 	operation_setting.GetGeneralSetting().PingIntervalSeconds = 1
 	model_setting.GetGlobalSettings().AutoChatToResponsesEnabled = false
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"hedge-test":1}`))
-	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"claude-opus-5-5":0}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"claude-opus-5-5":0,"claude-fable-5-2":0}`))
 	require.NoError(t, db.Create(&model.User{Id: 981, Username: "hedge-test", Quota: 1000000, Status: common.UserStatusEnabled}).Error)
 	require.NoError(t, db.Create(&model.Token{Id: 982, UserId: 981, Key: "hedge-test", RemainQuota: 1000000, Status: common.TokenStatusEnabled}).Error)
 
-	const payload = `{"model":"claude-opus-5-5","stream":true,"max_tokens":64,"messages":[{"role":"user","content":"replayed body"}]}`
+	const opus, fable = "claude-opus-5-5", "claude-fable-5-2"
 	for _, tc := range []struct {
 		name     string
 		winner   int
@@ -133,9 +133,18 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 		{"json_next_channel_wins", 3, true, 200, true},
 		{"json_budget_only_allows_same_channel", 1, true, 200, false},
 		{"json_zero_disables_startup_setting", 1, false, 200, false},
+		{"json_fable_included", 2, true, 200, false},
+		{"json_fable_without_model_list", 3, true, 200, true},
+		{"json_opus_excluded", 1, false, 200, false},
+		{"legacy_fable_not_enabled", 1, false, 200, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const primaryID, backupID, fallbackID = 983, 984, 985
+			modelName := opus
+			if strings.Contains(tc.name, "fable") {
+				modelName = fable
+			}
+			payload := `{"model":"` + modelName + `","stream":true,"max_tokens":64,"messages":[{"role":"user","content":"replayed body"}]}`
 			sameChannel := strings.HasPrefix(tc.name, "json_") && tc.backup
 			var primaryRequests atomic.Int32
 			var calls [3]atomic.Int32
@@ -163,6 +172,13 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 					text := string(body)
 					bodies[lane].Store(&text)
 					label := []string{"primary", "backup", "fallback"}[lane]
+					if tc.name == "json_fable_included" && lane == 0 {
+						// Match the reported failure: the original upstream never sends headers.
+						close(started[lane])
+						<-r.Context().Done()
+						close(canceled[lane])
+						return
+					}
 					if tc.name == "upstream_gateway_timeout" {
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusGatewayTimeout)
@@ -178,7 +194,7 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 					w.Header().Set("Content-Type", "text/event-stream")
 					w.Header().Set(common.RequestIdKey, label+"-request-id")
 					send := func(data string) { _, _ = io.WriteString(w, "data: "+data+"\r\n\r\n"); w.(http.Flusher).Flush() }
-					send(`{"type":"message_start","message":{"id":"` + label + `-preamble","model":"claude-opus-5-5","usage":{"input_tokens":10,"output_tokens":1}}}`)
+					send(`{"type":"message_start","message":{"id":"` + label + `-preamble","model":"` + modelName + `","usage":{"input_tokens":10,"output_tokens":1}}}`)
 					send(`{"type":"ping"}`)
 					send(`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
 					close(started[lane])
@@ -196,7 +212,7 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 							close(canceled[lane])
 							return
 						}
-					case "json_next_channel_wins":
+					case "json_next_channel_wins", "json_fable_without_model_list":
 						if lane < 2 {
 							<-r.Context().Done()
 							close(canceled[lane])
@@ -217,7 +233,7 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 							close(canceled[lane])
 							return
 						}
-					case "json_zero_disables_startup_setting":
+					case "json_zero_disables_startup_setting", "json_opus_excluded", "legacy_fable_not_enabled":
 						select {
 						case <-time.After(140 * time.Millisecond):
 						case <-r.Context().Done():
@@ -309,24 +325,26 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 			if tc.name == "json_budget_only_allows_same_channel" {
 				common.RetryTimes = 1
 			}
-			if tc.name == "json_zero_disables_startup_setting" {
+			switch tc.name {
+			case "json_zero_disables_startup_setting":
 				policy = `[{"stream_hedge":{"delay_ms":0}}]`
+			case "json_fable_included", "json_opus_excluded":
+				policy = `[{"stream_hedge":{"delay_ms":70,"retry_same_channel_first":true,"models":["claude-fable-5-2"]}}]`
 			}
-			// The controller uses the freshly saved snapshot in the same process.
-			require.NoError(t, model.UpdateOption(operation_setting.ChannelRetryPolicyOption, policy))
 			require.NoError(t, db.Exec("DELETE FROM channels").Error)
 			require.NoError(t, db.Exec("DELETE FROM abilities").Error)
 			require.NoError(t, db.Exec("DELETE FROM logs").Error)
 			high, low, weight := int64(10), int64(0), uint(1)
-			require.NoError(t, db.Create(&[]model.Channel{{Id: primaryID, Type: constant.ChannelTypeAnthropic, Name: "primary", Key: "key-a", BaseURL: &a.URL, Group: "hedge-test", Models: "claude-opus-5-5", Status: common.ChannelStatusEnabled, Priority: &high, Weight: &weight}, {Id: backupID, Type: constant.ChannelTypeAnthropic, Name: "backup", Key: "key-b", BaseURL: &b.URL, Group: "hedge-test", Models: "claude-opus-5-5", Status: common.ChannelStatusEnabled, Priority: &low, Weight: &weight}}).Error)
-			require.NoError(t, db.Create(&[]model.Ability{{Group: "hedge-test", Model: "claude-opus-5-5", ChannelId: primaryID, Enabled: true, Priority: &high, Weight: 1}, {Group: "hedge-test", Model: "claude-opus-5-5", ChannelId: backupID, Enabled: true, Priority: &low, Weight: 1}}).Error)
+			require.NoError(t, db.Create(&[]model.Channel{{Id: primaryID, Type: constant.ChannelTypeAnthropic, Name: "primary", Key: "key-a", BaseURL: &a.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &high, Weight: &weight}, {Id: backupID, Type: constant.ChannelTypeAnthropic, Name: "backup", Key: "key-b", BaseURL: &b.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &low, Weight: &weight}}).Error)
+			require.NoError(t, db.Create(&[]model.Ability{{Group: "hedge-test", Model: modelName, ChannelId: primaryID, Enabled: true, Priority: &high, Weight: 1}, {Group: "hedge-test", Model: modelName, ChannelId: backupID, Enabled: true, Priority: &low, Weight: 1}}).Error)
 			if tc.fallback || tc.name == "retry_budget_spent_by_backup" || tc.name == "committed_error" || tc.name == "request_deadline_cancels_both" {
 				last := int64(-1)
-				require.NoError(t, db.Create(&model.Channel{Id: fallbackID, Type: constant.ChannelTypeAnthropic, Name: "fallback", Key: "key-c", BaseURL: &third.URL, Group: "hedge-test", Models: "claude-opus-5-5", Status: common.ChannelStatusEnabled, Priority: &last, Weight: &weight}).Error)
-				require.NoError(t, db.Create(&model.Ability{Group: "hedge-test", Model: "claude-opus-5-5", ChannelId: fallbackID, Enabled: true, Priority: &last, Weight: 1}).Error)
+				require.NoError(t, db.Create(&model.Channel{Id: fallbackID, Type: constant.ChannelTypeAnthropic, Name: "fallback", Key: "key-c", BaseURL: &third.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &last, Weight: &weight}).Error)
+				require.NoError(t, db.Create(&model.Ability{Group: "hedge-test", Model: modelName, ChannelId: fallbackID, Enabled: true, Priority: &last, Weight: 1}).Error)
 			}
 			service.InitHttpClient()
 			router := gin.New()
+			router.PUT("/api/option/", UpdateOption)
 			router.POST("/v1/messages", func(c *gin.Context) {
 				defer common.CleanupBodyStorage(c)
 				common.SetContextKey(c, constant.ContextKeyUsingGroup, "hedge-test")
@@ -344,6 +362,26 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 				}
 				c.Next()
 			}, middleware.Distribute(), func(c *gin.Context) { Relay(c, types.RelayFormatClaude) })
+			// Save through the real settings handler and use the same process for relay.
+			putPolicy := func(rules string, wantSuccess bool) {
+				t.Helper()
+				body, err := common.Marshal(OptionUpdateRequest{Key: operation_setting.ChannelRetryPolicyOption, Value: rules})
+				require.NoError(t, err)
+				put := httptest.NewRequest(http.MethodPut, "/api/option/", strings.NewReader(string(body)))
+				put.Header.Set("Content-Type", "application/json")
+				result := httptest.NewRecorder()
+				router.ServeHTTP(result, put)
+				var reply struct{ Success bool }
+				require.NoError(t, common.DecodeJson(result.Body, &reply))
+				require.Equal(t, wantSuccess, reply.Success)
+			}
+			putPolicy(policy, true)
+			if tc.name == "json_fable_included" {
+				putPolicy(`[{"stream_hedge":{"delay_ms":70,"models":[null]}}]`, false)
+				var saved model.Option
+				require.NoError(t, db.First(&saved, "key = ?", operation_setting.ChannelRetryPolicyOption).Error)
+				require.Equal(t, policy, saved.Value)
+			}
 			req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload)).WithContext(ctx)
 			req.Header.Set("Content-Type", "application/json")
 			if tc.name == "client_cancels" {
@@ -384,9 +422,9 @@ func TestClaudeOpus55HedgeHTTP(t *testing.T) {
 			case "client_cancels", "request_deadline_cancels_both":
 				waitCanceled(0)
 				waitCanceled(1)
-			case "backup_wins", "primary_output_timeout_backup_rate_limit", "json_same_channel_wins":
+			case "backup_wins", "primary_output_timeout_backup_rate_limit", "json_same_channel_wins", "json_fable_included":
 				waitCanceled(0)
-			case "json_next_channel_wins":
+			case "json_next_channel_wins", "json_fable_without_model_list":
 				waitCanceled(0)
 				waitCanceled(1)
 			case "json_budget_only_allows_same_channel":
