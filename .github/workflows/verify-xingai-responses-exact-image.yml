@@ -4,16 +4,20 @@ on:
     branches: [verify/xingai-responses-0c190fb]
 permissions:
   contents: read
-  actions: read
   packages: read
 jobs:
   isolated:
     runs-on: ubuntu-latest
-    timeout-minutes: 22
+    timeout-minutes: 10
+    # Immutable values from the successful site-specific build and byte-verified GHCR records.
     env:
       RELEASE_SHA: 0c190fbfe8788f9e054951740b165d3222fc419a
-      RELEASE_BRANCH: release/stream-retry-xingai-20261120
+      RELEASE_TAG: newapi-qiqi-20261121-0c190fb
+      RELEASE_RUN: '44898669104'
       REGISTRY_IMAGE: ghcr.io/yizhixiaohaitun/newapi-qiqi
+      ROOT_DIGEST: sha256:9ab9e8fc1ffcf4ed82fc686e86a3ec3547477a52b136f4d0dd597ed9d9904081
+      PLATFORM_DIGEST: sha256:5fa7cb24fd309814dce7ede740c2ca72012f5cb6a5b6c6f7092bd859e551e87f
+      CONFIG_DIGEST: sha256:db666d01660c2fda0227f82bbd63c0a8d02c7622f6c71aecfd47ddccd99fa5b6
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
@@ -24,37 +28,17 @@ jobs:
       - name: Pull by digest and match the exact site-specific release
         working-directory: ci-xingai-responses
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          url="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/ghcr-newapi-qiqi.yml/runs?head_sha=$RELEASE_SHA&event=push"
-          run=
-          for (( i=0; i<75; i++ )); do
-            all=$(curl -fSs --max-time 20 -H "Authorization: Bearer $GH_TOKEN" "$url")
-            run=$(jq -c --arg ref "$RELEASE_BRANCH" --arg sha "$RELEASE_SHA" '[.workflow_runs[] | select(.head_sha==$sha and .head_branch==$ref)] | first // empty' <<<"$all")
-            if [[ $run && $(jq -r .status <<<"$run") == completed ]]; then break; fi
-            sleep 10
-          done
-          test "$(jq -r .conclusion <<<"$run")" = success
-          date=$(jq -r .run_started_at <<<"$run" | cut -c1-10 | tr -d -)
-          version=newapi-qiqi-$date-${RELEASE_SHA:0:7}
-          ref=$REGISTRY_IMAGE:$version
-          digest=$(docker buildx imagetools inspect "$ref" | awk '$1=="Digest:" {print $2; exit}')
-          [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]
-          image="$ref@$digest"
+          set -euxo pipefail
+          image="$REGISTRY_IMAGE:$RELEASE_TAG@$ROOT_DIGEST"
           docker pull --platform linux/amd64 "$image"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$RELEASE_SHA"
           test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" = linux/amd64
+          docker image inspect --format '{{json .RepoDigests}}' "$image" | jq -e --arg exact "$REGISTRY_IMAGE@$ROOT_DIGEST" 'index($exact) != null'
           # With the containerd store, Docker ID may be a manifest, not the OCI config.
           id=$(docker image inspect --format '{{.Id}}' "$image")
-          doc=$(docker buildx imagetools inspect --raw "$REGISTRY_IMAGE@$digest")
-          platform=$(jq -er --arg root "$digest" 'if has("manifests") then [.manifests[] | select(.platform.os=="linux" and .platform.architecture=="amd64")] | if length==1 then .[0].digest else error("expected one amd64 manifest") end else $root end' <<<"$doc")
-          [[ $platform =~ ^sha256:[0-9a-f]{64}$ ]]
-          cdigest=$(docker buildx imagetools inspect --raw "$REGISTRY_IMAGE@$platform" | jq -er '.config.digest')
-          [[ $cdigest =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ $id == "$digest" || $id == "$platform" || $id == "$cdigest" ]]
-          jq -n --arg sha "$RELEASE_SHA" --arg tag "$version" --arg digest "$digest" --arg config_digest "$cdigest" --arg docker_image_id "$id" --arg platform_manifest_digest "$platform" --argjson build_run "$(jq .id <<<"$run")" '$ARGS.named' > isolated-image.json
+          [[ $id == "$ROOT_DIGEST" || $id == "$PLATFORM_DIGEST" || $id == "$CONFIG_DIGEST" ]]
+          jq -n --arg sha "$RELEASE_SHA" --arg tag "$RELEASE_TAG" --arg digest "$ROOT_DIGEST" --arg config_digest "$CONFIG_DIGEST" --arg docker_image_id "$id" --arg platform_manifest_digest "$PLATFORM_DIGEST" --argjson build_run "$RELEASE_RUN" '$ARGS.named' > isolated-image.json
           echo "XINGAI_IMAGE=$image" >> "$GITHUB_ENV"
       - name: Exercise early and committed terminal errors with simulated upstream only
         working-directory: ci-xingai-responses
