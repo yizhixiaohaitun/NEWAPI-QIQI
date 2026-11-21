@@ -125,15 +125,61 @@ func TestChannelRetryPolicyParallelBackups(t *testing.T) {
 	require.Error(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,"models":[],"parallel_backup_models":["claude-fable-5-2"]}}]`))
 	delay, same, parallel, configured := GetChannelRetryStreamHedge("claude-fable-5-2")
 	require.Equal(t, 15000, delay)
-	require.True(t, same && parallel && configured)
+	require.True(t, same && configured)
+	require.Equal(t, StreamHedgeParallelClaude, parallel)
 	delay, same, parallel, configured = GetChannelRetryStreamHedge("claude-opus-5-5")
 	require.Equal(t, 15000, delay)
 	require.True(t, same && configured)
-	require.False(t, parallel)
+	require.Equal(t, StreamHedgeParallelOff, parallel)
 	retry, matched := MatchChannelRetryPolicy(1, 429, "", "")
 	require.True(t, matched)
 	require.False(t, retry)
 	require.NoError(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,"parallel_backup_models":[]}}]`))
 	_, _, parallel, _ = GetChannelRetryStreamHedge("claude-fable-5-2")
-	require.False(t, parallel)
+	require.Equal(t, StreamHedgeParallelOff, parallel)
+}
+
+func TestChannelRetryPolicyHotReloadParallelBackupScope(t *testing.T) {
+	previous := channelRetryPolicy.Load()
+	t.Cleanup(func() { channelRetryPolicy.Store(previous) })
+	const prefix = `[{"status":429,"action":"stop"},{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,`
+	const end = `}}]`
+	check := func(model string, delay int, scope StreamHedgeParallelScope) {
+		t.Helper()
+		gotDelay, _, gotScope, configured := GetChannelRetryStreamHedge(model)
+		require.True(t, configured)
+		require.Equal(t, delay, gotDelay)
+		require.Equal(t, scope, gotScope)
+	}
+	for _, tc := range []struct {
+		name string
+		mode StreamHedgeParallelScope
+	}{
+		{"claude", StreamHedgeParallelClaude},
+		{"all", StreamHedgeParallelAll},
+	} {
+		require.NoError(t, SetChannelRetryPolicy(prefix+`"parallel_backup_scope":"`+tc.name+`"`+end))
+		check("unlisted-model-or-alias", 15000, tc.mode)
+	}
+	for _, invalid := range []string{
+		prefix + `"parallel_backup_scope":null` + end,
+		prefix + `"parallel_backup_scope":true` + end,
+		prefix + `"parallel_backup_scope":"*"` + end,
+		prefix + `"parallel_backup_scope":""` + end,
+		prefix + `"parallel_backup_scope":"all","parallel_backup_models":[]` + end,
+		`[{"stream_hedge":{"delay_ms":15000,"parallel_backup_scope":"all"}}]`,
+	} {
+		require.Error(t, SetChannelRetryPolicy(invalid), invalid)
+		check("unlisted-model-or-alias", 15000, StreamHedgeParallelAll)
+	}
+	retry, matched := MatchChannelRetryPolicy(1, 429, "", "")
+	require.True(t, matched)
+	require.False(t, retry)
+	require.NoError(t, SetChannelRetryPolicy(prefix+`"parallel_backup_scope":"all","models":["a"]`+end))
+	check("a", 15000, StreamHedgeParallelAll)
+	check("b", 0, StreamHedgeParallelOff)
+	require.NoError(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":0,"retry_same_channel_first":true,"parallel_backup_scope":"all"}}]`))
+	check("a", 0, StreamHedgeParallelAll)
+	require.NoError(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true}}]`))
+	check("a", 15000, StreamHedgeParallelOff)
 }

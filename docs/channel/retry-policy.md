@@ -18,6 +18,14 @@
 
 ## 流式请求未出有效内容
 
+新版可用 `parallel_backup_scope` 选择双备用范围，不用逐条填写模型名。以下示例选中全部合格的 Claude 原生流式请求（包括已授权的新型号和别名）：
+
+```json
+[{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,"parallel_backup_scope":"claude"}}]
+```
+
+`parallel_backup_scope` 与旧的 `parallel_backup_models` 二选一，且要求 `retry_same_channel_first: true`。已有 `models` 仍是有效的精确名字限制；希望免维护名单则一并移除 `models`。未设置范围或名单时不会同时发两路备用。旧版网关不读这个新字段；升级前仍用精确名单，回滚前先移除新字段。
+
 - `models` 按请求中的模型名精确匹配，包含别名时须各自列出。空数组 `[]` 对任何模型都不启用；省略 `models` 则适用于所有符合条件的 Claude 原生流式请求，不再限制 Opus。升级前如果已有不带 `models` 的流式规则、但希望维持指定模型范围，请在升级后补上对应名单。非流式及其他协议不受这个选项控制。
 - 按示例开启后，匹配的请求在十五秒仍无有效内容时，保留原请求，并行重试同一渠道一次。再等十五秒仍无有效内容，并有第二次重试额度和同组可用的兼容备用渠道时，才启动下一渠道，不会跨分组。显式报错仍受既有重试限制；一旦有一路输出有效内容，就只转发这一路并取消其余请求。
 - 如要第一个间隔结束时同时启动两条备用，设置 `retry_same_channel_first: true`，并在 `parallel_backup_models` 中明确列出适用模型，例如 `"parallel_backup_models": ["claude-fable-5-2"]`。省略或传空数组保留原时序；如果同时设置了 `models`，并行名单必须是它的子集。仅有一次重试额度或没有合格第二渠道时，只发同渠道备用。额外备用只在本次实际分组内选路（包括 `auto` 令牌），不改变普通报错重试的权限。回滚到不识别新字段的网关前，必须移除 `parallel_backup_models`（不能只设为空数组）。

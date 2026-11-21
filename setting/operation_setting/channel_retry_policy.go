@@ -16,6 +16,16 @@ const (
 	maxChannelRetryRules      = 128
 )
 
+// StreamHedgeParallelScope describes what the configuration opted into. The
+// relay still applies the protocol, channel, permissions and replay checks.
+type StreamHedgeParallelScope int
+
+const (
+	StreamHedgeParallelOff StreamHedgeParallelScope = iota
+	StreamHedgeParallelClaude
+	StreamHedgeParallelAll
+)
+
 type channelRetryRule struct {
 	channelID       int
 	status          int
@@ -33,6 +43,7 @@ type channelRetrySnapshot struct {
 	hedgeConfigured       bool
 	hedgeModels           []string
 	hedgeParallelModels   []string
+	hedgeParallelScope    StreamHedgeParallelScope
 }
 
 var channelRetryPolicy atomic.Pointer[channelRetrySnapshot]
@@ -58,6 +69,7 @@ func parseChannelRetryPolicy(value string) (*channelRetrySnapshot, error) {
 			if common.GetJsonType(raw) != "object" || common.Unmarshal(raw, &fields) != nil {
 				return nil, fmt.Errorf("stream_hedge must be an object")
 			}
+			var parallelScope string
 			for key, value := range fields {
 				var dst any
 				switch key {
@@ -69,6 +81,8 @@ func parseChannelRetryPolicy(value string) (*channelRetrySnapshot, error) {
 					dst = &snapshot.hedgeModels
 				case "parallel_backup_models":
 					dst = &snapshot.hedgeParallelModels
+				case "parallel_backup_scope":
+					dst = &parallelScope
 				default:
 					return nil, fmt.Errorf("stream_hedge: unknown field %q", key)
 				}
@@ -91,8 +105,21 @@ func parseChannelRetryPolicy(value string) (*channelRetrySnapshot, error) {
 					modelList.models[i] = model
 				}
 			}
-			if len(snapshot.hedgeParallelModels) != 0 && !snapshot.hedgeSameChannelFirst {
-				return nil, fmt.Errorf("stream_hedge.parallel_backup_models requires retry_same_channel_first to be true")
+			if _, hasScope := fields["parallel_backup_scope"]; hasScope {
+				if _, hasModels := fields["parallel_backup_models"]; hasModels {
+					return nil, fmt.Errorf("stream_hedge.parallel_backup_scope and parallel_backup_models cannot be combined")
+				}
+				switch parallelScope {
+				case "claude":
+					snapshot.hedgeParallelScope = StreamHedgeParallelClaude
+				case "all":
+					snapshot.hedgeParallelScope = StreamHedgeParallelAll
+				default:
+					return nil, fmt.Errorf("stream_hedge.parallel_backup_scope must be claude or all")
+				}
+			}
+			if (len(snapshot.hedgeParallelModels) != 0 || snapshot.hedgeParallelScope != StreamHedgeParallelOff) && !snapshot.hedgeSameChannelFirst {
+				return nil, fmt.Errorf("stream_hedge parallel backups require retry_same_channel_first to be true")
 			}
 			if snapshot.hedgeModels != nil {
 				for _, model := range snapshot.hedgeParallelModels {
@@ -175,15 +202,19 @@ func SetChannelRetryPolicy(value string) error {
 // GetChannelRetryStreamHedge resolves the JSON entry for the requested model.
 // An explicit disable or a model outside the list must not fall back to the
 // legacy startup setting. Only an absent JSON entry allows that fallback.
-func GetChannelRetryStreamHedge(model string) (delayMS int, sameChannelFirst, parallelBackups, configured bool) {
+func GetChannelRetryStreamHedge(model string) (delayMS int, sameChannelFirst bool, parallelScope StreamHedgeParallelScope, configured bool) {
 	snapshot := channelRetryPolicy.Load()
 	if snapshot == nil || !snapshot.hedgeConfigured {
-		return 0, false, false, false
+		return 0, false, StreamHedgeParallelOff, false
 	}
 	if snapshot.hedgeModels != nil && !slices.Contains(snapshot.hedgeModels, model) {
-		return 0, false, false, true
+		return 0, false, StreamHedgeParallelOff, true
 	}
-	return snapshot.hedgeDelayMS, snapshot.hedgeSameChannelFirst, slices.Contains(snapshot.hedgeParallelModels, model), true
+	parallelScope = snapshot.hedgeParallelScope
+	if slices.Contains(snapshot.hedgeParallelModels, model) {
+		parallelScope = StreamHedgeParallelClaude
+	}
+	return snapshot.hedgeDelayMS, snapshot.hedgeSameChannelFirst, parallelScope, true
 }
 
 // MatchChannelRetryPolicy returns the first matching action. All fields on a

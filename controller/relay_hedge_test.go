@@ -112,7 +112,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"hedge-test":1,"alternate":1,"expensive":2}`))
 	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["hedge-test","alternate","expensive"]`))
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"auto":"auto","hedge-test":"main","alternate":"alternate","expensive":"expensive"}`))
-	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"claude-opus-5-5":0,"claude-fable-5-2":0}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"claude-opus-5-5":0,"claude-fable-5-2":0,"custom-native-alias":0}`))
 	require.NoError(t, db.Create(&model.User{Id: 981, Username: "hedge-test", Quota: 1000000, Status: common.UserStatusEnabled}).Error)
 	require.NoError(t, db.Create(&model.Token{Id: 982, UserId: 981, Key: "hedge-test", RemainQuota: 1000000, Status: common.TokenStatusEnabled}).Error)
 
@@ -144,6 +144,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 		{"json_opus_excluded", 1, false, 200, false},
 		{"legacy_fable_not_enabled", 1, false, 200, false},
 		{"json_parallel_fable", 3, true, 200, true},
+		{"json_parallel_claude_scope_alias", 3, true, 200, true},
 		{"json_parallel_fable_auto_same_group", 3, true, 200, true},
 		{"json_parallel_fable_cross_enabled", 1, true, 200, false},
 		{"json_parallel_fable_cross_disabled", 1, true, 200, false},
@@ -155,6 +156,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			modelName := opus
 			if strings.Contains(tc.name, "fable") {
 				modelName = fable
+			}
+			if tc.name == "json_parallel_claude_scope_alias" {
+				modelName = "custom-native-alias"
 			}
 			payload := `{"model":"` + modelName + `","stream":true,"max_tokens":64,"messages":[{"role":"user","content":"replayed body"}]}`
 			parallel := strings.HasPrefix(tc.name, "json_parallel_")
@@ -363,6 +367,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			}
 			if parallel {
 				policy = `[{"stream_hedge":{"delay_ms":160,"retry_same_channel_first":true,"parallel_backup_models":["claude-fable-5-2"]}}]`
+				if tc.name == "json_parallel_claude_scope_alias" {
+					policy = `[{"stream_hedge":{"delay_ms":160,"retry_same_channel_first":true,"parallel_backup_scope":"claude"}}]`
+				}
 			}
 			if tc.name == "json_budget_only_allows_same_channel" || tc.name == "json_parallel_fable_one_slot" {
 				common.RetryTimes = 1
