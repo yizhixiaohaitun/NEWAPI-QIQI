@@ -21,7 +21,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -145,6 +144,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 		{"legacy_fable_not_enabled", 1, false, 200, false},
 		{"json_parallel_fable", 3, true, 200, true},
 		{"json_parallel_claude_scope_alias", 3, true, 200, true},
+		{"json_parallel_all_chat_alias", 3, true, 200, true},
+		{"json_parallel_all_responses_alias", 3, true, 200, true},
+		{"json_parallel_all_gemini_alias", 3, true, 200, true},
 		{"json_parallel_fable_auto_same_group", 3, true, 200, true},
 		{"json_parallel_fable_cross_enabled", 1, true, 200, false},
 		{"json_parallel_fable_cross_disabled", 1, true, 200, false},
@@ -157,10 +159,11 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			if strings.Contains(tc.name, "fable") {
 				modelName = fable
 			}
-			if tc.name == "json_parallel_claude_scope_alias" {
+			allProtocols := strings.HasPrefix(tc.name, "json_parallel_all_")
+			if tc.name == "json_parallel_claude_scope_alias" || allProtocols {
 				modelName = "custom-native-alias"
 			}
-			payload := `{"model":"` + modelName + `","stream":true,"max_tokens":64,"messages":[{"role":"user","content":"replayed body"}]}`
+			protocol := hedgeHTTPProtocolFor(modelName, tc.name)
 			parallel := strings.HasPrefix(tc.name, "json_parallel_")
 			cross := strings.Contains(tc.name, "_cross_")
 			auto := cross || tc.name == "json_parallel_fable_auto_same_group"
@@ -215,9 +218,15 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 					w.Header().Set("Content-Type", "text/event-stream")
 					w.Header().Set(common.RequestIdKey, label+"-request-id")
 					send := func(data string) { _, _ = io.WriteString(w, "data: "+data+"\r\n\r\n"); w.(http.Flusher).Flush() }
-					send(`{"type":"message_start","message":{"id":"` + label + `-preamble","model":"` + modelName + `","usage":{"input_tokens":10,"output_tokens":1}}}`)
-					send(`{"type":"ping"}`)
-					send(`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
+					if protocol.frames != nil {
+						for _, frame := range protocol.frames(label, true) {
+							send(frame)
+						}
+					} else {
+						send(`{"type":"message_start","message":{"id":"` + label + `-preamble","model":"` + modelName + `","usage":{"input_tokens":10,"output_tokens":1}}}`)
+						send(`{"type":"ping"}`)
+						send(`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
+					}
 					close(started[lane])
 					wait := func(ch <-chan struct{}) {
 						select {
@@ -331,6 +340,12 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 							return
 						}
 					}
+					if protocol.frames != nil {
+						for _, frame := range protocol.frames(label, false) {
+							send(frame)
+						}
+						return
+					}
 					send(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"` + label + `-visible"}}`)
 					if tc.name == "committed_error" {
 						send(`{"type":"error","error":{"type":"rate_limit_error","message":"local rate limit"}}`)
@@ -370,6 +385,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 				if tc.name == "json_parallel_claude_scope_alias" {
 					policy = `[{"stream_hedge":{"delay_ms":160,"retry_same_channel_first":true,"parallel_backup_scope":"claude"}}]`
 				}
+				if allProtocols {
+					policy = `[{"stream_hedge":{"delay_ms":160,"retry_same_channel_first":true,"parallel_backup_scope":"all"}}]`
+				}
 			}
 			if tc.name == "json_budget_only_allows_same_channel" || tc.name == "json_parallel_fable_one_slot" {
 				common.RetryTimes = 1
@@ -388,17 +406,17 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 				backupGroup = "alternate"
 			}
 			high, low, weight := int64(10), int64(0), uint(1)
-			require.NoError(t, db.Create(&[]model.Channel{{Id: primaryID, Type: constant.ChannelTypeAnthropic, Name: "primary", Key: "key-a", BaseURL: &a.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &high, Weight: &weight}, {Id: backupID, Type: constant.ChannelTypeAnthropic, Name: "backup", Key: "key-b", BaseURL: &b.URL, Group: backupGroup, Models: modelName, Status: common.ChannelStatusEnabled, Priority: &low, Weight: &weight}}).Error)
+			require.NoError(t, db.Create(&[]model.Channel{{Id: primaryID, Type: protocol.channelType, Name: "primary", Key: "key-a", BaseURL: &a.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &high, Weight: &weight}, {Id: backupID, Type: protocol.channelType, Name: "backup", Key: "key-b", BaseURL: &b.URL, Group: backupGroup, Models: modelName, Status: common.ChannelStatusEnabled, Priority: &low, Weight: &weight}}).Error)
 			require.NoError(t, db.Create(&[]model.Ability{{Group: "hedge-test", Model: modelName, ChannelId: primaryID, Enabled: true, Priority: &high, Weight: 1}, {Group: backupGroup, Model: modelName, ChannelId: backupID, Enabled: true, Priority: &low, Weight: 1}}).Error)
 			if (tc.fallback && !parallel) || tc.name == "retry_budget_spent_by_backup" || tc.name == "committed_error" || tc.name == "request_deadline_cancels_both" {
 				last := int64(-1)
-				require.NoError(t, db.Create(&model.Channel{Id: fallbackID, Type: constant.ChannelTypeAnthropic, Name: "fallback", Key: "key-c", BaseURL: &third.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &last, Weight: &weight}).Error)
+				require.NoError(t, db.Create(&model.Channel{Id: fallbackID, Type: protocol.channelType, Name: "fallback", Key: "key-c", BaseURL: &third.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &last, Weight: &weight}).Error)
 				require.NoError(t, db.Create(&model.Ability{Group: "hedge-test", Model: modelName, ChannelId: fallbackID, Enabled: true, Priority: &last, Weight: 1}).Error)
 			}
 			service.InitHttpClient()
 			router := gin.New()
 			router.PUT("/api/option/", UpdateOption)
-			router.POST("/v1/messages", func(c *gin.Context) {
+			router.POST(protocol.path, func(c *gin.Context) {
 				defer common.CleanupBodyStorage(c)
 				common.SetContextKey(c, constant.ContextKeyUsingGroup, "hedge-test")
 				common.SetContextKey(c, constant.ContextKeyTokenGroup, "hedge-test")
@@ -422,7 +440,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 					common.SetContextKey(c, constant.ContextKeyTokenUpstreamTimeout, 1)
 				}
 				c.Next()
-			}, middleware.Distribute(), func(c *gin.Context) { Relay(c, types.RelayFormatClaude) })
+			}, middleware.Distribute(), func(c *gin.Context) { Relay(c, protocol.format) })
 			// Save through the real settings handler and use the same process for relay.
 			putPolicy := func(rules string, wantSuccess bool) {
 				t.Helper()
@@ -443,7 +461,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 				require.NoError(t, db.First(&saved, "key = ?", operation_setting.ChannelRetryPolicyOption).Error)
 				require.Equal(t, policy, saved.Value)
 			}
-			req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload)).WithContext(ctx)
+			req := httptest.NewRequest(http.MethodPost, protocol.path, strings.NewReader(protocol.payload)).WithContext(ctx)
 			req.Header.Set("Content-Type", "application/json")
 			if tc.name == "client_cancels" {
 				go func() {
@@ -513,8 +531,13 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			} else {
 				label := []string{"primary", "backup", "fallback"}[tc.winner-1]
 				require.Contains(t, out.Header().Get("Content-Type"), "text/event-stream")
-				require.Equal(t, 1, strings.Count(out.Body.String(), label+"-preamble"))
-				require.Equal(t, 1, strings.Count(out.Body.String(), label+"-visible"))
+				if protocol.frames != nil {
+					require.Contains(t, out.Body.String(), label+"-preamble")
+					require.Contains(t, out.Body.String(), label+"-visible")
+				} else {
+					require.Equal(t, 1, strings.Count(out.Body.String(), label+"-preamble"))
+					require.Equal(t, 1, strings.Count(out.Body.String(), label+"-visible"))
+				}
 				for _, other := range []string{"primary", "backup", "fallback"} {
 					if other != label {
 						require.NotContains(t, out.Body.String(), other+"-preamble")
