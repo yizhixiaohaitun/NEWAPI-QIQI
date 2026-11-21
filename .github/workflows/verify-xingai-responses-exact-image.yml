@@ -1,0 +1,74 @@
+name: Verify exact Xingai Responses release image (isolated)
+on:
+  push:
+    branches: [verify/xingai-responses-0c190fb]
+permissions:
+  contents: read
+  actions: read
+  packages: read
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    env:
+      RELEASE_SHA: 0c190fbfe8788f9e054951740b165d3222fc419a
+      RELEASE_BRANCH: release/stream-retry-xingai-20261120
+      REGISTRY_IMAGE: ghcr.io/yizhixiaohaitun/newapi-qiqi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull by digest and match the exact site-specific release
+        working-directory: ci-xingai-responses
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          url="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/ghcr-newapi-qiqi.yml/runs?head_sha=$RELEASE_SHA&event=push"
+          run=
+          for (( i=0; i<75; i++ )); do
+            all=$(curl -fSs --max-time 20 -H "Authorization: Bearer $GH_TOKEN" "$url")
+            run=$(jq -c --arg ref "$RELEASE_BRANCH" --arg sha "$RELEASE_SHA" '[.workflow_runs[] | select(.head_sha==$sha and .head_branch==$ref)] | first // empty' <<<"$all")
+            if [[ $run && $(jq -r .status <<<"$run") == completed ]]; then break; fi
+            sleep 10
+          done
+          test "$(jq -r .conclusion <<<"$run")" = success
+          date=$(jq -r .run_started_at <<<"$run" | cut -c1-10 | tr -d -)
+          version=newapi-qiqi-$date-${RELEASE_SHA:0:7}
+          ref=$REGISTRY_IMAGE:$version
+          digest=$(docker buildx imagetools inspect "$ref" | awk '$1=="Digest:" {print $2; exit}')
+          [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]
+          image="$ref@$digest"
+          docker pull --platform linux/amd64 "$image"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$RELEASE_SHA"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" = linux/amd64
+          id=$(docker image inspect --format '{{.Id}}' "$image")
+          jq -n --arg sha "$RELEASE_SHA" --arg tag "$version" --arg digest "$digest" --arg config_digest "$id" --argjson build_run "$(jq .id <<<"$run")" '$ARGS.named' > isolated-image.json
+          echo "XINGAI_IMAGE=$image" >> "$GITHUB_ENV"
+      - name: Exercise early and committed terminal errors with simulated upstream only
+        working-directory: ci-xingai-responses
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull python:3.12-alpine
+          net="xingai-responses-${GITHUB_RUN_ID}"
+          app="$net-gateway"
+          docker network create --internal "$net"
+          trap 'docker rm -fv "$app" >/dev/null 2>&1 || true; docker network rm "$net" >/dev/null 2>&1 || true' EXIT
+          docker run --pull=never -d --name "$app" --network "$net" --network-alias gateway --tmpfs /data -e STREAMING_TIMEOUT=30 "$XINGAI_IMAGE"
+          result=0
+          docker run --rm --pull=never --network "$net" --network-alias fixture -v "$PWD:/verify" -w /verify python:3.12-alpine python3 -u isolated-responses.py || result=$?
+          if (( result != 0 )); then docker logs --tail 60 "$app" > isolated-diagnostics.log 2>&1; exit "$result"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exact-image-xingai-responses-0c190fb
+          path: |
+            ci-xingai-responses/isolated-*.json
+            ci-xingai-responses/isolated-diagnostics.log
+          retention-days: 14
+          if-no-files-found: warn

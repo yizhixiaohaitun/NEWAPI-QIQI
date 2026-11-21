@@ -1,0 +1,6 @@
+{
+  "model": "gpt-6.2-astra",
+  "input": "只回复 OK",
+  "stream": true,
+  "store": false
+}
