@@ -222,6 +222,22 @@ func statelessStreamRace(format types.RelayFormat, body []byte) bool {
 		}
 	}
 	if format == types.RelayFormatGemini {
+		// References and thought signatures can be bound to the original provider resource.
+		var request dto.GeminiChatRequest
+		if json.Unmarshal(body, &request) != nil || len(request.Requests) != 0 {
+			return false
+		}
+		contents := request.Contents
+		if request.SystemInstructions != nil {
+			contents = append(contents, *request.SystemInstructions)
+		}
+		for _, content := range contents {
+			for _, part := range content.Parts {
+				if part.FileData != nil || len(part.ThoughtSignature) != 0 {
+					return false
+				}
+			}
+		}
 		var tools []map[string]json.RawMessage
 		if raw := fields["tools"]; len(raw) != 0 && json.Unmarshal(raw, &tools) != nil {
 			return false

@@ -25,6 +25,8 @@ func TestStreamRaceKeepsStatefulRequestsOnOrdinaryPath(t *testing.T) {
 		{"gemini function tool", types.RelayFormatGemini, `{"tools":[{"functionDeclarations":[]}]}`, true},
 		{"gemini provider tool", types.RelayFormatGemini, `{"tools":[{"codeExecution":{}}]}`, false},
 		{"gemini cached state", types.RelayFormatGemini, `{"cachedContent":"cachedContents/state"}`, false},
+		{"gemini file reference", types.RelayFormatGemini, `{"contents":[{"parts":[{"file_data":{"fileUri":"files/example"}}]}]}`, false},
+		{"gemini thought signature", types.RelayFormatGemini, `{"contents":[{"parts":[{"thoughtSignature":"YWJj"}]}]}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) { require.Equal(t, tc.eligible, statelessStreamRace(tc.format, []byte(tc.request))) })
 	}
