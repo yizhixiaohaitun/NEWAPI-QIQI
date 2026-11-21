@@ -1,14 +1,14 @@
-name: Validate exact 89 stream hedge image (no deployment)
+name: Validate exact 89 hedge scope image (no deployment)
 on:
   push:
-    branches: [verify/89-hedge-image-4a53506]
+    branches: [verify/89-hedge-scope-e674132]
 permissions:
   contents: read
   packages: read
 jobs:
   isolated:
     runs-on: ubuntu-latest
-    timeout-minutes: 9
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
@@ -16,32 +16,46 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Pull and match exact digest, config ID and revision
+      - name: Pull the release by digest and inspect the image revision
         working-directory: ci-hedge-verification
+        shell: bash
         run: |
           set -euo pipefail
-          remote=$(jq -r '"ghcr.io/yizhixiaohaitun/newapi-qiqi:"+.tag+"@"+.digest' build-image-evidence.json)
-          tag=$(jq -r .image verified-local-image.json)
-          repo=ghcr.io/yizhixiaohaitun/newapi-qiqi
-          index=$(docker buildx imagetools inspect --raw "$remote")
+          sha=e674132207f04681e94874e16028045fd42f89fd
+          tag=newapi-qiqi-20261121-${sha:0:7}
+          ref=ghcr.io/yizhixiaohaitun/newapi-qiqi:$tag
+          for ((i=0; i<50; i++)); do
+            if docker buildx imagetools inspect "$ref" > /dev/null 2>&1; then break; fi
+            sleep 15
+          done
+          digest=$(docker buildx imagetools inspect "$ref" | awk '$1=="Digest:" && !shown++ {print $2}')
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          repo=${ref%:*}
+          index=$(docker buildx imagetools inspect --raw "$repo@$digest")
           child=$(jq -er '[.manifests[] | select(.platform.os=="linux" and .platform.architecture=="amd64")]|if length==1 then .[0].digest else error("ambiguous linux/amd64") end' <<< "$index")
           manifest=$(docker buildx imagetools inspect --raw "$repo@$child")
-          test "$(jq -er .config.digest <<< "$manifest")" = "$(jq -r .id verified-local-image.json)"
           docker pull --platform linux/amd64 "$repo@$child"
-          docker tag "$repo@$child" "$tag"
-          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$tag")" = "$(jq -r .sha build-image-evidence.json)"
-      - name: Exercise settings and simulated upstream in isolated scratch containers
+          image=newapi-verified-local:$tag
+          docker tag "$repo@$child" "$image"
+          test "$(docker inspect --format '{{.Id}}' "$image")" = "$(jq -er .config.digest <<< "$manifest")"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$sha"
+          id=$(docker inspect --format '{{.Id}}' "$image")
+          jq -n --arg tag "$tag" --arg sha "$sha" --arg digest "$digest" '$ARGS.named' > build-image-evidence.json
+          jq -n --arg image "$image" --arg id "$id" --arg digest "$digest" --arg revision "$sha" '$ARGS.named' > verified-local-image.json
+      - name: Test settings and simulated Claude and OpenAI traffic
         working-directory: ci-hedge-verification
         run: |
-          python3 -c 'import requests' || python3 -m pip install requests
+          python3 -c 'import requests'
           python3 -u smoke-image.py
           python3 -u isolated-stream.py
+          python3 -u isolated-stream.py chat
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: exact-image-hedge-4a53506
+          name: exact-image-hedge-e674132
           path: |
             ci-hedge-verification/local-image-smoke*.json
             ci-hedge-verification/local-image-smoke-diagnostics.log
             ci-hedge-verification/isolated-stream.json
+            ci-hedge-verification/isolated-chat.json
           if-no-files-found: warn

@@ -12,7 +12,7 @@ build = json.loads((ROOT / 'build-image-evidence.json').read_text(encoding='utf8
 image = json.loads((ROOT/'verified-local-image.json').read_text())['image']
 name = 'newapi-json-smoke-' + uuid.uuid4().hex[:10]
 option = 'ChannelRetryPolicy'
-value = '[{"channel_id":123,"status":429,"action":"stop"},{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,"models":["claude-fable-5-2","claude-opus-5-5"],"parallel_backup_models":["claude-fable-5-2"]}}]'
+value = '[{"channel_id":123,"status":429,"action":"stop"},{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,"parallel_backup_scope":"claude"}}]'
 
 def docker(*args):
     return subprocess.run(['docker', *args], check=True, text=True, capture_output=True, timeout=300).stdout.strip()
@@ -65,7 +65,10 @@ try:
     with login() as session:
         assert read(session) == '[]', 'default is not empty'
         assert put(session, value)['success'] and read(session) == value, 'valid rules did not apply immediately'
-        assert not put(session, '[{"stream_hedge":{"delay_ms":15000,"parallel_backup_models":["claude-fable-5-2"]}}]')['success'] and read(session) == value, 'invalid rules overwrote last valid configuration'
+        all_models = value.replace('\"claude\"', '\"all\"')
+        assert put(session, all_models)['success'] and read(session) == all_models, 'all models mode was not saved'
+        value = all_models
+        assert not put(session, '[{"stream_hedge":{"delay_ms":15000,"parallel_backup_scope":"all"}}]')['success'] and read(session) == value, 'invalid rules overwrote last valid configuration'
         assert wait_ready(base) == start, 'local app unexpectedly restarted during option update'
     docker('restart', name)
     restarted_port = int(docker('port', name, '3000/tcp').rsplit(':', 1)[1])
@@ -76,7 +79,7 @@ try:
     with login() as session:
         assert read(session) == value, 'policy did not reload from the local database'
         assert put(session, '[]')['success'] and read(session) == '[]', 'clear failed'
-    out = {'version': build['tag'], 'digest': build['digest'], 'admin_route': True, 'anonymous_rejected': True, 'empty_default': True, 'save_without_restart': True, 'invalid_save_preserves_value': True, 'persistent_after_restart': True, 'empty_clear': True, 'upstream_calls': 0, 'parallel_allowlist_saved': True}
+    out = {'version': build['tag'], 'digest': build['digest'], 'admin_route': True, 'anonymous_rejected': True, 'empty_default': True, 'save_without_restart': True, 'invalid_save_preserves_value': True, 'persistent_after_restart': True, 'empty_clear': True, 'upstream_calls': 0, 'parallel_scope_saved': True}
     with (ROOT / 'local-image-smoke.json').open('x', encoding='utf8') as f:
         json.dump(out, f, indent=2)
     print(json.dumps(out), flush=True)
