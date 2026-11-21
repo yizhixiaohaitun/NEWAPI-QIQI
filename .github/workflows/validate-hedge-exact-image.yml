@@ -22,14 +22,18 @@ jobs:
           set -euo pipefail
           remote=$(jq -r '"ghcr.io/yizhixiaohaitun/newapi-qiqi:"+.tag+"@"+.digest' build-image-evidence.json)
           tag=$(jq -r .image verified-local-image.json)
-          docker pull --platform linux/amd64 "$remote"
-          docker tag "$remote" "$tag"
-          test "$(docker inspect --format '{{.Id}}' "$tag")" = "$(jq -r .id verified-local-image.json)"
-          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$tag")" = "$(jq -r .sha build-image-evidence.json)"
+          repo=ghcr.io/yizhixiaohaitun/newapi-qiqi
+          index=$(docker buildx imagetools inspect --raw "$remote")
+          child=$(jq -er '[.manifests[] | select(.platform.os=="linux" and .platform.architecture=="amd64")]|if length==1 then .[0].digest else error("ambiguous linux/amd64") end' <<< "$index")
+          manifest=$(docker buildx imagetools inspect --raw "$repo@$child")
+          test "$(jq -er .config.digest <<< "$manifest")" = "$(jq -r .id verified-local-image.json)"
+          docker pull --platform linux/amd64 "$repo@$child"
+          docker tag "$repo@$child" "$tag"
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$tag")" = "$(jq -r .sha build-image-evidence.json)"
       - name: Exercise settings and simulated upstream in isolated scratch containers
         working-directory: ci-hedge-verification
         run: |
-          python3 -c 'import requests'
+          python3 -c 'import requests' || python3 -m pip install requests
           python3 -u smoke-image.py
           python3 -u isolated-stream.py
       - uses: actions/upload-artifact@v4

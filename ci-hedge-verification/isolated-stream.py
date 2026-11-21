@@ -7,7 +7,7 @@ read=lambda name: json.loads((R/name).read_text(encoding='utf8'))
 B=read('build-image-evidence.json'); V=read('verified-local-image.json')
 assert (V['revision'],V['digest'])==(B['sha'],B['digest'])
 def docker(*args): return subprocess.check_output(['docker',*args],text=True,timeout=45).strip()
-assert docker('image','inspect',V['image'],'--format','{{.Id}}')==V['id']
+assert docker('image','inspect',V['image'],'--format','{{ index .Config.Labels "org.opencontainers.image.revision" }}')==B['sha']
 name='parallel-sse-'+uuid.uuid4().hex[:9]; model='claude-fable-5-2'; arrivals={}; lock=threading.Lock(); same_started=threading.Event(); trial=0
 class Upstream(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
