@@ -37,9 +37,12 @@ jobs:
           docker pull --platform linux/amd64 "$repo@$child"
           image=newapi-verified-local:$tag
           docker tag "$repo@$child" "$image"
-          test "$(docker inspect --format '{{.Id}}' "$image")" = "$(jq -er .config.digest <<< "$manifest")"
-          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$sha"
-          id=$(docker inspect --format '{{.Id}}' "$image")
+          id=$(docker image inspect --format '{{.Id}}' "$image")
+          config=$(jq -er .config.digest <<< "$manifest")
+          revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
+          printf 'Platform manifest %s; config %s; Docker ID %s; revision %s\n' "$child" "$config" "$id" "$revision"
+          [[ "$id" == "$config" || "$id" == "$child" ]]
+          test "$revision" = "$sha"
           jq -n --arg tag "$tag" --arg sha "$sha" --arg digest "$digest" '$ARGS.named' > build-image-evidence.json
           jq -n --arg image "$image" --arg id "$id" --arg digest "$digest" --arg revision "$sha" '$ARGS.named' > verified-local-image.json
       - name: Test settings and simulated Claude and OpenAI traffic
