@@ -1,0 +1,43 @@
+name: Validate exact 89 stream hedge image (no deployment)
+on:
+  push:
+    branches: [verify/89-hedge-image-4a53506]
+permissions:
+  contents: read
+  packages: read
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull and match exact digest, config ID and revision
+        working-directory: ci-hedge-verification
+        run: |
+          set -euo pipefail
+          remote=$(jq -r '"ghcr.io/yizhixiaohaitun/newapi-qiqi:"+.tag+"@"+.digest' build-image-evidence.json)
+          tag=$(jq -r .image verified-local-image.json)
+          docker pull --platform linux/amd64 "$remote"
+          docker tag "$remote" "$tag"
+          test "$(docker inspect --format '{{.Id}}' "$tag")" = "$(jq -r .id verified-local-image.json)"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$tag")" = "$(jq -r .sha build-image-evidence.json)"
+      - name: Exercise settings and simulated upstream in isolated scratch containers
+        working-directory: ci-hedge-verification
+        run: |
+          python3 -c 'import requests'
+          python3 -u smoke-image.py
+          python3 -u isolated-stream.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exact-image-hedge-4a53506
+          path: |
+            ci-hedge-verification/local-image-smoke*.json
+            ci-hedge-verification/local-image-smoke-diagnostics.log
+            ci-hedge-verification/isolated-stream.json
+          if-no-files-found: warn
