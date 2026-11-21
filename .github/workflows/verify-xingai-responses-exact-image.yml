@@ -46,8 +46,15 @@ jobs:
           docker pull --platform linux/amd64 "$image"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$RELEASE_SHA"
           test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" = linux/amd64
+          # With the containerd store, Docker ID may be a manifest, not the OCI config.
           id=$(docker image inspect --format '{{.Id}}' "$image")
-          jq -n --arg sha "$RELEASE_SHA" --arg tag "$version" --arg digest "$digest" --arg config_digest "$id" --argjson build_run "$(jq .id <<<"$run")" '$ARGS.named' > isolated-image.json
+          doc=$(docker buildx imagetools inspect --raw "$REGISTRY_IMAGE@$digest")
+          platform=$(jq -er --arg root "$digest" 'if has("manifests") then [.manifests[] | select(.platform.os=="linux" and .platform.architecture=="amd64")] | if length==1 then .[0].digest else error("expected one amd64 manifest") end else $root end' <<<"$doc")
+          [[ $platform =~ ^sha256:[0-9a-f]{64}$ ]]
+          cdigest=$(docker buildx imagetools inspect --raw "$REGISTRY_IMAGE@$platform" | jq -er '.config.digest')
+          [[ $cdigest =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ $id == "$digest" || $id == "$platform" || $id == "$cdigest" ]]
+          jq -n --arg sha "$RELEASE_SHA" --arg tag "$version" --arg digest "$digest" --arg config_digest "$cdigest" --arg docker_image_id "$id" --arg platform_manifest_digest "$platform" --argjson build_run "$(jq .id <<<"$run")" '$ARGS.named' > isolated-image.json
           echo "XINGAI_IMAGE=$image" >> "$GITHUB_ENV"
       - name: Exercise early and committed terminal errors with simulated upstream only
         working-directory: ci-xingai-responses

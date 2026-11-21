@@ -47,6 +47,8 @@ class Fixture(BaseHTTPRequestHandler):
                 else:
                     frame({'type':'response.reasoning_summary_text.delta','delta':'delivered reasoning'})
                     frame({'type':'response.function_call_arguments.done','item_id':'smoke-call','arguments':'{}'})
+                    if scenario == 'after':
+                        frame({'type':'response.output_text.delta','delta':'billable fixture output'})
                     frame({'code':9007199254740993}, 'response.error')
                 # Intentionally leave the upstream connection open beyond the client's timeout.
                 threading.Event().wait(8)
@@ -128,16 +130,17 @@ def once(scenario):
         assert 'delivered reasoning' in raw and any(i.get('type')=='response.function_call_arguments.done' for i in items)
         assert raw.count('event: response.error') == 1, raw[:800]
         assert sum(i.get('code')==9007199254740993 for i in items) == 1, raw[:800]
+        assert ('billable fixture output' in raw) == (scenario == 'after')
     charge = before - api('GET','/api/user/self')['quota']
-    assert charge == 500, (scenario,charge)
+    assert charge == (0 if scenario == 'after_no_usage' else 500), (scenario,charge)
     return {'scenario':scenario,'attempts':actual,'ended_before_upstream_closed':True,'charge_quota':charge}
 
 try:
-    observations = [once('before'), once('after')]
+    observations = [once('before'), once('after_no_usage'), once('after')]
     logs = api('GET','/api/log/?type=2&model_name='+model)['items']
-    assert len(logs)==2 and all(l['quota']==500 for l in logs), len(logs)
+    assert sorted(l['quota'] for l in logs)==[0,500,500], [(l['quota'],l.get('channel_id')) for l in logs]
     assert api('GET','/api/status')['start_time']==status['start_time']
-    result=dict(proof, early_rolled_to_second_channel=True, committed_error_once_without_replay=True, numeric_error_code_preserved=True, one_charge_per_request=True, real_upstream_calls=0, sample=sample, observations=observations)
+    result=dict(proof, early_rolled_to_second_channel=True, committed_error_once_without_replay=True, numeric_error_code_preserved=True, one_charge_per_billable_request=True, reasoning_tool_only_no_usage_kept_zero=True, real_upstream_calls=0, sample=sample, observations=observations)
     (HERE / 'isolated-responses.json').write_text(json.dumps(result,indent=2,ensure_ascii=False)+'\n', encoding='utf-8')
     print(json.dumps(result,ensure_ascii=False))
 finally:
