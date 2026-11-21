@@ -144,7 +144,7 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 
 ### Claude Opus 5.5 原生流并行重试
 
-- `controller/relay_hedge.go`：默认关闭。未配置 JSON `stream_hedge` 时沿用 `STREAM_HEDGE_DELAY_MS` 的单次换路备用；开启 `retry_same_channel_first` 时，初始 Claude Opus 5.5 原生流按同一间隔先尝试原渠道，再尝试同组其他兼容渠道。只发布最先产出有效内容的一路并取消其余请求；每个备用消耗一次既有重试额度并共用请求总时限。
+- `controller/relay_hedge.go`：默认关闭。未配置 JSON `stream_hedge` 时沿用 `STREAM_HEDGE_DELAY_MS` 的单次换路备用；开启 `retry_same_channel_first` 后，初始 Claude 原生流按同一间隔先试原渠道、再试同组其他兼容渠道；显式列入 `stream_hedge.parallel_backup_models` 的型号同一间隔同时启动两条备用。并行备用只在本次实际分组内选路，不扩大跨组权限。只发布最先产出有效内容的一路并取消其余请求；每个备用消耗一次既有重试额度并共用请求总时限。
 - `controller/relay.go`：初始并行阶段未提交时，普通可重试错误和单路有效输出等待超时可以在剩余预算内继续换渠道，排除该阶段已尝试的单 key 渠道；上游真实 HTTP 504、请求总超时、亲和及指定渠道仍沿用原有停止策略。已提交不重放。回归 `controller/relay_hedge_test.go`。
 
 ### 分组与渠道重试选择链路

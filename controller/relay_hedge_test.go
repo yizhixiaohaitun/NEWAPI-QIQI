@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -31,7 +32,7 @@ func TestStreamRaceFirstEffectiveOutputWins(t *testing.T) {
 	primaryCtx, primaryCancel := context.WithCancelCause(ctx)
 	backupCtx, backupCancel := context.WithCancelCause(ctx)
 	r := &streamRace{ctx: ctx, started: 1, cancel: [maxStreamRaceLanes]context.CancelCauseFunc{primaryCancel, backupCancel}, lanes: [maxStreamRaceLanes]context.Context{primaryCtx, backupCtx}}
-	require.True(t, r.startBackup())
+	require.True(t, r.startBackups(1))
 	require.True(t, r.claim(2))
 	require.ErrorIs(t, context.Cause(primaryCtx), relaycommon.ErrStreamRaceLost)
 	require.Nil(t, context.Cause(backupCtx))
@@ -44,7 +45,7 @@ func TestStreamRaceBackupCanWinAfterPrimaryFinished(t *testing.T) {
 	defer primaryCancel(nil)
 	defer backupCancel(nil)
 	r := &streamRace{ctx: context.Background(), started: 1, cancel: [maxStreamRaceLanes]context.CancelCauseFunc{primaryCancel, backupCancel}, lanes: [maxStreamRaceLanes]context.Context{primaryCtx, backupCtx}}
-	require.True(t, r.startBackup())
+	require.True(t, r.startBackups(1))
 	r.done[0] = true
 	require.True(t, r.claim(2))
 	require.ErrorIs(t, context.Cause(primaryCtx), relaycommon.ErrStreamRaceLost)
@@ -57,7 +58,7 @@ func TestStreamRaceDoesNotStartAfterPrimaryFinished(t *testing.T) {
 	backupCtx, backupCancel := context.WithCancelCause(ctx)
 	r := &streamRace{ctx: ctx, started: 1, cancel: [maxStreamRaceLanes]context.CancelCauseFunc{primaryCancel, backupCancel}, lanes: [maxStreamRaceLanes]context.Context{primaryCtx, backupCtx}}
 	r.done[0] = true
-	require.False(t, r.startBackup())
+	require.False(t, r.startBackups(1))
 	require.False(t, r.claim(2))
 	require.Nil(t, context.Cause(primaryCtx))
 	require.Nil(t, context.Cause(backupCtx))
@@ -71,6 +72,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 	oldRetry, oldCount, oldLog, oldError := common.RetryTimes, constant.CountToken, common.LogConsumeEnabled, constant.ErrorLogEnabled
 	oldHedge, oldIdle := constant.StreamHedgeDelayMS, constant.StreamingTimeout
 	oldRatios, oldPrices := ratio_setting.GroupRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	oldGroups, oldAutoGroups := setting.UserUsableGroups2JSONString(), setting.AutoGroups2JsonString()
 	oldPing := *operation_setting.GetGeneralSetting()
 	oldRetryStatuses := operation_setting.AutomaticRetryStatusCodesToString()
 	oldGlobal := *model_setting.GetGlobalSettings()
@@ -89,6 +91,8 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 		common.RetryTimes, constant.CountToken, common.LogConsumeEnabled, constant.ErrorLogEnabled = oldRetry, oldCount, oldLog, oldError
 		constant.StreamHedgeDelayMS, constant.StreamingTimeout = oldHedge, oldIdle
 		*operation_setting.GetGeneralSetting() = oldPing
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(oldAutoGroups))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(oldGroups))
 		require.NoError(t, operation_setting.AutomaticRetryStatusCodesFromString(oldRetryStatuses))
 		*model_setting.GetGlobalSettings() = oldGlobal
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldRatios))
@@ -105,7 +109,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 	operation_setting.GetGeneralSetting().PingIntervalEnabled = true
 	operation_setting.GetGeneralSetting().PingIntervalSeconds = 1
 	model_setting.GetGlobalSettings().AutoChatToResponsesEnabled = false
-	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"hedge-test":1}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"hedge-test":1,"alternate":1,"expensive":2}`))
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["hedge-test","alternate","expensive"]`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"auto":"auto","hedge-test":"main","alternate":"alternate","expensive":"expensive"}`))
 	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"claude-opus-5-5":0,"claude-fable-5-2":0}`))
 	require.NoError(t, db.Create(&model.User{Id: 981, Username: "hedge-test", Quota: 1000000, Status: common.UserStatusEnabled}).Error)
 	require.NoError(t, db.Create(&model.Token{Id: 982, UserId: 981, Key: "hedge-test", RemainQuota: 1000000, Status: common.TokenStatusEnabled}).Error)
@@ -137,6 +143,12 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 		{"json_fable_without_model_list", 3, true, 200, true},
 		{"json_opus_excluded", 1, false, 200, false},
 		{"legacy_fable_not_enabled", 1, false, 200, false},
+		{"json_parallel_fable", 3, true, 200, true},
+		{"json_parallel_fable_auto_same_group", 3, true, 200, true},
+		{"json_parallel_fable_cross_enabled", 1, true, 200, false},
+		{"json_parallel_fable_cross_disabled", 1, true, 200, false},
+		{"json_parallel_fable_cross_fixed", 1, true, 200, false},
+		{"json_parallel_fable_one_slot", 1, true, 200, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const primaryID, backupID, fallbackID = 983, 984, 985
@@ -145,10 +157,14 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 				modelName = fable
 			}
 			payload := `{"model":"` + modelName + `","stream":true,"max_tokens":64,"messages":[{"role":"user","content":"replayed body"}]}`
+			parallel := strings.HasPrefix(tc.name, "json_parallel_")
+			cross := strings.Contains(tc.name, "_cross_")
+			auto := cross || tc.name == "json_parallel_fable_auto_same_group"
 			sameChannel := strings.HasPrefix(tc.name, "json_") && tc.backup
 			var primaryRequests atomic.Int32
 			var calls [3]atomic.Int32
 			var bodies [3]atomic.Pointer[string]
+			var arrived [3]atomic.Int64
 			started := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 			finished := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 			canceled := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
@@ -167,6 +183,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 						w.WriteHeader(500)
 						return
 					}
+					arrived[lane].Store(time.Now().UnixNano())
 					defer close(finished[lane])
 					body, _ := io.ReadAll(r.Body)
 					text := string(body)
@@ -203,6 +220,28 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 						case <-ch:
 						case <-ctx.Done():
 						case <-r.Context().Done():
+						}
+					}
+					if parallel {
+						if tc.winner == 3 {
+							if lane < 2 {
+								<-r.Context().Done()
+								close(canceled[lane])
+								return
+							}
+							wait(started[0])
+							wait(started[1])
+						} else if lane == 0 {
+							wait(started[1])
+							select {
+							case <-time.After(240 * time.Millisecond):
+							case <-r.Context().Done():
+								return
+							}
+						} else if lane == 1 {
+							<-r.Context().Done()
+							close(canceled[lane])
+							return
 						}
 					}
 					switch tc.name {
@@ -322,7 +361,10 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 				constant.StreamHedgeDelayMS = 0
 				policy = `[{"stream_hedge":{"delay_ms":70,"retry_same_channel_first":true}}]`
 			}
-			if tc.name == "json_budget_only_allows_same_channel" {
+			if parallel {
+				policy = `[{"stream_hedge":{"delay_ms":160,"retry_same_channel_first":true,"parallel_backup_models":["claude-fable-5-2"]}}]`
+			}
+			if tc.name == "json_budget_only_allows_same_channel" || tc.name == "json_parallel_fable_one_slot" {
 				common.RetryTimes = 1
 			}
 			switch tc.name {
@@ -334,10 +376,14 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			require.NoError(t, db.Exec("DELETE FROM channels").Error)
 			require.NoError(t, db.Exec("DELETE FROM abilities").Error)
 			require.NoError(t, db.Exec("DELETE FROM logs").Error)
+			backupGroup := "hedge-test"
+			if cross {
+				backupGroup = "alternate"
+			}
 			high, low, weight := int64(10), int64(0), uint(1)
-			require.NoError(t, db.Create(&[]model.Channel{{Id: primaryID, Type: constant.ChannelTypeAnthropic, Name: "primary", Key: "key-a", BaseURL: &a.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &high, Weight: &weight}, {Id: backupID, Type: constant.ChannelTypeAnthropic, Name: "backup", Key: "key-b", BaseURL: &b.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &low, Weight: &weight}}).Error)
-			require.NoError(t, db.Create(&[]model.Ability{{Group: "hedge-test", Model: modelName, ChannelId: primaryID, Enabled: true, Priority: &high, Weight: 1}, {Group: "hedge-test", Model: modelName, ChannelId: backupID, Enabled: true, Priority: &low, Weight: 1}}).Error)
-			if tc.fallback || tc.name == "retry_budget_spent_by_backup" || tc.name == "committed_error" || tc.name == "request_deadline_cancels_both" {
+			require.NoError(t, db.Create(&[]model.Channel{{Id: primaryID, Type: constant.ChannelTypeAnthropic, Name: "primary", Key: "key-a", BaseURL: &a.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &high, Weight: &weight}, {Id: backupID, Type: constant.ChannelTypeAnthropic, Name: "backup", Key: "key-b", BaseURL: &b.URL, Group: backupGroup, Models: modelName, Status: common.ChannelStatusEnabled, Priority: &low, Weight: &weight}}).Error)
+			require.NoError(t, db.Create(&[]model.Ability{{Group: "hedge-test", Model: modelName, ChannelId: primaryID, Enabled: true, Priority: &high, Weight: 1}, {Group: backupGroup, Model: modelName, ChannelId: backupID, Enabled: true, Priority: &low, Weight: 1}}).Error)
+			if (tc.fallback && !parallel) || tc.name == "retry_budget_spent_by_backup" || tc.name == "committed_error" || tc.name == "request_deadline_cancels_both" {
 				last := int64(-1)
 				require.NoError(t, db.Create(&model.Channel{Id: fallbackID, Type: constant.ChannelTypeAnthropic, Name: "fallback", Key: "key-c", BaseURL: &third.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &last, Weight: &weight}).Error)
 				require.NoError(t, db.Create(&model.Ability{Group: "hedge-test", Model: modelName, ChannelId: fallbackID, Enabled: true, Priority: &last, Weight: 1}).Error)
@@ -349,6 +395,14 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 				defer common.CleanupBodyStorage(c)
 				common.SetContextKey(c, constant.ContextKeyUsingGroup, "hedge-test")
 				common.SetContextKey(c, constant.ContextKeyTokenGroup, "hedge-test")
+				if auto {
+					common.SetContextKey(c, constant.ContextKeyUserGroup, "hedge-test")
+					common.SetContextKey(c, constant.ContextKeyTokenCrossGroupRetry, tc.name != "json_parallel_fable_cross_disabled")
+					if tc.name != "json_parallel_fable_cross_fixed" {
+						common.SetContextKey(c, constant.ContextKeyUsingGroup, "auto")
+						common.SetContextKey(c, constant.ContextKeyTokenGroup, "auto")
+					}
+				}
 				common.SetContextKey(c, constant.ContextKeyUserSetting, dto.UserSetting{BillingPreference: "wallet_only", AcceptUnsetRatioModel: true})
 				common.SetContextKey(c, constant.ContextKeyUserId, 981)
 				common.SetContextKey(c, constant.ContextKeyUserQuota, 1000000)
@@ -410,6 +464,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			} else {
 				require.Zero(t, calls[2].Load())
 			}
+			if parallel && tc.fallback {
+				require.Less(t, time.Duration(max(arrived[2].Load()-arrived[1].Load(), arrived[1].Load()-arrived[2].Load())), 110*time.Millisecond)
+			}
 			waitCanceled := func(lane int) {
 				t.Helper()
 				select {
@@ -432,6 +489,14 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			}
 			var logs []model.Log
 			require.NoError(t, db.Where("type = ?", model.LogTypeConsume).Find(&logs).Error)
+			if parallel {
+				if tc.winner == 3 {
+					waitCanceled(0)
+					waitCanceled(1)
+				} else {
+					waitCanceled(1)
+				}
+			}
 			if tc.winner == 0 {
 				if tc.name != "no_retry_budget" { // The ordinary path does not use a private stream writer.
 					require.NotContains(t, out.Header().Get("Content-Type"), "text/event-stream")
@@ -457,6 +522,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 						wantChannelID--
 					}
 					require.Equal(t, wantChannelID, logs[0].ChannelId)
+					if parallel {
+						require.Equal(t, "hedge-test", logs[0].Group)
+					}
 				}
 			}
 		})

@@ -188,7 +188,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 	retryLimit := common.RetryTimes
-	hedgeDelayMS, hedgeSameChannelFirst, hedgeConfigured := operation_setting.GetChannelRetryStreamHedge(relayInfo.OriginModelName)
+	hedgeDelayMS, hedgeSameChannelFirst, hedgeParallelBackups, hedgeConfigured := operation_setting.GetChannelRetryStreamHedge(relayInfo.OriginModelName)
 	// Preserve the legacy startup-only behavior until an admin supplies JSON.
 	if !hedgeConfigured && dto.IsClaudeOpus55(relayInfo.OriginModelName) {
 		hedgeDelayMS = constant.StreamHedgeDelayMS
@@ -243,7 +243,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		var racedBackups []*model.Channel
 		if retryParam.GetRetry() == 0 && retryLimit > 0 && hedgeDelayMS > 0 {
 			attempt, racedBackups = raceRelayStream(c, relayInfo, channel, requestUpstreamCtx, bodyStorage,
-				time.Duration(hedgeDelayMS)*time.Millisecond, hedgeSameChannelFirst, retryLimit)
+				time.Duration(hedgeDelayMS)*time.Millisecond, hedgeSameChannelFirst, hedgeParallelBackups, retryLimit)
 			for range racedBackups {
 				// Each delayed attempt consumes a slot from the shared retry budget.
 				retryParam.IncreaseRetry()

@@ -47,7 +47,7 @@ func TestChannelRetryPolicyStreamHedge(t *testing.T) {
 	t.Cleanup(func() { channelRetryPolicy.Store(previous) })
 	assertHedge := func(delay int, same, configured bool) {
 		t.Helper()
-		gotDelay, gotSame, gotConfigured := GetChannelRetryStreamHedge("claude-opus-5-5")
+		gotDelay, gotSame, _, gotConfigured := GetChannelRetryStreamHedge("claude-opus-5-5")
 		require.Equal(t, delay, gotDelay)
 		require.Equal(t, same, gotSame)
 		require.Equal(t, configured, gotConfigured)
@@ -83,17 +83,17 @@ func TestChannelRetryPolicyStreamHedgeModels(t *testing.T) {
 	const opus = "claude-opus-5-5"
 	const policy = `[{"status":429,"action":"stop"},{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,"models":["claude-fable-5-2"]}}]`
 	require.NoError(t, SetChannelRetryPolicy(policy))
-	delay, same, configured := GetChannelRetryStreamHedge(fable)
+	delay, same, _, configured := GetChannelRetryStreamHedge(fable)
 	require.Equal(t, 15000, delay)
 	require.True(t, same)
 	require.True(t, configured)
-	delay, _, configured = GetChannelRetryStreamHedge(opus)
+	delay, _, _, configured = GetChannelRetryStreamHedge(opus)
 	require.Zero(t, delay)
 	require.True(t, configured, "a model excluded by JSON must not use the legacy fallback")
 
 	for _, invalid := range []string{`null`, `"claude-fable-5-2"`, `[null]`, `[" "]`, `[1]`} {
 		require.Error(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":10,"models":`+invalid+`}}]`))
-		delay, _, _ = GetChannelRetryStreamHedge(fable)
+		delay, _, _, _ = GetChannelRetryStreamHedge(fable)
 		require.Equal(t, 15000, delay)
 	}
 	retry, matched := MatchChannelRetryPolicy(1, 429, "", "")
@@ -101,14 +101,39 @@ func TestChannelRetryPolicyStreamHedgeModels(t *testing.T) {
 	require.True(t, matched)
 
 	require.NoError(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":15000,"models":[]}}]`))
-	delay, _, configured = GetChannelRetryStreamHedge(fable)
+	delay, _, _, configured = GetChannelRetryStreamHedge(fable)
 	require.Zero(t, delay)
 	require.True(t, configured)
 
 	require.NoError(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":15000}}]`))
 	for _, model := range []string{fable, opus, "custom-native-claude"} {
-		delay, _, configured = GetChannelRetryStreamHedge(model)
+		delay, _, _, configured = GetChannelRetryStreamHedge(model)
 		require.Equal(t, 15000, delay)
 		require.True(t, configured)
 	}
+}
+
+func TestChannelRetryPolicyParallelBackups(t *testing.T) {
+	previous := channelRetryPolicy.Load()
+	t.Cleanup(func() { channelRetryPolicy.Store(previous) })
+	const enabled = `[{"status":429,"action":"stop"},{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,"parallel_backup_models":["claude-fable-5-2"]}}]`
+	require.NoError(t, SetChannelRetryPolicy(enabled))
+	for _, value := range []string{`null`, `true`, `[null]`, `[" "]`} {
+		require.Error(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,"parallel_backup_models":`+value+`}}]`))
+	}
+	require.Error(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":15000,"parallel_backup_models":["claude-fable-5-2"]}}]`))
+	require.Error(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,"models":[],"parallel_backup_models":["claude-fable-5-2"]}}]`))
+	delay, same, parallel, configured := GetChannelRetryStreamHedge("claude-fable-5-2")
+	require.Equal(t, 15000, delay)
+	require.True(t, same && parallel && configured)
+	delay, same, parallel, configured = GetChannelRetryStreamHedge("claude-opus-5-5")
+	require.Equal(t, 15000, delay)
+	require.True(t, same && configured)
+	require.False(t, parallel)
+	retry, matched := MatchChannelRetryPolicy(1, 429, "", "")
+	require.True(t, matched)
+	require.False(t, retry)
+	require.NoError(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":15000,"retry_same_channel_first":true,"parallel_backup_models":[]}}]`))
+	_, _, parallel, _ = GetChannelRetryStreamHedge("claude-fable-5-2")
+	require.False(t, parallel)
 }

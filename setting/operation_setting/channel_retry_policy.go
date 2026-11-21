@@ -32,6 +32,7 @@ type channelRetrySnapshot struct {
 	hedgeSameChannelFirst bool
 	hedgeConfigured       bool
 	hedgeModels           []string
+	hedgeParallelModels   []string
 }
 
 var channelRetryPolicy atomic.Pointer[channelRetrySnapshot]
@@ -66,6 +67,8 @@ func parseChannelRetryPolicy(value string) (*channelRetrySnapshot, error) {
 					dst = &snapshot.hedgeSameChannelFirst
 				case "models":
 					dst = &snapshot.hedgeModels
+				case "parallel_backup_models":
+					dst = &snapshot.hedgeParallelModels
 				default:
 					return nil, fmt.Errorf("stream_hedge: unknown field %q", key)
 				}
@@ -76,12 +79,27 @@ func parseChannelRetryPolicy(value string) (*channelRetrySnapshot, error) {
 			if _, ok := fields["delay_ms"]; !ok || snapshot.hedgeDelayMS < 0 || snapshot.hedgeDelayMS > 300_000 {
 				return nil, fmt.Errorf("stream_hedge.delay_ms must be an integer between 0 and 300000")
 			}
-			for i, model := range snapshot.hedgeModels {
-				model = strings.TrimSpace(model)
-				if model == "" {
-					return nil, fmt.Errorf("stream_hedge.models must contain non-blank model names")
+			for _, modelList := range []struct {
+				name   string
+				models []string
+			}{{"models", snapshot.hedgeModels}, {"parallel_backup_models", snapshot.hedgeParallelModels}} {
+				for i, model := range modelList.models {
+					model = strings.TrimSpace(model)
+					if model == "" {
+						return nil, fmt.Errorf("stream_hedge.%s must contain non-blank model names", modelList.name)
+					}
+					modelList.models[i] = model
 				}
-				snapshot.hedgeModels[i] = model
+			}
+			if len(snapshot.hedgeParallelModels) != 0 && !snapshot.hedgeSameChannelFirst {
+				return nil, fmt.Errorf("stream_hedge.parallel_backup_models requires retry_same_channel_first to be true")
+			}
+			if snapshot.hedgeModels != nil {
+				for _, model := range snapshot.hedgeParallelModels {
+					if !slices.Contains(snapshot.hedgeModels, model) {
+						return nil, fmt.Errorf("stream_hedge.parallel_backup_models must be a subset of models when both are provided")
+					}
+				}
 			}
 			snapshot.hedgeConfigured = true
 			continue
@@ -157,15 +175,15 @@ func SetChannelRetryPolicy(value string) error {
 // GetChannelRetryStreamHedge resolves the JSON entry for the requested model.
 // An explicit disable or a model outside the list must not fall back to the
 // legacy startup setting. Only an absent JSON entry allows that fallback.
-func GetChannelRetryStreamHedge(model string) (delayMS int, sameChannelFirst bool, configured bool) {
+func GetChannelRetryStreamHedge(model string) (delayMS int, sameChannelFirst, parallelBackups, configured bool) {
 	snapshot := channelRetryPolicy.Load()
 	if snapshot == nil || !snapshot.hedgeConfigured {
-		return 0, false, false
+		return 0, false, false, false
 	}
 	if snapshot.hedgeModels != nil && !slices.Contains(snapshot.hedgeModels, model) {
-		return 0, false, true
+		return 0, false, false, true
 	}
-	return snapshot.hedgeDelayMS, snapshot.hedgeSameChannelFirst, true
+	return snapshot.hedgeDelayMS, snapshot.hedgeSameChannelFirst, slices.Contains(snapshot.hedgeParallelModels, model), true
 }
 
 // MatchChannelRetryPolicy returns the first matching action. All fields on a

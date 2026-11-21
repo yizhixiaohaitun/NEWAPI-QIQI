@@ -37,15 +37,15 @@ type streamRace struct {
 	done    [maxStreamRaceLanes]bool
 }
 
-func (r *streamRace) startBackup() bool {
+func (r *streamRace) startBackups(count int) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.started >= maxStreamRaceLanes || r.winner != 0 || r.ctx.Err() != nil {
+	if count < 1 || r.started+count > maxStreamRaceLanes || r.winner != 0 || r.ctx.Err() != nil {
 		return false
 	}
 	for lane := 0; lane < r.started; lane++ {
 		if !r.done[lane] && r.lanes[lane].Err() == nil {
-			r.started++
+			r.started += count
 			return true
 		}
 	}
@@ -152,8 +152,8 @@ func (w *raceStreamWriter) publish(c *gin.Context) error {
 	return nil
 }
 
-// A race is limited to the first attempt and native HTTP SSE adapters. Use the
-// effective billing group, never a different auto group or a pinned resource.
+// A race is limited to the first attempt and native HTTP SSE adapters. Never
+// race a pinned resource or bypass an affinity rule that prevents retries.
 func canRaceStream(c *gin.Context, info *relaycommon.RelayInfo, channel *model.Channel) bool {
 	if info.PurityDetectionRequest || !info.IsStream || c.Writer.Written() || service.ShouldSkipRetryAfterChannelAffinityFailure(c) || service.ShouldProtectResponsesStateAffinity(c) {
 		return false
@@ -251,9 +251,38 @@ func (a *streamRaceAttempt) run(r *streamRace, lane int, ctx context.Context) {
 	a.info.DeferStreamSettlement = nil
 }
 
+func (a *streamRaceAttempt) prepareBackupChannel(channel *model.Channel) bool {
+	if channel == nil || !nativeRaceStream(&a.info, channel.Id, channel.Type) {
+		return false
+	}
+	a.c.Set(string(constant.ContextKeyChannelOrganization), "")
+	a.c.Set(string(constant.ContextKeyChannelMultiKeyIndex), 0)
+	if err := middleware.SetupContextForSelectedChannel(a.c, channel, a.info.OriginModelName); err != nil {
+		return false
+	}
+	a.channel = channel
+	return true
+}
+
+// Select only within the request's effective group. Parallel hedging does not
+// opt a token into cross-group routing or introduce another pricing group.
+func (a *streamRaceAttempt) prepareParallelAlternate(ctx context.Context, group string, primaryID int) {
+	excluded := map[int]bool{primaryID: true}
+	for len(excluded) <= 16 && ctx.Err() == nil {
+		channel, err := model.GetRandomSatisfiedChannelExcluding(group, a.info.OriginModelName, 0, a.c.Request.URL.Path, excluded)
+		if err != nil || channel == nil {
+			return
+		}
+		if channel.Status == common.ChannelStatusEnabled && a.prepareBackupChannel(channel) {
+			return
+		}
+		excluded[channel.Id] = true
+	}
+}
+
 // A nil attempt means the ordinary relay path should run. The returned
 // backups are actual attempts, each counted against the shared retry budget.
-func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model.Channel, budget context.Context, storage common.BodyStorage, wait time.Duration, sameChannelFirst bool, retries int) (*streamRaceAttempt, []*model.Channel) {
+func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model.Channel, budget context.Context, storage common.BodyStorage, wait time.Duration, sameChannelFirst, parallelBackups bool, retries int) (*streamRaceAttempt, []*model.Channel) {
 	if !canRaceStream(c, info, primary) || storage.IsDisk() || storage.Size() > 1<<20 {
 		return nil, nil
 	}
@@ -328,31 +357,40 @@ func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model
 			if r.lanes[i].Err() != nil {
 				continue
 			}
-			candidate := attempts[i]
-			channel := primary
-			if !sameChannelFirst || i != 1 {
-				channel, err = model.GetRandomSatisfiedChannelExcluding(group, info.OriginModelName, 0, c.Request.URL.Path, map[int]bool{primary.Id: true})
-				if err != nil || channel == nil || !nativeRaceStream(&candidate.info, channel.Id, channel.Type) {
-					continue
-				}
-				candidate.c.Set(string(constant.ContextKeyChannelOrganization), "")
-				candidate.c.Set(string(constant.ContextKeyChannelMultiKeyIndex), 0)
-				if err := middleware.SetupContextForSelectedChannel(candidate.c, channel, candidate.info.OriginModelName); err != nil {
-					continue
-				}
+			last := i + 1
+			if parallelBackups && count == 3 {
+				last = count
 			}
-			// The same-channel attempt reuses the selected channel configuration
-			// captured before the primary began, including its existing key.
-			if !r.startBackup() {
+			for j := i; j < last; j++ {
+				candidate := attempts[j]
+				if sameChannelFirst && j == 1 {
+					// Reuse the original selection, including its existing key.
+					candidate.channel = primary
+				} else if parallelBackups {
+					candidate.prepareParallelAlternate(r.lanes[j], group, primary.Id)
+				} else {
+					channel, err := model.GetRandomSatisfiedChannelExcluding(group, info.OriginModelName, 0, c.Request.URL.Path, map[int]bool{primary.Id: true})
+					if err == nil {
+						candidate.prepareBackupChannel(channel)
+					}
+				}
+				if candidate.channel == nil {
+					last = j
+					break
+				}
+				candidate.info.RetryIndex += j
+				service.MarkChannelAffinityUsed(candidate.c, group, candidate.channel.Id)
+			}
+			// Reserve both slots at the same threshold, before either backup can win.
+			if !r.startBackups(last - i) {
 				continue
 			}
-			candidate.channel = channel
-			candidate.info.RetryIndex += i
-			service.MarkChannelAffinityUsed(candidate.c, group, channel.Id)
-			logger.LogInfo(candidate.c, "stream backup started")
-			launch(i)
-			running++
-			if i+1 < count {
+			for j := i; j < last; j++ {
+				logger.LogInfo(attempts[j].c, "stream backup started")
+				launch(j)
+				running++
+			}
+			if !parallelBackups && last < count {
 				timer.Reset(wait)
 				timerC = timer.C
 			}
