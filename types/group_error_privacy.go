@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -116,8 +117,19 @@ func (e *NewAPIError) CopyWithPublicMessage(message string) *NewAPIError {
 // SanitizeGroupErrorStreamData only rewrites structured error envelopes. A
 // normal completion containing the same words remains byte-for-byte unchanged.
 func SanitizeGroupErrorStreamData(data string) (string, bool) {
+	return SanitizeGroupErrorStreamEventData("", data)
+}
+
+// SanitizeGroupErrorStreamEventData accepts a native Responses SSE header as
+// a fallback only when a terminal name is paired with a JSON object lacking type.
+func SanitizeGroupErrorStreamEventData(eventName, data string) (string, bool) {
 	var envelope map[string]any
-	if err := common.Unmarshal([]byte(data), &envelope); err != nil || !isErrorEnvelope(envelope) {
+	if err := common.UnmarshalUseNumber(common.StringToByteSlice(data), &envelope); err != nil || envelope == nil {
+		return data, false
+	}
+	_, hasType := envelope["type"]
+	inferred := !hasType && IsResponsesTerminalEvent(eventName)
+	if !inferred && !isErrorEnvelope(envelope) {
 		return data, false
 	}
 
@@ -132,6 +144,9 @@ func SanitizeGroupErrorStreamData(data string) (string, bool) {
 		return data, false
 	}
 
+	if inferred {
+		envelope["type"] = eventName
+	}
 	envelope = rebuildPublicErrorEnvelope(envelope, kind)
 	encoded, err := common.Marshal(envelope)
 	if err != nil {
@@ -145,12 +160,20 @@ func isErrorEnvelope(envelope map[string]any) bool {
 		return true
 	}
 	eventType, _ := envelope["type"].(string)
-	switch strings.ToLower(strings.TrimSpace(eventType)) {
-	case "error", "response.error", "response.failed":
+	if IsResponsesTerminalEvent(strings.ToLower(strings.TrimSpace(eventType))) {
 		return true
 	}
 	if response, ok := envelope["response"].(map[string]any); ok {
 		return response["error"] != nil
+	}
+	return false
+}
+
+// IsResponsesTerminalEvent reports the three exact terminal event names.
+func IsResponsesTerminalEvent(eventType string) bool {
+	switch eventType {
+	case "error", "response.error", "response.failed":
+		return true
 	}
 	return false
 }
@@ -180,7 +203,7 @@ func safePublicErrorType(value string) string {
 
 func safePublicErrorClassifier(value any) any {
 	switch typed := value.(type) {
-	case nil, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+	case nil, json.Number, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return typed
 	case string:
 		normalized := strings.ToLower(strings.TrimSpace(typed))
@@ -198,11 +221,8 @@ func safePublicErrorClassifier(value any) any {
 // error phrase. Non-error stream payloads never enter this function.
 func rebuildPublicErrorEnvelope(envelope map[string]any, kind groupErrorKind) map[string]any {
 	result := make(map[string]any, 4)
-	if eventType, ok := envelope["type"].(string); ok {
-		switch strings.ToLower(strings.TrimSpace(eventType)) {
-		case "error", "response.error", "response.failed":
-			result["type"] = eventType
-		}
+	if eventType, ok := envelope["type"].(string); ok && IsResponsesTerminalEvent(strings.ToLower(strings.TrimSpace(eventType))) {
+		result["type"] = eventType
 	}
 
 	hasNestedError := false
@@ -226,7 +246,7 @@ func rebuildPublicErrorEnvelope(envelope map[string]any, kind groupErrorKind) ma
 		if code := safePublicErrorClassifier(envelope["code"]); code != nil {
 			result["code"] = code
 		}
-		if sequence, ok := envelope["sequence_number"].(float64); ok {
+		if sequence, ok := envelope["sequence_number"].(json.Number); ok {
 			result["sequence_number"] = sequence
 		}
 	}

@@ -218,7 +218,10 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		})
 	}
 
-	dataChan := make(chan string, 10)
+	type streamLine struct {
+		data, eventName string
+	}
+	dataChan := make(chan streamLine, 10)
 
 	wg.Add(1)
 	gopool.Go(func() {
@@ -231,13 +234,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			wg.Done()
 		}()
 		sr := newStreamResult(info.StreamStatus)
-		for data := range dataChan {
+		for line := range dataChan {
 			sr.reset()
+			sr.eventName = line.eventName
 			func() {
 				writeMutex.Lock()
 				defer writeMutex.Unlock()
 				ExtendWriteDeadline(c)
-				dataHandler(data, sr)
+				dataHandler(line.data, sr)
 			}()
 			if sr.IsStopped() {
 				return
@@ -259,6 +263,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			wg.Done()
 		}()
 
+		var eventName string
 		for scanner.Scan() {
 			// 检查是否需要停止
 			select {
@@ -273,12 +278,21 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			data := scanner.Text()
 			logger.LogDebug(c, "stream scanner data: %s", data)
 
-			if len(data) < 6 {
+			switch {
+			case data == "", data == "event", data == "data", data == "data:":
+				eventName = ""
+				continue
+			case strings.HasPrefix(data, "event:"):
+				eventName = strings.TrimSpace(strings.TrimPrefix(data, "event:"))
 				continue
 			}
-			if data[:5] != "data:" && data[:6] != "[DONE]" {
+			if len(data) < 6 || (data[:5] != "data:" && data[:6] != "[DONE]") {
 				continue
 			}
+			// Keep the existing one-callback-per-data-line contract, including
+			// providers that omit blank lines. Never inherit a prior data line's name.
+			name := eventName
+			eventName = ""
 			data = data[5:]
 			data = strings.TrimSpace(data)
 			if data == "" {
@@ -289,7 +303,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				info.ReceivedResponseCount++
 
 				select {
-				case dataChan <- data:
+				case dataChan <- streamLine{data: data, eventName: name}:
 				case <-ctx.Done():
 					return
 				case <-stopChan:

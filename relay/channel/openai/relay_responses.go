@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -75,14 +77,16 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var responseTextBuilder strings.Builder
 	var streamErr *types.NewAPIError
 	retryEnabled := operation_setting.IsResponsesStreamErrorRetryEnabled()
+	originalWriter := c.Writer
+	cancelValue, _ := common.GetContextKey(c, constant.ContextKeyUpstreamCancel)
+	cancelUpstream, _ := cancelValue.(context.CancelFunc)
+	delivery := &responsesDeliveryWriter{ResponseWriter: originalWriter, cancelUpstream: cancelUpstream}
+	c.Writer = delivery
+	defer func() { c.Writer = originalWriter }()
 	var retryWriter *upstreamStreamRetryWriter
 	if retryEnabled {
-		originalWriter := c.Writer
-		retryWriter = newUpstreamStreamRetryWriter(originalWriter)
+		retryWriter = newUpstreamStreamRetryWriter(delivery)
 		c.Writer = retryWriter
-		defer func() {
-			c.Writer = originalWriter
-		}()
 	}
 	var affinityAliases []string
 	addAffinityAliases := func(values ...string) {
@@ -93,10 +97,12 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
-
-		// 检查当前数据是否包含 completed 状态和 usage 信息
+		if delivery.err != nil {
+			sr.Stop(delivery.err)
+			return
+		}
 		var streamResponse dto.ResponsesStreamResponse
-		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
+		if err := common.UnmarshalUseNumber(common.StringToByteSlice(data), &streamResponse); err != nil {
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
 			if retryWriter != nil && !retryWriter.committed {
 				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
@@ -107,68 +113,63 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
+		inferredEvent := inferResponsesTerminalEvent(sr.EventName(), &streamResponse, data)
+		if inferredEvent != "" {
+			streamResponse.Type = inferredEvent
+		}
 		moderationFrame := streamDataContainsModerationMetadata(data)
 		if moderationFrame {
 			c.Set("upstream_moderation_committed", true)
-			// Commit before error handling and forward the exact JSON. This frame
-			// is meaningful output even when it has no visible text; it must not
-			// be lost by a retry or rebuilt through a DTO.
-			if retryWriter != nil && !retryWriter.committed {
-				if err := retryWriter.Commit(); err != nil {
-					streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
-					sr.Stop(streamErr)
-					return
-				}
-			}
-			if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
-				sr.Error(err)
-				return
-			}
 		}
-
 		upstreamStreamErr := responsesStreamEventError(&streamResponse, data)
 		if upstreamStreamErr != nil {
 			info.StreamStatus.RecordUpstreamError(upstreamStreamErr)
-			if !retryEnabled {
-				recordResponsesStreamRetryRecommendation(c)
-				if !moderationFrame {
-					sendResponsesStreamData(c, info, streamResponse, data)
-				}
-				// Error events are terminal even when retry is disabled. Do not
-				// wait for an upstream EOF that may never arrive.
-				sr.Stop(upstreamStreamErr)
-				return
-			}
-			if retryWriter != nil && !retryWriter.committed {
+			// A frame with audit metadata is meaningful even if it also carries
+			// a terminal error. Publish it once rather than retrying that attempt.
+			if retryWriter != nil && !retryWriter.committed && !moderationFrame {
 				streamErr = upstreamStreamErr
 				markResponsesStreamErrorBeforeCommit(c, info)
 				sr.Stop(streamErr)
 				return
 			}
-			if !moderationFrame {
-				sendResponsesStreamData(c, info, streamResponse, data)
-			}
-			// Output is already committed: preserve the original error once,
-			// then close this stream without replaying the request.
-			sr.Stop(upstreamStreamErr)
-			return
 		}
 
-		if retryWriter != nil && !retryWriter.committed && responsesStreamDataCommitsOutput(&streamResponse, data) {
-			// Commit time is the real first byte; keep the scanner's received count.
-			received := info.ReceivedResponseCount
-			info.ResetFirstResponseTime()
-			info.ReceivedResponseCount = received
-			info.SetFirstResponseTime()
+		if retryWriter != nil && !retryWriter.committed && (moderationFrame || responsesStreamDataCommitsOutput(&streamResponse, data)) {
+			if !moderationFrame {
+				// Commit time is the real first byte; keep the scanner's received count.
+				received := info.ReceivedResponseCount
+				info.ResetFirstResponseTime()
+				info.ReceivedResponseCount = received
+				info.SetFirstResponseTime()
+			}
 			if err := retryWriter.Commit(); err != nil {
-				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
-				sr.Stop(streamErr)
+				sr.Stop(err)
 				return
 			}
 		}
 
-		if !moderationFrame {
-			sendResponsesStreamData(c, info, streamResponse, data)
+		if !moderationFrame && streamResponse.Response != nil && streamResponse.Response.Usage != nil {
+			data = patchResponsesUsageForClient(data, info, streamResponse.Response.Usage, true)
+		}
+		err := helper.NativeResponsesChunkData(c, streamResponse.Type, inferredEvent, data)
+		if delivery.err != nil {
+			sr.Stop(delivery.err)
+			return
+		}
+		// A context check can prevent the renderer from attempting any write.
+		// Leave that on the existing cancellation path, not the write-error path.
+		if err != nil && moderationFrame && upstreamStreamErr == nil {
+			sr.Error(err)
+			return
+		}
+		if upstreamStreamErr != nil {
+			if !retryEnabled {
+				recordResponsesStreamRetryRecommendation(c)
+			}
+			// A delivered terminal event ends the stream without replay and
+			// without discarding the usage of output that was already delivered.
+			sr.Stop(upstreamStreamErr)
+			return
 		}
 		addResponseAffinityAliases(streamResponse.Response)
 		if streamResponse.Item != nil {
@@ -207,6 +208,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		}
 	})
+	if delivery.err != nil {
+		return nil, types.NewDownstreamWriteError(delivery.err)
+	}
 	if streamErr != nil {
 		return nil, streamErr
 	}
@@ -236,31 +240,44 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	return usage, nil
 }
 
+// The SSE header is a fallback, never an override of a JSON type (including
+// explicit empty or null). No other protocol consumes the scanner's event name.
+func inferResponsesTerminalEvent(eventName string, event *dto.ResponsesStreamResponse, data string) string {
+	if event.Type != "" || !types.IsResponsesTerminalEvent(eventName) {
+		return ""
+	}
+	var header struct {
+		Type json.RawMessage `json:"type"`
+	}
+	if common.UnmarshalJsonStr(data, &header) == nil && header.Type == nil && strings.HasPrefix(strings.TrimSpace(data), "{") {
+		return eventName
+	}
+	return ""
+}
+
 func responsesStreamEventError(streamResponse *dto.ResponsesStreamResponse, rawData ...string) *types.NewAPIError {
 	if streamResponse == nil {
 		return nil
 	}
-	eventType := strings.ToLower(strings.TrimSpace(streamResponse.Type))
-	if eventType != "error" && eventType != "response.error" && eventType != "response.failed" && streamResponse.Error == nil && (streamResponse.Response == nil || streamResponse.Response.GetOpenAIError() == nil) {
-		return nil
-	}
-
 	var openAIError *types.OpenAIError
 	if streamResponse.Response != nil {
 		openAIError = streamResponse.Response.GetOpenAIError()
 	}
-	if openAIError == nil {
+	eventType := strings.ToLower(strings.TrimSpace(streamResponse.Type))
+	if !types.IsResponsesTerminalEvent(eventType) && streamResponse.Error == nil && openAIError == nil {
+		return nil
+	}
+	if !responsesStreamErrorHasDetails(openAIError) {
 		openAIError = dto.GetOpenAIError(streamResponse.Error)
 	}
-	// Responses error events also carry code/message directly on the event.
-	// Keep that original error instead of replacing it with a generic message.
-	if (openAIError == nil || (openAIError.Type == "" && openAIError.Message == "")) && len(rawData) > 0 {
+	// Responses errors can carry code and message directly on the event.
+	if !responsesStreamErrorHasDetails(openAIError) && len(rawData) > 0 {
 		var direct types.OpenAIError
-		if common.UnmarshalJsonStr(rawData[0], &direct) == nil && direct.Message != "" {
+		if common.UnmarshalUseNumber(common.StringToByteSlice(rawData[0]), &direct) == nil && (direct.Message != "" || responsesStreamErrorHasCode(direct.Code)) {
 			openAIError = &direct
 		}
 	}
-	if openAIError == nil || (openAIError.Type == "" && openAIError.Message == "") {
+	if !responsesStreamErrorHasDetails(openAIError) {
 		return types.NewOpenAIError(
 			fmt.Errorf("upstream Responses stream returned %s", streamResponse.Type),
 			types.ErrorCodeBadResponse,
@@ -270,12 +287,33 @@ func responsesStreamEventError(streamResponse *dto.ResponsesStreamResponse, rawD
 	return types.WithOpenAIError(*openAIError, responsesStreamErrorStatus(openAIError))
 }
 
+func responsesStreamErrorHasDetails(err *types.OpenAIError) bool {
+	return err != nil && (err.Type != "" || err.Message != "" || responsesStreamErrorHasCode(err.Code))
+}
+
+func responsesStreamErrorHasCode(code any) bool {
+	switch value := code.(type) {
+	case json.Number:
+		return true
+	case string:
+		return value != ""
+	default:
+		return false
+	}
+}
+
 func responsesStreamErrorStatus(openAIError *types.OpenAIError) int {
 	if openAIError == nil {
 		return http.StatusBadGateway
 	}
 	errorType := strings.ToLower(strings.TrimSpace(openAIError.Type))
 	errorCode := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", openAIError.Code)))
+	if code, ok := openAIError.Code.(json.Number); ok {
+		if numeric, err := code.Float64(); err == nil && numeric == http.StatusTooManyRequests {
+			// Interpret a numeric 429 as before without changing its wire form.
+			errorCode = "429"
+		}
+	}
 	switch {
 	case errorType == "too_many_requests", errorType == "rate_limit_error", errorType == "rate_limit_exceeded",
 		errorCode == "rate_limit_exceeded", errorCode == "429",

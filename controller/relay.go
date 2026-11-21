@@ -91,7 +91,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
-			if c.Writer.Written() {
+			if c.Writer.Written() || newAPIError.IsDownstreamWriteError() {
 				return
 			}
 			// This is the single terminal HTTP/WS response boundary. Keep raw
@@ -170,6 +170,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		// Only return quota if downstream failed and quota was actually pre-consumed
 		if newAPIError != nil {
+			if newAPIError.IsDownstreamWriteError() {
+				if relayInfo.Billing != nil {
+					relayInfo.Billing.Refund(c)
+				}
+				return
+			}
 			newAPIError = service.NormalizeViolationFeeError(newAPIError)
 			if relayInfo.Billing != nil {
 				relayInfo.Billing.Refund(c)
@@ -272,6 +278,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			upstreamContextErr = upstreamCtx.Err()
 			firstByteTimedOut = relayInfo.FirstByteWatch != nil && relayInfo.FirstByteWatch.Finish()
 			cancelUpstream()
+		}
+		if newAPIError.IsDownstreamWriteError() {
+			// The failure is local even if canceling the upstream woke a timer.
+			// Do not retry, blame the channel, or overwrite it with a timeout.
+			c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(nil))
+			relayInfo.LastError = newAPIError
+			break
 		}
 		requestContextErr := c.Request.Context().Err()
 		if firstByteTimedOut && requestContextErr == nil && requestUpstreamCtx.Err() == nil {

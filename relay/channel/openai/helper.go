@@ -238,13 +238,3 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 		_ = helper.FlushWriter(c)
 	}
 }
-
-func sendResponsesStreamData(c *gin.Context, info *relaycommon.RelayInfo, streamResponse dto.ResponsesStreamResponse, data string) {
-	if data == "" {
-		return
-	}
-	if streamResponse.Response != nil && streamResponse.Response.Usage != nil {
-		data = patchResponsesUsageForClient(data, info, streamResponse.Response.Usage, true)
-	}
-	_ = helper.ResponseChunkData(c, streamResponse, data)
-}

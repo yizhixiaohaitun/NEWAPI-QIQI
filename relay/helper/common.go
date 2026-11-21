@@ -66,7 +66,11 @@ func ResetEventStreamHeaders(c *gin.Context) {
 }
 
 func sanitizePublicStreamData(c *gin.Context, data string) string {
-	sanitized, changed := types.SanitizeGroupErrorStreamData(data)
+	return sanitizePublicStreamEventData(c, "", data)
+}
+
+func sanitizePublicStreamEventData(c *gin.Context, inferredEvent, data string) string {
+	sanitized, changed := types.SanitizeGroupErrorStreamEventData(inferredEvent, data)
 	if changed {
 		logger.LogError(c, "upstream stream group error: "+common.LocalLogPreview(data))
 		data = sanitized
@@ -104,12 +108,22 @@ func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
 }
 
 func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {
+	return responseChunkData(c, resp.Type, "", data)
+}
+
+// NativeResponsesChunkData accepts a terminal event name inferred from the
+// upstream SSE header only when the native payload lacks a type.
+func NativeResponsesChunkData(c *gin.Context, eventType, inferredEvent, data string) error {
+	return responseChunkData(c, eventType, inferredEvent, data)
+}
+
+func responseChunkData(c *gin.Context, eventType, inferredEvent, data string) error {
 	if requestContextDone(c) {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s", sanitizePublicStreamData(c, data))})
+	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", eventType)})
+	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s", sanitizePublicStreamEventData(c, inferredEvent, data))})
 	return FlushWriter(c)
 }
 

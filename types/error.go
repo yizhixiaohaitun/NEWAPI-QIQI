@@ -49,6 +49,7 @@ const (
 	ErrorCodeJsonMarshalFailed            ErrorCode = "json_marshal_failed"
 	ErrorCodeDoRequestFailed              ErrorCode = "do_request_failed"
 	ErrorCodeClientClosedRequest          ErrorCode = "client_closed_request"
+	ErrorCodeDownstreamWriteFailed        ErrorCode = "downstream_write_failed"
 	ErrorCodeUpstreamTimeout              ErrorCode = "upstream_timeout"
 	ErrorCodeFirstByteTimeout             ErrorCode = "upstream_first_byte_timeout"
 	ErrorCodeStreamOutputTimeout          ErrorCode = "upstream_stream_output_timeout"
@@ -117,6 +118,16 @@ func (e *NewAPIError) GetErrorCode() ErrorCode {
 		return ""
 	}
 	return e.errorCode
+}
+
+// NewDownstreamWriteError is local to this relay; it cannot be produced by
+// an upstream response that happens to use the same public error code.
+func NewDownstreamWriteError(err error) *NewAPIError {
+	return NewErrorWithStatusCode(fmt.Errorf("write stream to client: %w", err), ErrorCodeDownstreamWriteFailed, http.StatusInternalServerError, ErrOptionWithSkipRetry())
+}
+
+func (e *NewAPIError) IsDownstreamWriteError() bool {
+	return e != nil && e.errorType == ErrorTypeNewAPIError && e.errorCode == ErrorCodeDownstreamWriteFailed
 }
 
 func (e *NewAPIError) GetErrorType() ErrorType {
