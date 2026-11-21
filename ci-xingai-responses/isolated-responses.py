@@ -81,7 +81,7 @@ assert status['version'] == proof['tag']
 if api('GET','/api/setup')['status']:
     username, password = 'root', '123456'  # ephemeral database's built-in default
 else:
-    username, password = 'responses-smoke', secrets.token_hex(12)
+    username, password = 'rsp-smoke', secrets.token_hex(12)
     api('POST','/api/setup', {'username':username,'password':password,'confirmPassword':password,'SelfUseModeEnabled':False,'DemoSiteEnabled':False})
 account=api('POST','/api/user/login',{'username':username,'password':password})
 assert account['role'] == 100

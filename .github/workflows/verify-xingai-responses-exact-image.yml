@@ -61,8 +61,9 @@ jobs:
           trap 'docker rm -fv "$app" >/dev/null 2>&1 || true; docker network rm "$net" >/dev/null 2>&1 || true' EXIT
           docker run --pull=never -d --name "$app" --network "$net" --network-alias gateway --tmpfs /data -e STREAMING_TIMEOUT=30 "$XINGAI_IMAGE"
           result=0
-          docker run --rm --pull=never --network "$net" --network-alias fixture -v "$PWD:/verify" -w /verify python:3.12-alpine python3 -u isolated-responses.py || result=$?
-          if (( result != 0 )); then docker logs --tail 60 "$app" > isolated-diagnostics.log 2>&1; exit "$result"; fi
+          docker run --rm --pull=never --network "$net" --network-alias fixture -v "$PWD:/verify" -w /verify python:3.12-alpine python3 -u isolated-responses.py 2>&1 | tee isolated-diagnostics.log || result=$?
+          if (( result != 0 )); then docker logs --tail 70 "$app" >> isolated-diagnostics.log 2>&1; exit "$result"; fi
+          rm isolated-diagnostics.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
