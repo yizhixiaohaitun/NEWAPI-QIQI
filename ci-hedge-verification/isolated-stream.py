@@ -79,6 +79,9 @@ try:
     assert info['role']==100; session.headers['New-Api-User']=str(info['id'])
     def option(k,v): request('PUT','/api/option/',json={'key':k,'value':v})
     option('RetryTimes','2'); option('ModelPrice',json.dumps({model:0.001})); option('QuotaPerUnit','500000')
+    # Exercise the native Chat adapter, not the default Chat-to-Responses bridge.
+    if chat:
+        option('global.auto_chat_to_responses_enabled','false')
     for ch,priority in [('a',10),('b',0)]:
         request('POST','/api/channel/',json={'mode':'single','channel':{'type':1 if chat else 14,'key':'local-fixture-'+ch,'name':'fixture-'+ch,'base_url':f'http://host.docker.internal:{server.server_port}/{ch}','models':model,'group':'default','priority':priority,'weight':1,'status':1,'auto_ban':0}})
     request('POST','/api/token/',json={'name':'fixture','group':'default','remain_quota':100000,'expired_time':-1,'first_byte_timeout':55,'upstream_timeout':60})
