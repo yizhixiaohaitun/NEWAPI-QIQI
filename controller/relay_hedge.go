@@ -165,7 +165,7 @@ func canRaceStream(c *gin.Context, info *relaycommon.RelayInfo, channel *model.C
 }
 
 func nativeRaceStream(info *relaycommon.RelayInfo, id, channelType int) bool {
-	return info.RelayFormat == types.RelayFormatClaude && dto.IsClaudeOpus55(info.OriginModelName) &&
+	return info.RelayFormat == types.RelayFormatClaude &&
 		channelType == constant.ChannelTypeAnthropic && !service.ShouldChatCompletionsUseResponsesGlobal(id, channelType, info.OriginModelName)
 }
 

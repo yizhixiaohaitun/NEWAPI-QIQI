@@ -188,8 +188,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 	retryLimit := common.RetryTimes
-	hedgeDelayMS, hedgeSameChannelFirst, hedgeConfigured := operation_setting.GetChannelRetryStreamHedge()
-	if !hedgeConfigured {
+	hedgeDelayMS, hedgeSameChannelFirst, hedgeConfigured := operation_setting.GetChannelRetryStreamHedge(relayInfo.OriginModelName)
+	// Preserve the legacy startup-only behavior until an admin supplies JSON.
+	if !hedgeConfigured && dto.IsClaudeOpus55(relayInfo.OriginModelName) {
 		hedgeDelayMS = constant.StreamHedgeDelayMS
 	}
 
