@@ -12,7 +12,8 @@ import (
 // tool or provider-bound context might do work even if no output was returned.
 func canReplayEmptyClaudeStream(body []byte) bool {
 	var req struct {
-		Tools []struct {
+		Stream bool `json:"stream"`
+		Tools  []struct {
 			Type        string          `json:"type"`
 			Name        string          `json:"name"`
 			InputSchema json.RawMessage `json:"input_schema"`
@@ -22,7 +23,7 @@ func canReplayEmptyClaudeStream(body []byte) bool {
 		ContextManagement json.RawMessage   `json:"context_management"`
 		ExtraBody         json.RawMessage   `json:"extra_body"`
 	}
-	if common.GetJsonType(body) != "object" || common.Unmarshal(body, &req) != nil || len(req.MCPServers) != 0 {
+	if common.GetJsonType(body) != "object" || common.Unmarshal(body, &req) != nil || !req.Stream || len(req.MCPServers) != 0 {
 		return false
 	}
 	for _, state := range []json.RawMessage{req.Container, req.ContextManagement, req.ExtraBody} {

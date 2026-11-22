@@ -212,23 +212,36 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 	return relayconvert.FormatClaudeResponseInfo(claudeResponse, oaiResponse, claudeInfo)
 }
 
-// Audit results may be nested in the native frame. Decode once and walk only
-// while the race is private, rather than re-decoding every output chunk.
-func claudeFrameHasAudit(value any) bool {
+// Audit results and hosted-tool execution counters may be nested. Inspect
+// only while the race is private, not on every published output chunk.
+func claudeFrameHasProtectedSignal(value any) bool {
 	switch node := value.(type) {
 	case map[string]any:
 		for key, child := range node {
 			switch key {
 			case "safeguards", "safeguard_results", "prompt_filter_results", "content_filter_results", "safety_ratings":
 				return true
+			case "server_tool_use":
+				if child == nil {
+					continue
+				}
+				counters, ok := child.(map[string]any)
+				if !ok {
+					return true
+				}
+				for _, n := range counters {
+					if count, ok := n.(float64); !ok || count != 0 {
+						return true
+					}
+				}
 			}
-			if claudeFrameHasAudit(child) {
+			if claudeFrameHasProtectedSignal(child) {
 				return true
 			}
 		}
 	case []any:
 		for _, child := range node {
-			if claudeFrameHasAudit(child) {
+			if claudeFrameHasProtectedSignal(child) {
 				return true
 			}
 		}
@@ -238,7 +251,7 @@ func claudeFrameHasAudit(value any) bool {
 
 func claudeFrameProtectsReplay(event *dto.ClaudeResponse, data string) bool {
 	var raw any
-	if common.UnmarshalJsonStr(data, &raw) != nil || claudeFrameHasAudit(raw) {
+	if common.UnmarshalJsonStr(data, &raw) != nil || claudeFrameHasProtectedSignal(raw) {
 		return true
 	}
 	for _, block := range []*dto.ClaudeMediaMessage{event.ContentBlock, event.Delta} {

@@ -14,6 +14,10 @@ import (
 // pre-commit empty completion. Keep the public error code and message stable.
 var ErrClaudeStreamEndedWithoutOutput = errors.New("upstream stream ended before effective output")
 
+// ErrClaudeEmptyReplayTargetUnsafe is local routing control, never client-facing.
+// It proves this candidate was rejected before its upstream request was issued.
+var ErrClaudeEmptyReplayTargetUnsafe = errors.New("channel cannot safely replay this empty Claude stream")
+
 type StreamEndReason string
 
 const (

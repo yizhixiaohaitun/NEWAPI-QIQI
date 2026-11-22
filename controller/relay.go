@@ -222,6 +222,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.AdaptiveTransportDispatched = false
 		c.Set("upstream_first_byte_timeout", false)
 		c.Set("upstream_stream_error_before_commit", false)
+		previousError := newAPIError
+		// A candidate rejected before dispatch has not used an auto group or a
+		// retry slot. Preserve the visited set from before channel selection.
+		visitedGroups, _ := common.GetContextKey(c, constant.ContextKeyAutoGroupVisited)
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
@@ -233,7 +237,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 
-		addUsedChannel(c, channel.Id)
+		if !relayInfo.RequireClaudeEmptyReplaySafe {
+			addUsedChannel(c, channel.Id)
+		}
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
 			// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
@@ -282,6 +288,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			upstreamContextErr = upstreamCtx.Err()
 			firstByteTimedOut = relayInfo.FirstByteWatch != nil && relayInfo.FirstByteWatch.Finish()
 			cancelUpstream()
+		}
+		if errors.Is(newAPIError, relaycommon.ErrClaudeEmptyReplayTargetUnsafe) {
+			common.SetContextKey(c, constant.ContextKeyAutoGroupVisited, visitedGroups)
+			service.MarkChannelFailed(c, channel.Id) // local exclusion, also for multi-key
+			c.Set(string(constant.ContextKeyUpstreamCancel), context.CancelFunc(nil))
+			newAPIError = previousError
+			continue
+		}
+		if relayInfo.RequireClaudeEmptyReplaySafe {
+			addUsedChannel(c, channel.Id)
 		}
 		if newAPIError.IsDownstreamWriteError() {
 			// The failure is local even if canceling the upstream woke a timer.
@@ -347,7 +363,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				markChannelFailedForRetry(c, backup)
 			}
 		}
-		if attempt != nil || errors.Is(newAPIError, relaycommon.ErrClaudeStreamEndedWithoutOutput) {
+		if errors.Is(newAPIError, relaycommon.ErrClaudeStreamEndedWithoutOutput) {
+			relayInfo.RequireClaudeEmptyReplaySafe = true
+		}
+		if attempt != nil || relayInfo.RequireClaudeEmptyReplaySafe {
 			// The failed attempt's preamble was never sent downstream. Its frame
 			// count must not affect the next upstream response.
 			relayInfo.ResetFirstResponseTime()

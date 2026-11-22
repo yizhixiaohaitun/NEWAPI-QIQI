@@ -88,7 +88,7 @@ func TestRelayClaudeEmptyStreamHTTP(t *testing.T) {
 		hedge, unmap, noRoute, pinned, noTimer, cancelClient bool
 		budget, status, settledChannel                       int
 		closingText                                          string
-		backupEnd, requestExtra, override                    string
+		backupEnd, requestExtra, override, backupOverride    string
 		paid, keyword, affinityStop, noAccountQuota          bool
 	}{
 		{name: "mapped_429_before_hedge", paid: true, ranges: "429", hedge: true, budget: 2, status: 200, settledChannel: alternate},
@@ -113,6 +113,9 @@ func TestRelayClaudeEmptyStreamHTTP(t *testing.T) {
 		{name: "audit_is_not_discarded", firstEnd: "audit", ranges: "429", hedge: true, budget: 2, status: 200, settledChannel: primary, closingText: "fixture-audit"},
 		{name: "audit_without_first_output_timer_is_not_discarded", firstEnd: "audit", noTimer: true, ranges: "429", hedge: true, budget: 2, status: 200, settledChannel: primary, closingText: "fixture-audit"},
 		{name: "tool_is_not_replayed", firstEnd: "tool", ranges: "429", budget: 2, status: 200, settledChannel: primary, closingText: "fixture-tool"},
+		{name: "hosted_tool_usage_is_not_replayed", firstEnd: "hosted_usage", ranges: "429", hedge: true, budget: 2, status: 200, settledChannel: primary, closingText: `"web_search_requests":1`},
+		{name: "zero_hosted_tool_usage_is_still_empty", firstEnd: "zero_hosted_usage", ranges: "429", hedge: true, budget: 2, status: 200, settledChannel: alternate},
+		{name: "stateful_fallback_body_is_not_dispatched", backupOverride: `{"container":"fixture-container"}`, ranges: "429", hedge: true, budget: 1, status: 429, closingText: emptyMessage, paid: true},
 		{name: "refusal_is_not_replayed", firstEnd: "refusal", ranges: "429", hedge: true, budget: 2, status: 200, settledChannel: primary, closingText: "fixture-refusal"},
 		{name: "stop_details_without_stop_reason_is_not_replayed", firstEnd: "details", ranges: "429", hedge: true, budget: 2, status: 200, settledChannel: primary, closingText: "fixture-details"},
 		{name: "client_tool_definition_is_safe_before_output", requestExtra: `,"tools":[{"name":"lookup","input_schema":{"type":"object"}}]`, ranges: "429", hedge: true, budget: 2, status: 200, settledChannel: alternate},
@@ -224,6 +227,12 @@ func TestRelayClaudeEmptyStreamHTTP(t *testing.T) {
 							send(`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"fixture-tool","name":"lookup","input":{}}}`)
 							send(`{"type":"content_block_stop","index":0}`)
 							send(`{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":2}}`)
+						case "hosted_usage", "zero_hosted_usage":
+							count := 0
+							if tc.firstEnd == "hosted_usage" {
+								count = 1
+							}
+							send(fmt.Sprintf(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1,"server_tool_use":{"web_search_requests":%d}}}`, count))
 						case "refusal":
 							send(`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"explanation":"fixture-refusal"}},"usage":{"output_tokens":2}}`)
 						case "details":
@@ -270,7 +279,7 @@ func TestRelayClaudeEmptyStreamHTTP(t *testing.T) {
 			high, low, weight := int64(10), int64(0), uint(1)
 			require.NoError(t, db.Create(&[]model.Channel{
 				{Id: primary, Type: constant.ChannelTypeAnthropic, Name: "a", Key: "local-a", BaseURL: &a.URL, Group: group, Models: modelName, Status: common.ChannelStatusEnabled, Priority: &high, Weight: &weight, StatusCodeMapping: &mapping, ParamOverride: common.GetPointer(tc.override)},
-				{Id: alternate, Type: constant.ChannelTypeAnthropic, Name: "b", Key: "local-b", BaseURL: &b.URL, Group: backupGroup, Models: modelName, Status: common.ChannelStatusEnabled, Priority: &low, Weight: &weight},
+				{Id: alternate, Type: constant.ChannelTypeAnthropic, Name: "b", Key: "local-b", BaseURL: &b.URL, Group: backupGroup, Models: modelName, Status: common.ChannelStatusEnabled, Priority: &low, Weight: &weight, ParamOverride: common.GetPointer(tc.backupOverride)},
 			}).Error)
 			require.NoError(t, db.Create(&[]model.Ability{
 				{Group: group, Model: modelName, ChannelId: primary, Enabled: true, Priority: &high, Weight: 1},

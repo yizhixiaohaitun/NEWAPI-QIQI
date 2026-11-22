@@ -25,6 +25,12 @@ import (
 func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 
 	info.InitChannelMeta(c)
+	info.ClaudeEmptyStreamReplaySafe = false
+	checkEmptyStreamReplay := info.IsStream && info.RelayFormat == types.RelayFormatClaude &&
+		info.ChannelType == constant.ChannelTypeAnthropic && c.Request.URL.Path == "/v1/messages" && !info.PurityDetectionRequest
+	if info.RequireClaudeEmptyReplaySafe && !checkEmptyStreamReplay {
+		return rejectClaudeEmptyReplayTarget()
+	}
 
 	claudeReq, ok := info.Request.(*dto.ClaudeRequest)
 
@@ -147,6 +153,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	if !rawPassThrough &&
 		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
+		if info.RequireClaudeEmptyReplaySafe {
+			return rejectClaudeEmptyReplayTarget()
+		}
 		result, convErr := service.ConvertRequest(c, info, types.RelayFormatOpenAI, request)
 		if convErr != nil {
 			return types.NewError(convErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -167,9 +176,6 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	var requestBody io.Reader
 	var retrySource []byte
-	info.ClaudeEmptyStreamReplaySafe = false
-	checkEmptyStreamReplay := info.IsStream && info.RelayFormat == types.RelayFormatClaude &&
-		info.ChannelType == constant.ChannelTypeAnthropic && c.Request.URL.Path == "/v1/messages" && !info.PurityDetectionRequest
 	if rawPassThrough {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
@@ -231,6 +237,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		requestBody = body
 	}
 
+	if info.RequireClaudeEmptyReplaySafe && !info.ClaudeEmptyStreamReplaySafe {
+		return rejectClaudeEmptyReplayTarget()
+	}
 	if checkEmptyStreamReplay && info.ClaimStreamOutput == nil && !c.Writer.Written() {
 		headers := c.Writer.Header().Clone()
 		defer func() {
@@ -285,7 +294,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if info.ClaimStreamOutput == nil && attempt == 0 && len(retrySource) > 0 && !c.Writer.Written() &&
 			c.Request.Context().Err() == nil && (info.UpstreamContext == nil || info.UpstreamContext.Err() == nil) &&
 			isClaudeThinkingSignatureRejection(newAPIError) {
-			if body, changed, toolRecovery := prepareClaudeSignatureRecovery(retrySource); changed && claimClaudeSignatureRetry(c, info.ChannelId) {
+			if body, changed, toolRecovery := prepareClaudeSignatureRecovery(retrySource); changed &&
+				(!info.RequireClaudeEmptyReplaySafe || canReplayEmptyClaudeStream(body)) && claimClaudeSignatureRetry(c, info.ChannelId) {
 				toolThinkingRecovery = toolRecovery
 				requestBody = bytes.NewReader(body)
 				if checkEmptyStreamReplay {
@@ -305,4 +315,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
 	}
 	return nil
+}
+
+func rejectClaudeEmptyReplayTarget() *types.NewAPIError {
+	return types.NewError(relaycommon.ErrClaudeEmptyReplayTargetUnsafe, types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry())
 }

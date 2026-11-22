@@ -145,8 +145,12 @@ func (w *raceStreamWriter) publish(c *gin.Context) error {
 	w.header = h
 	w.ResponseWriter.WriteHeader(w.status)
 	if w.body.Len() != 0 {
-		_, err := w.ResponseWriter.Write(w.body.Bytes())
+		want := w.body.Len()
+		n, err := w.ResponseWriter.Write(w.body.Bytes())
 		w.body = bytes.Buffer{}
+		if err == nil && n != want {
+			err = io.ErrShortWrite
+		}
 		return err
 	}
 	return nil
@@ -237,7 +241,7 @@ func (a *streamRaceAttempt) run(r *streamRace, lane int, ctx context.Context) {
 	a.err = relay.ClaudeHelper(a.c, &a.info)
 	a.contextErr = ctx.Err()
 	if publishErr != nil {
-		a.err = types.NewError(publishErr, types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry())
+		a.err = types.NewDownstreamWriteError(publishErr)
 	} else if errors.Is(context.Cause(ctx), errRaceNoOutputTimeout) ||
 		(!a.writer.selected && a.info.StreamStatus != nil && a.info.StreamStatus.EndReason == relaycommon.StreamEndReasonTimeout) {
 		// The scanner's idle timer may fire just before the lane's output

@@ -131,6 +131,8 @@ type RelayInfo struct {
 	ClaimStreamOutput func() bool
 	// Set only when the actual native Claude request has no known provider-bound state.
 	ClaudeEmptyStreamReplaySafe bool
+	// Require the same check before dispatch when retrying a confirmed empty stop.
+	RequireClaudeEmptyReplaySafe bool
 	// DeferStreamSettlement hands settlement to the request controller, which
 	// runs it once with the winning RelayInfo and original billing session.
 	DeferStreamSettlement func(func(*RelayInfo))
