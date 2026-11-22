@@ -249,6 +249,8 @@ API路径：/api/admin/users/config/levels
 
 ### SK 请求兼容集合（2026-10-14）
 
+- 2026-11-22 Fable 5.2：仅针对最终 Claude Messages 目标 `claude-fable-5-2`，在 SK 默认请求兼容开启、非原始透传时，出口覆盖完成后将 `disabled` 或 `enabled` 缺预算（含 null）转为 `adaptive`。保留显式 `output_config.effort`；没有档位时，`disabled` 使用 `low`（不代表关闭思考），缺预算的 `enabled` 沿用 `high`。不补猜预算，不改显式预算、其他模式、`max_tokens`、消息或工具，不为这两类错误新增重试。原生 HTTP 以最终 JSON 模型为准；Bedrock、Vertex 以实际传输选定的模型为准。入口 `dto/claude_thinking.go`、`relay/claude_thinking.go`，专项 `dto/claude_fable_thinking_test.go` 与 `relay/claude_fable_thinking_test.go`。
+
 - 2026-10-20 温度补充：`dto/luna_temperature.go` 精确匹配映射及末端覆盖后的 `gpt-6-luna`，只移除非默认 temperature（含 0/0.3），保留 1、缺省及其他采样参数；不泛化 gpt-6 系列/后缀、不做错误后重发。`relay/claude_thinking.go` 的既有 SK 末端 gate 在 OpenAI Chat/Responses DTO 分支调用，普通 OpenAI、Chat→Responses 与高级 none/Chat↔Responses/Claude→Chat 共享；`relay/gemini_handler.go` 仅在高级 Gemini→Chat 出站 DTO 应用同一 Luna 规则，不改变原生 Gemini 请求；关闭不动、raw 分支不进入。`dto/luna_temperature_test.go` 与 `relay/luna_temperature_test.go` 捕获本地实际 HTTP，覆盖开关、流式、映射进出、末端覆盖、system/messages/tools 与 global/channel 原字节；两主题独立翻译模块和表单说明同步增补；经典主题初始化注册用既有 i18next 23 支持的 on/off，确保初始化前加载也能显示新增说明。
 
 - 补审短链：`controller/token.go` status-only → `model/token.go` `UpdateStatus()` 只持久化 status、锁内重读提交态再同步刷新 cache；controller 旧读 true/保存 false/迟到 status 写屏障在 `controller/token_request_compatibility_close_test.go`。

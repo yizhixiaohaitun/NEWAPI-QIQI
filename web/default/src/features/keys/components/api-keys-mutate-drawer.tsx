@@ -365,6 +365,11 @@ export function ApiKeysMutateDrawer({
                         >
                           • {t('Thinking format adaptation')}
                         </span>
+                        <span className='block'>
+                          {t(
+                            'Fable 5.2 uses adaptive thinking for disabled thinking or enabled thinking without a budget.'
+                          )}
+                        </span>
                         <span
                           className='block'
                           title={t(

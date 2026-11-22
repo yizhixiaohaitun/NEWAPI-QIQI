@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel/vertex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -22,6 +23,9 @@ func normalizeClaudeOutboundJSON(body []byte, info *relaycommon.RelayInfo, reque
 		if dto.ClaudeRequiresAdaptiveThinking(info.UpstreamModelName) {
 			info.UpstreamModelName = model
 		}
+		if info.ApiType == constant.APITypeAws {
+			return dto.NormalizeClaudeAdaptiveJSONWithTransportModel(body, info.UpstreamModelName)
+		}
 	case *vertex.VertexAIClaudeRequest:
 		// Vertex removes model from its payload and selects it in the URL.
 		reqModel := &dto.ClaudeRequest{Model: model, Thinking: req.Thinking, OutputConfig: req.OutputConfig}
@@ -32,6 +36,7 @@ func normalizeClaudeOutboundJSON(body []byte, info *relaycommon.RelayInfo, reque
 		if dto.ClaudeRequiresAdaptiveThinking(info.UpstreamModelName) {
 			info.UpstreamModelName = model
 		}
+		return dto.NormalizeClaudeAdaptiveJSONWithTransportModel(body, model)
 	case *dto.GeneralOpenAIRequest, dto.GeneralOpenAIRequest, *dto.OpenAIResponsesRequest, dto.OpenAIResponsesRequest:
 		// Keep the OpenAI protocol and normal message/tool conversion. Apply only
 		// confirmed sampling restrictions, after mapping and parameter overrides.
