@@ -93,6 +93,10 @@ func NormalizeClaudeAdaptiveThinking(req *ClaudeRequest, effort string) error {
 			}
 		}
 	}
+	return normalizeClaudeThinkingMode(req, effort, migrateDisabled)
+}
+
+func normalizeClaudeThinkingMode(req *ClaudeRequest, effort string, migrateDisabled bool) error {
 	if req.Thinking == nil {
 		return nil
 	}
@@ -148,17 +152,33 @@ func NormalizeClaudeAdaptiveThinking(req *ClaudeRequest, effort string) error {
 // sampling fields are patched: provider
 // extensions, message/tool content and exact numeric values stay intact.
 func NormalizeClaudeAdaptiveJSON(body []byte, fallbackModel string) ([]byte, error) {
+	return normalizeClaudeAdaptiveJSON(body, fallbackModel, false)
+}
+
+// NormalizeClaudeAdaptiveJSONWithTransportModel matches the Fable rule against
+// the model selected by the SDK or URL, not an ignored body override. The
+// existing normalization rules for other models keep their prior behavior.
+func NormalizeClaudeAdaptiveJSONWithTransportModel(body []byte, model string) ([]byte, error) {
+	return normalizeClaudeAdaptiveJSON(body, model, true)
+}
+
+func normalizeClaudeAdaptiveJSON(body []byte, model string, transportOwnsModel bool) ([]byte, error) {
 	var fields map[string]json.RawMessage
 	if err := common.Unmarshal(body, &fields); err != nil {
 		return nil, err
 	}
-	model := fallbackModel
-	if raw, ok := fields["model"]; ok {
+	const fable52 = "claude-fable-5-2"
+	fableOnTransport := transportOwnsModel && model == fable52
+	if raw, ok := fields["model"]; ok && !fableOnTransport {
 		if err := common.Unmarshal(raw, &model); err != nil {
 			return nil, err
 		}
 	}
-	if !ClaudeRequiresAdaptiveThinking(model) {
+	fable := model == fable52
+	if fable && transportOwnsModel && !fableOnTransport {
+		return body, nil // a body override cannot select Fable on this transport
+	}
+	if !fable && !ClaudeRequiresAdaptiveThinking(model) {
 		return body, nil
 	}
 	changed := false
@@ -184,13 +204,28 @@ func NormalizeClaudeAdaptiveJSON(body []byte, fallbackModel string) ([]byte, err
 	if err := common.Unmarshal(raw, &thinking); err != nil {
 		return nil, err
 	}
-	if thinking.Type != "enabled" && thinking.Type != "adaptive" &&
-		!(thinking.Type == "disabled" && claudeAdaptiveVersion(model) == "5-5") {
-		return unchangedThinking()
-	}
 	req := &ClaudeRequest{Model: model, Thinking: &thinking, OutputConfig: fields["output_config"]}
-	if err := NormalizeClaudeAdaptiveThinking(req, ""); err != nil {
-		return nil, err
+	if fable {
+		if thinking.Type != "disabled" && (thinking.Type != "enabled" || thinking.BudgetTokens != nil) {
+			return body, nil
+		}
+		// Adaptive thinking is not the same as disabled. Use the lowest effort
+		// when the caller has not explicitly chosen one for disabled thinking.
+		effort := ""
+		if thinking.Type == "disabled" {
+			effort = "low"
+		}
+		if err := normalizeClaudeThinkingMode(req, effort, thinking.Type == "disabled"); err != nil {
+			return nil, err
+		}
+	} else {
+		if thinking.Type != "enabled" && thinking.Type != "adaptive" &&
+			!(thinking.Type == "disabled" && claudeAdaptiveVersion(model) == "5-5") {
+			return unchangedThinking()
+		}
+		if err := NormalizeClaudeAdaptiveThinking(req, ""); err != nil {
+			return nil, err
+		}
 	}
 	var tf map[string]json.RawMessage
 	if err := common.Unmarshal(raw, &tf); err != nil {

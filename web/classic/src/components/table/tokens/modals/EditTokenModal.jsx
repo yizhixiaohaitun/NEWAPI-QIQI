@@ -458,6 +458,11 @@ const EditTokenModal = (props) => {
                           >
                             • {t('Thinking format adaptation')}
                           </div>
+                          <div>
+                            {t(
+                              'Fable 5.2 uses adaptive thinking for disabled thinking or enabled thinking without a budget.',
+                            )}
+                          </div>
                           <div
                             title={t(
                               'Removes temperature/top_p/top_k for Opus 4.7.',

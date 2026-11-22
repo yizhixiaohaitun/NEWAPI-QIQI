@@ -32,6 +32,8 @@ export const tokenRequestCompatibilityTranslations = {
       'Only on the exact historical thinking signature error before output, removes thinking blocks from completed turns and retries once on the same channel; thinking stays enabled and success is not guaranteed.',
     'Request compatibility': 'Request compatibility',
     'Thinking format adaptation': 'Thinking format adaptation',
+    'Fable 5.2 uses adaptive thinking for disabled thinking or enabled thinking without a budget.':
+      'Fable 5.2 uses adaptive thinking for disabled thinking or enabled thinking without a budget.',
     'Opus 4.7 sampling parameter adaptation':
       'Opus 4.7 sampling parameter adaptation',
     'Enabled for new tokens; you can turn it off.':
@@ -59,6 +61,8 @@ export const tokenRequestCompatibilityTranslations = {
       '仅在输出前遇到精确的历史思考签名错误时，移除已结束轮次的历史思考块并在同渠道重试一次；不关闭思考，也不保证成功。',
     'Request compatibility': '请求兼容',
     'Thinking format adaptation': '思考格式适配',
+    'Fable 5.2 uses adaptive thinking for disabled thinking or enabled thinking without a budget.':
+      'Fable 5.2：关闭思考或启用思考但未填预算时，改用自适应思考。',
     'Opus 4.7 sampling parameter adaptation': 'Opus 4.7 采样参数适配',
     'Enabled for new tokens; you can turn it off.':
       '新建默认开启，可手动关闭。',
@@ -81,6 +85,8 @@ export const tokenRequestCompatibilityTranslations = {
       '僅在輸出前遇到精確的歷史思考簽名錯誤時，移除已結束輪次的歷史思考區塊並在同渠道重試一次；不關閉思考，也不保證成功。',
     'Request compatibility': '請求相容',
     'Thinking format adaptation': '思考格式適配',
+    'Fable 5.2 uses adaptive thinking for disabled thinking or enabled thinking without a budget.':
+      'Fable 5.2：關閉思考或啟用思考但未填預算時，改用自適應思考。',
     'Opus 4.7 sampling parameter adaptation': 'Opus 4.7 取樣參數適配',
     'Enabled for new tokens; you can turn it off.':
       '新建預設開啟，可手動關閉。',
@@ -101,6 +107,8 @@ export const tokenRequestCompatibilityTranslations = {
     "兼容处理": "Action de compatibilité",
     'Request compatibility': 'Compatibilité des requêtes',
     'Thinking format adaptation': 'Adaptation du format de réflexion',
+    'Fable 5.2 uses adaptive thinking for disabled thinking or enabled thinking without a budget.':
+      'Fable 5.2 utilise la réflexion adaptative lorsque la réflexion est désactivée ou activée sans budget.',
     'Opus 4.7 sampling parameter adaptation':
       'Adaptation des paramètres Opus 4.7',
     'Enabled for new tokens; you can turn it off.':
@@ -122,6 +130,8 @@ export const tokenRequestCompatibilityTranslations = {
     "兼容处理": "Действие совместимости",
     'Request compatibility': 'Совместимость запросов',
     'Thinking format adaptation': 'Адаптация формата размышлений',
+    'Fable 5.2 uses adaptive thinking for disabled thinking or enabled thinking without a budget.':
+      'Fable 5.2 использует адаптивное размышление, если оно отключено или включено без бюджета.',
     'Opus 4.7 sampling parameter adaptation': 'Адаптация параметров Opus 4.7',
     'Enabled for new tokens; you can turn it off.':
       'Для новых токенов включено; можно отключить.',
@@ -142,6 +152,8 @@ export const tokenRequestCompatibilityTranslations = {
     "兼容处理": "互換処理",
     'Request compatibility': 'リクエスト互換性',
     'Thinking format adaptation': '思考形式の適応',
+    'Fable 5.2 uses adaptive thinking for disabled thinking or enabled thinking without a budget.':
+      'Fable 5.2 は、思考が無効な場合、または予算なしで有効な場合に適応型思考を使用します。',
     'Opus 4.7 sampling parameter adaptation': 'Opus 4.7 サンプリング設定の適応',
     'Enabled for new tokens; you can turn it off.':
       '新規トークンは既定で有効。手動でオフにできます。',
@@ -162,6 +174,8 @@ export const tokenRequestCompatibilityTranslations = {
     "兼容处理": "Xử lý tương thích",
     'Request compatibility': 'Tương thích yêu cầu',
     'Thinking format adaptation': 'Điều chỉnh định dạng suy nghĩ',
+    'Fable 5.2 uses adaptive thinking for disabled thinking or enabled thinking without a budget.':
+      'Fable 5.2 dùng chế độ suy nghĩ thích ứng khi tính năng suy nghĩ bị tắt hoặc được bật mà không có ngân sách.',
     'Opus 4.7 sampling parameter adaptation':
       'Điều chỉnh tham số lấy mẫu Opus 4.7',
     'Enabled for new tokens; you can turn it off.':

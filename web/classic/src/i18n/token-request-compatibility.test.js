@@ -46,6 +46,12 @@ test('actual classic instance registers dedicated Chinese token strings', async 
   assert.equal(i18n.t('兼容处理', { lng: 'en' }), 'Compatibility action');
   assert.equal(i18n.t('Thinking format adaptation'), '思考格式适配');
   assert.equal(
+    i18n.t(
+      'Fable 5.2 uses adaptive thinking for disabled thinking or enabled thinking without a budget.'
+    ),
+    'Fable 5.2：关闭思考或启用思考但未填预算时，改用自适应思考。',
+  );
+  assert.equal(
     i18n.t('Opus 4.7 sampling parameter adaptation'),
     'Opus 4.7 采样参数适配',
   );
