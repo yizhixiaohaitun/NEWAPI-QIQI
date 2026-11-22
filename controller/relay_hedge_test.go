@@ -122,7 +122,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 		{"backup_wins_after_primary_empty", 2, true, 200, false}, {"both_empty", 0, true, 502, false},
 		{"effective_before_threshold", 1, false, 200, false}, {"disabled", 1, false, 200, false},
 		{"pinned", 1, false, 200, false}, {"client_cancels", 0, true, 499, false},
-		{"primary_empty_before_threshold", 0, false, 502, false},
+		{"primary_empty_before_threshold", 2, true, 200, false},
+		{"no_budget_after_two_explicit_empty_stops", 0, true, 502, false},
+		{"no_replay_if_started_backup_had_only_eof", 0, true, 502, false},
 		{"primary_rate_limit_before_threshold", 2, true, 200, false},
 		{"both_rate_limited", 3, true, 200, true}, {"retry_budget_spent_by_backup", 0, true, 429, false},
 		{"primary_output_timeout_backup_rate_limit", 3, true, 200, true},
@@ -256,8 +258,18 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 							return
 						}
 					case "primary_empty_before_threshold":
-						send(`{"type":"message_stop"}`)
-						return
+						if lane == 0 {
+							send(`{"type":"message_stop"}`)
+							return
+						}
+					case "no_budget_after_two_explicit_empty_stops", "no_replay_if_started_backup_had_only_eof":
+						if lane < 2 {
+							wait(started[1])
+							if lane == 0 || tc.name == "no_budget_after_two_explicit_empty_stops" {
+								send(`{"type":"message_stop"}`)
+							}
+							return
+						}
 					case "client_cancels", "request_deadline_cancels_both":
 						wait(r.Context().Done())
 						<-r.Context().Done()
@@ -312,7 +324,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 				constant.StreamHedgeDelayMS = 0
 			case "effective_before_threshold", "primary_empty_before_threshold", "primary_rate_limit_before_threshold", "committed_error", "upstream_gateway_timeout":
 				constant.StreamHedgeDelayMS = 2000
-			case "retry_budget_spent_by_backup":
+			case "retry_budget_spent_by_backup", "no_budget_after_two_explicit_empty_stops":
 				common.RetryTimes = 1
 			case "no_retry_budget":
 				common.RetryTimes = 0
@@ -337,7 +349,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			high, low, weight := int64(10), int64(0), uint(1)
 			require.NoError(t, db.Create(&[]model.Channel{{Id: primaryID, Type: constant.ChannelTypeAnthropic, Name: "primary", Key: "key-a", BaseURL: &a.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &high, Weight: &weight}, {Id: backupID, Type: constant.ChannelTypeAnthropic, Name: "backup", Key: "key-b", BaseURL: &b.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &low, Weight: &weight}}).Error)
 			require.NoError(t, db.Create(&[]model.Ability{{Group: "hedge-test", Model: modelName, ChannelId: primaryID, Enabled: true, Priority: &high, Weight: 1}, {Group: "hedge-test", Model: modelName, ChannelId: backupID, Enabled: true, Priority: &low, Weight: 1}}).Error)
-			if tc.fallback || tc.name == "retry_budget_spent_by_backup" || tc.name == "committed_error" || tc.name == "request_deadline_cancels_both" {
+			if tc.fallback || tc.name == "retry_budget_spent_by_backup" || tc.name == "committed_error" || tc.name == "request_deadline_cancels_both" || tc.name == "no_budget_after_two_explicit_empty_stops" || tc.name == "no_replay_if_started_backup_had_only_eof" {
 				last := int64(-1)
 				require.NoError(t, db.Create(&model.Channel{Id: fallbackID, Type: constant.ChannelTypeAnthropic, Name: "fallback", Key: "key-c", BaseURL: &third.URL, Group: "hedge-test", Models: modelName, Status: common.ChannelStatusEnabled, Priority: &last, Weight: &weight}).Error)
 				require.NoError(t, db.Create(&model.Ability{Group: "hedge-test", Model: modelName, ChannelId: fallbackID, Enabled: true, Priority: &last, Weight: 1}).Error)
@@ -449,6 +461,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 					}
 				}
 				if tc.name == "committed_error" {
+					require.NotContains(t, out.Body.String(), "\n{\"type\":\"error\"")
 					require.Empty(t, logs)
 				} else {
 					require.Len(t, logs, 1)

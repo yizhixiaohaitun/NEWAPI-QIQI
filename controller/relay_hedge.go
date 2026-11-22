@@ -370,6 +370,17 @@ func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model
 	if r.winner == 0 && result.err == nil {
 		result.err = types.NewErrorWithStatusCode(errors.New("upstream stream ended before effective output"), types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 	}
+	if r.winner == 0 && errors.Is(result.err, relaycommon.ErrClaudeStreamEndedWithoutOutput) {
+		// An empty primary is not evidence that an already-started backup
+		// also ended safely. Do not replay unless every started lane agrees.
+		for _, lane := range attempts[1:r.started] {
+			if !errors.Is(lane.err, relaycommon.ErrClaudeStreamEndedWithoutOutput) ||
+				types.IsSkipRetryError(lane.err) || lane.c.GetBool("upstream_moderation_committed") {
+				types.ErrOptionWithSkipRetry()(result.err)
+				break
+			}
+		}
+	}
 	for k, v := range result.c.Keys {
 		if k != common.KeyBodyStorage && k != common.KeyRequestBody && k != "event_stream_headers_set" {
 			c.Set(k, v)

@@ -129,6 +129,8 @@ type RelayInfo struct {
 	// ClaimStreamOutput is set only for isolated stream race attempts. The
 	// adapter calls it before writing its first effective protocol frame.
 	ClaimStreamOutput func() bool
+	// Set only when the actual native Claude request has no known provider-bound state.
+	ClaudeEmptyStreamReplaySafe bool
 	// DeferStreamSettlement hands settlement to the request controller, which
 	// runs it once with the winning RelayInfo and original billing session.
 	DeferStreamSettlement func(func(*RelayInfo))

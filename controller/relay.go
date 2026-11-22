@@ -225,7 +225,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
-			newAPIError = channelErr
+			// If no replacement can be selected, keep the last real empty-stream
+			// response rather than replacing its mapped status with a local 500.
+			if !errors.Is(newAPIError, relaycommon.ErrClaudeStreamEndedWithoutOutput) || channelErr.GetErrorCode() != types.ErrorCodeGetChannelFailed {
+				newAPIError = channelErr
+			}
 			break
 		}
 
@@ -343,8 +347,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				markChannelFailedForRetry(c, backup)
 			}
 		}
-		if attempt != nil {
-			// Buffered frames from a failed lane were never sent downstream.
+		if attempt != nil || errors.Is(newAPIError, relaycommon.ErrClaudeStreamEndedWithoutOutput) {
+			// The failed attempt's preamble was never sent downstream. Its frame
+			// count must not affect the next upstream response.
 			relayInfo.ResetFirstResponseTime()
 		}
 		if !retryParam.IncreaseRetry() {
@@ -509,10 +514,14 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if openaiErr.GetErrorCode() == types.ErrorCodeStreamOutputTimeout {
 		return c != nil && c.Writer != nil && !c.Writer.Written()
 	}
+	claudeEmptyStream := errors.Is(openaiErr, relaycommon.ErrClaudeStreamEndedWithoutOutput)
+	if claudeEmptyStream && (c == nil || c.Writer == nil || c.Writer.Written()) {
+		return false
+	}
 	// A stream failure caught before any downstream output is safe to retry
 	// under the dedicated switch/budget, regardless of provider status/text.
-	// All cancellation, affinity, explicit-channel and budget stops above win.
-	if c != nil && c.GetBool("upstream_stream_error_before_commit") &&
+	// Claude empty completions instead obey the normal channel policy below.
+	if !claudeEmptyStream && c != nil && c.GetBool("upstream_stream_error_before_commit") &&
 		operation_setting.IsResponsesStreamErrorRetryEnabled() && c.Writer != nil && !c.Writer.Written() {
 		return true
 	}
@@ -534,10 +543,12 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if types.IsChannelError(openaiErr) {
 		return true
 	}
+	// Keep the bad-body protection for all other errors, including an upstream
+	// error that happens to use the same code or message as this local cause.
+	skipCode := !claudeEmptyStream && operation_setting.IsAlwaysSkipRetryCode(openaiErr.GetErrorCode())
 	// JSON policy overrides only ordinary error rules, never the dedicated
 	// timeout/stream/channel paths above or a response already sent downstream.
-	if c != nil && c.Writer != nil && !c.Writer.Written() &&
-		!operation_setting.IsAlwaysSkipRetryCode(openaiErr.GetErrorCode()) &&
+	if c != nil && c.Writer != nil && !c.Writer.Written() && !skipCode &&
 		!operation_setting.IsAlwaysSkipRetryStatusCode(openaiErr.StatusCode) {
 		if retry, matched := operation_setting.MatchChannelRetryPolicy(
 			common.GetContextKeyInt(c, constant.ContextKeyChannelId), openaiErr.StatusCode,
@@ -567,7 +578,7 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if code < 100 || code > 599 {
 		return true
 	}
-	if operation_setting.IsAlwaysSkipRetryCode(openaiErr.GetErrorCode()) {
+	if skipCode {
 		return false
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)

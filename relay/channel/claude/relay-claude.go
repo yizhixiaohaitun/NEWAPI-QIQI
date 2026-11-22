@@ -212,15 +212,83 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 	return relayconvert.FormatClaudeResponseInfo(claudeResponse, oaiResponse, claudeInfo)
 }
 
+// Audit results may be nested in the native frame. Decode once and walk only
+// while the race is private, rather than re-decoding every output chunk.
+func claudeFrameHasAudit(value any) bool {
+	switch node := value.(type) {
+	case map[string]any:
+		for key, child := range node {
+			switch key {
+			case "safeguards", "safeguard_results", "prompt_filter_results", "content_filter_results", "safety_ratings":
+				return true
+			}
+			if claudeFrameHasAudit(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range node {
+			if claudeFrameHasAudit(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func claudeFrameProtectsReplay(event *dto.ClaudeResponse, data string) bool {
+	var raw any
+	if common.UnmarshalJsonStr(data, &raw) != nil || claudeFrameHasAudit(raw) {
+		return true
+	}
+	for _, block := range []*dto.ClaudeMediaMessage{event.ContentBlock, event.Delta} {
+		if block != nil && (block.Type == "server_tool_use" || block.Type == "tool_use") && (block.Id == "" || block.Name == "") {
+			return true
+		}
+	}
+	switch event.Type {
+	case "content_block_start":
+		return event.ContentBlock == nil || event.ContentBlock.Type == ""
+	case "content_block_delta":
+		return event.Delta == nil || event.Delta.Type == ""
+	case "message_start", "content_block_stop", "message_delta", "message_stop", "ping", "error":
+		return false
+	default:
+		// An unrecognized frame cannot prove there was no useful output.
+		return true
+	}
+}
+
 func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, data string) *types.NewAPIError {
+	native := info.RelayFormat == types.RelayFormatClaude && info.ChannelType == constant.ChannelTypeAnthropic
+	racing := info.ClaimStreamOutput != nil
+	private := !c.Writer.Written()
 	var claudeResponse dto.ClaudeResponse
 	err := common.UnmarshalJsonStr(data, &claudeResponse)
 	if err != nil {
 		common.SysLog("error unmarshalling stream response: " + err.Error())
+		if native {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+		}
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
+	protectsReplay := native && private && (racing || info.ClaudeEmptyStreamReplaySafe) && claudeFrameProtectsReplay(&claudeResponse, data)
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-		return types.WithClaudeError(*claudeError, types.ClaudeErrorStatus(claudeError.Type))
+		status := types.ClaudeErrorStatus(claudeError.Type)
+		if native && (protectsReplay || !private || c.GetBool("upstream_moderation_committed")) {
+			if protectsReplay {
+				c.Set("upstream_moderation_committed", true)
+				if racing && !info.ClaimStreamOutput() {
+					return types.NewError(relaycommon.ErrStreamRaceLost, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
+				}
+				helper.ClaudeChunkData(c, claudeResponse, data)
+			}
+			return types.WithClaudeError(*claudeError, status, types.ErrOptionWithSkipRetry())
+		}
+		return types.WithClaudeError(*claudeError, status)
+	}
+	if native && (racing || info.ClaudeEmptyStreamReplaySafe) && claudeResponse.Type == "error" && !protectsReplay {
+		return types.NewErrorWithStatusCode(errors.New("invalid upstream stream error frame"), types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 	}
 	if claudeResponse.StopReason != "" {
 		maybeMarkClaudeRefusal(c, claudeResponse.StopReason)
@@ -235,16 +303,22 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	if stopDetails != nil && strings.TrimSpace(stopDetails.Explanation) != "" {
 		claudeInfo.ResponseText.WriteString(stopDetails.Explanation)
 	}
-	if info.ClaimStreamOutput != nil && !c.Writer.Written() {
+	if private && (racing || info.ClaudeEmptyStreamReplaySafe) {
 		switch {
-		case claudeResponse.Type == "error":
-			return types.NewErrorWithStatusCode(errors.New("invalid upstream stream error frame"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
-		case claudeStreamHasOutput(&claudeResponse):
-			if !info.ClaimStreamOutput() {
+		case protectsReplay || claudeStreamHasOutput(&claudeResponse) || claudeStreamHasHiddenThinkingProgress(&claudeResponse, data):
+			if protectsReplay {
+				c.Set("upstream_moderation_committed", true)
+			}
+			if racing && !info.ClaimStreamOutput() {
 				return types.NewError(relaycommon.ErrStreamRaceLost, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
 		case claudeResponse.Type == "message_stop":
-			return types.NewErrorWithStatusCode(errors.New("upstream stream ended before effective output"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+			if info.ClaudeEmptyStreamReplaySafe && !c.GetBool("upstream_moderation_committed") {
+				// Only a local explicit terminal frame can get this cause. EOF,
+				// provider errors and already-published SSE keep their own paths.
+				return types.NewErrorWithStatusCode(relaycommon.ErrClaudeStreamEndedWithoutOutput, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+			}
+			return types.NewErrorWithStatusCode(errors.New(relaycommon.ErrClaudeStreamEndedWithoutOutput.Error()), types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 		}
 	}
 	if info.RelayFormat == types.RelayFormatClaude {
@@ -315,8 +389,28 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 // Usage, structural frames and signatures alone cannot win. Preserve refusal
 // and new block/delta types conservatively rather than silently replaying them.
 func claudeStreamHasOutput(event *dto.ClaudeResponse) bool {
-	if event.StopDetails != nil || event.StopReason == "refusal" || (event.Delta != nil && event.Delta.StopReason != nil && *event.Delta.StopReason == "refusal") {
+	if event.Completion != "" || len(event.Content) != 0 || event.StopDetails != nil || meaningfulClaudeStop(event.StopReason) {
 		return true
+	}
+	for _, part := range []*dto.ClaudeMediaMessage{event.Delta, event.Message} {
+		if part != nil && (part.StopDetails != nil || part.StopReason != nil && meaningfulClaudeStop(*part.StopReason)) {
+			return true
+		}
+	}
+	if event.Message != nil {
+		switch content := event.Message.Content.(type) {
+		case nil:
+		case []any:
+			if len(content) != 0 {
+				return true
+			}
+		case string:
+			if content != "" {
+				return true
+			}
+		default:
+			return true
+		}
 	}
 	var block *dto.ClaudeMediaMessage
 	switch event.Type {
@@ -343,6 +437,30 @@ func claudeStreamHasOutput(event *dto.ClaudeResponse) bool {
 		return false
 	default:
 		return block.Type != ""
+	}
+}
+
+func claudeStreamHasHiddenThinkingProgress(event *dto.ClaudeResponse, data string) bool {
+	if event.Type != "content_block_delta" || event.Delta == nil || event.Delta.Type != "thinking_delta" {
+		return false
+	}
+	// A provider can report token progress with thinking.display=omitted.
+	// Do not mistake that for a run which generated nothing.
+	var progress struct {
+		Delta struct {
+			EstimatedTokens int64 `json:"estimated_tokens"`
+		} `json:"delta"`
+	}
+	return common.UnmarshalJsonStr(data, &progress) == nil && progress.Delta.EstimatedTokens > 0
+}
+
+func meaningfulClaudeStop(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "", "end_turn":
+		return false
+	default:
+		// Preserve explicit length/stop boundaries, refusal, tools and new reasons.
+		return true
 	}
 }
 

@@ -1,6 +1,7 @@
 package common
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -8,6 +9,10 @@ import (
 
 	"github.com/QuantumNous/new-api/types"
 )
+
+// ErrClaudeStreamEndedWithoutOutput is set by the native adapter only for a
+// pre-commit empty completion. Keep the public error code and message stable.
+var ErrClaudeStreamEndedWithoutOutput = errors.New("upstream stream ended before effective output")
 
 type StreamEndReason string
 

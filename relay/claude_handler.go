@@ -167,12 +167,22 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	var requestBody io.Reader
 	var retrySource []byte
+	info.ClaudeEmptyStreamReplaySafe = false
+	checkEmptyStreamReplay := info.IsStream && info.RelayFormat == types.RelayFormatClaude &&
+		info.ChannelType == constant.ChannelTypeAnthropic && c.Request.URL.Path == "/v1/messages" && !info.PurityDetectionRequest
 	if rawPassThrough {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
 		info.UpstreamRequestBodySize = storage.Size()
+		// Avoid materializing a disk-backed or large pass-through body just to
+		// decide whether it can be retried. When in doubt do not replay it.
+		if checkEmptyStreamReplay && !storage.IsDisk() && storage.Size() <= 1<<20 {
+			if raw, readErr := storage.Bytes(); readErr == nil {
+				info.ClaudeEmptyStreamReplaySafe = canReplayEmptyClaudeStream(raw)
+			}
+		}
 		requestBody = common.ReaderOnly(storage)
 	} else {
 		convertedRequest, err := adaptor.ConvertClaudeRequest(c, info, request)
@@ -204,6 +214,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
+		if checkEmptyStreamReplay {
+			info.ClaudeEmptyStreamReplaySafe = canReplayEmptyClaudeStream(jsonData)
+		}
 		if info.IsRequestCompatibilityEnabled() {
 			retrySource = bytes.Clone(jsonData)
 		}
@@ -218,6 +231,21 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		requestBody = body
 	}
 
+	if checkEmptyStreamReplay && info.ClaimStreamOutput == nil && !c.Writer.Written() {
+		headers := c.Writer.Header().Clone()
+		defer func() {
+			if newAPIError != nil && !c.Writer.Written() {
+				// The transport or scanner may have installed SSE headers without
+				// a write. Restore the real headers for the retry or error JSON.
+				h := c.Writer.Header()
+				clear(h)
+				for k, v := range headers {
+					h[k] = v
+				}
+				helper.ResetEventStreamHeaders(c)
+			}
+		}()
+	}
 	statusCodeMappingStr := c.GetString("status_code_mapping")
 	var usage any
 	toolThinkingRecovery := false
@@ -260,6 +288,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			if body, changed, toolRecovery := prepareClaudeSignatureRecovery(retrySource); changed && claimClaudeSignatureRetry(c, info.ChannelId) {
 				toolThinkingRecovery = toolRecovery
 				requestBody = bytes.NewReader(body)
+				if checkEmptyStreamReplay {
+					info.ClaudeEmptyStreamReplaySafe = canReplayEmptyClaudeStream(body)
+				}
 				info.UpstreamRequestBodySize = int64(len(body))
 				continue
 			}

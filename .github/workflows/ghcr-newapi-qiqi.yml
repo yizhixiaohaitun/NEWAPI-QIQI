@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - release/stream-retry-xingai-20261120
+      - release/xingai-claude-empty-20261122
   workflow_dispatch:
 
 permissions:
