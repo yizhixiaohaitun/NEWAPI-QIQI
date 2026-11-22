@@ -1,0 +1,66 @@
+name: Verify exact Xingai Claude release image (isolated)
+on:
+  push:
+    branches: [verify/xingai-claude-empty-20261122]
+permissions:
+  contents: read
+  packages: read
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Immutable values from the successful site-specific build and byte-verified GHCR records.
+    env:
+      RELEASE_SHA: 25d775241d16ed943e1fe48256493241d09ad1bf
+      RELEASE_TAG: newapi-qiqi-20261122-25d7752
+      RELEASE_RUN: '44990797809'
+      REGISTRY_IMAGE: ghcr.io/yizhixiaohaitun/newapi-qiqi
+      ROOT_DIGEST: sha256:e971340552ea7cce255cc1c2dc104f5b2da7fd953381462fb869381d2d01f91f
+      PLATFORM_DIGEST: sha256:095e1b3790312a7019914f4e097a3acdcd049bdc0d5ca4f5f55eff48cb8b183e
+      CONFIG_DIGEST: sha256:1cc95deb83690dcfc1709ebf94f81d83ee7e186a8821f18e30656318158fc5e7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull by digest and match the exact site-specific release
+        working-directory: ci-xingai-claude
+        shell: bash
+        run: |
+          set -euxo pipefail
+          image="$REGISTRY_IMAGE:$RELEASE_TAG@$ROOT_DIGEST"
+          docker pull --platform linux/amd64 "$image"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$RELEASE_SHA"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" = linux/amd64
+          docker image inspect --format '{{json .RepoDigests}}' "$image" | jq -e --arg exact "$REGISTRY_IMAGE@$ROOT_DIGEST" 'index($exact) != null'
+          # With the containerd store, Docker ID may be a manifest, not the OCI config.
+          id=$(docker image inspect --format '{{.Id}}' "$image")
+          [[ $id == "$ROOT_DIGEST" || $id == "$PLATFORM_DIGEST" || $id == "$CONFIG_DIGEST" ]]
+          jq -n --arg revision "$RELEASE_SHA" --arg tag "$RELEASE_TAG" --arg digest "$ROOT_DIGEST" --arg config_digest "$CONFIG_DIGEST" --arg docker_image_id "$id" --arg platform_manifest_digest "$PLATFORM_DIGEST" --argjson build_run "$RELEASE_RUN" '$ARGS.named' > isolated-image.json
+          echo "XINGAI_IMAGE=$image" >> "$GITHUB_ENV"
+      - name: Exercise Claude policy, delivery and billing with simulated upstream only
+        working-directory: ci-xingai-claude
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull python:3.12-alpine
+          net="xingai-claude-${GITHUB_RUN_ID}"
+          app="$net-gateway"
+          docker network create --internal "$net"
+          trap 'docker rm -fv "$app" >/dev/null 2>&1 || true; docker network rm "$net" >/dev/null 2>&1 || true' EXIT
+          docker run --pull=never -d --name "$app" --network "$net" --network-alias gateway --tmpfs /data -e STREAMING_TIMEOUT=30 "$XINGAI_IMAGE"
+          result=0
+          docker run --rm --pull=never --network "$net" --network-alias fixture -v "$PWD:/verify" -w /verify python:3.12-alpine python3 -u isolated-claude.py 2>&1 | tee isolated-diagnostics.log || result=$?
+          if (( result != 0 )); then docker logs --tail 70 "$app" >> isolated-diagnostics.log 2>&1; exit "$result"; fi
+          rm isolated-diagnostics.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exact-image-xingai-claude-empty-20261122
+          path: |
+            ci-xingai-claude/isolated-*.json
+            ci-xingai-claude/isolated-diagnostics.log
+          retention-days: 14
+          if-no-files-found: warn
