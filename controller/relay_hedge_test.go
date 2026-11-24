@@ -135,7 +135,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 		{"primary_output_timeout_backup_rate_limit", 3, true, 200, true},
 		{"no_retry_budget", 0, false, 429, false}, {"committed_error", 1, false, 200, false},
 		{"request_deadline_cancels_both", 0, true, 500, false},
-		{"upstream_gateway_timeout", 0, false, 504, false},
+		{"upstream_gateway_timeout", 0, false, statusRelayUpstreamTimeout, false},
 		{"json_same_channel_wins", 2, true, 200, false},
 		{"json_next_channel_wins", 3, true, 200, true},
 		{"json_budget_only_allows_same_channel", 1, true, 200, false},

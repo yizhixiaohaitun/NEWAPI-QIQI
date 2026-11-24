@@ -458,35 +458,49 @@ func claudeStreamHasOutput(event *dto.ClaudeResponse) bool {
 	}
 }
 
-func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo) {
-	maybeEstimateMissingClaudeRefusalUsage(c, info, claudeInfo, claudeInfo.ResponseText.String())
-	if claudeInfo.Usage.PromptTokens == 0 {
-		//上游出错
+// Settlement prefers the provider-shaped usage over the flat counters. Keep the
+// token fallback in both, without replacing reported cache and provider fields.
+func syncClaudeBillingUsage(claudeInfo *ClaudeResponseInfo, estimated bool) {
+	usage := claudeInfo.Usage
+	if billing := usage.BillingUsage; billing != nil && billing.ClaudeUsage != nil {
+		billing.ClaudeUsage.InputTokens = usage.PromptTokens
+		billing.ClaudeUsage.OutputTokens = usage.CompletionTokens
+		billing.Estimated = billing.Estimated || estimated
+		return
 	}
-	if claudeInfo.Usage.CompletionTokens == 0 || !claudeInfo.Done {
+	providerUsage := buildMessageDeltaPatchUsage(nil, claudeInfo)
+	providerUsage.OutputTokens = usage.CompletionTokens
+	if billing := dto.NewClaudeMessagesBillingUsage(providerUsage); billing != nil {
+		billing.Estimated = estimated
+		usage.BillingUsage = billing
+	}
+}
+
+func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo) {
+	estimated := maybeEstimateMissingClaudeRefusalUsage(c, info, claudeInfo, claudeInfo.ResponseText.String())
+	usage := claudeInfo.Usage
+	if usage.CompletionTokens == 0 || !claudeInfo.Done {
 		if common.DebugEnabled {
 			common.SysLog("claude response usage is not complete, maybe upstream error")
 		}
-		// 只补缺失字段，不整份覆盖——保留 message_start 已拿到的 cache 字段
 		fallback := service.ResponseText2Usage(c, claudeInfo.ResponseText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
-		if claudeInfo.Usage.CompletionTokens == 0 ||
-			(!claudeInfo.Done && fallback.CompletionTokens > claudeInfo.Usage.CompletionTokens) {
-			claudeInfo.Usage.CompletionTokens = fallback.CompletionTokens
+		if fallback.CompletionTokens > usage.CompletionTokens {
+			usage.CompletionTokens = fallback.CompletionTokens
+			estimated = true
 		}
-		hasReportedInput := claudeInfo.Usage.PromptTokensDetails.CachedTokens > 0 ||
-			claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens > 0 ||
-			claudeInfo.Usage.ClaudeCacheCreation5mTokens > 0 ||
-			claudeInfo.Usage.ClaudeCacheCreation1hTokens > 0
-		if claudeInfo.Usage.PromptTokens == 0 && !hasReportedInput {
-			claudeInfo.Usage.PromptTokens = fallback.PromptTokens
+		hasReportedInput := usage.PromptTokensDetails.CachedTokens > 0 ||
+			usage.PromptTokensDetails.CachedCreationTokens > 0 ||
+			usage.ClaudeCacheCreation5mTokens > 0 ||
+			usage.ClaudeCacheCreation1hTokens > 0
+		if usage.PromptTokens == 0 && !hasReportedInput && fallback.PromptTokens > 0 {
+			usage.PromptTokens = fallback.PromptTokens
+			estimated = true
 		}
-		claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
-	if claudeInfo.Usage != nil {
-		claudeInfo.Usage.UsageSemantic = "anthropic"
-	}
-	if claudeInfo.Usage != nil && claudeInfo.Usage.BillingUsage == nil {
-		claudeInfo.Usage.BillingUsage = dto.NewClaudeMessagesBillingUsage(buildMessageDeltaPatchUsage(nil, claudeInfo))
+	usage.UsageSemantic = dto.BillingUsageSemanticAnthropic
+	if estimated || usage.BillingUsage == nil {
+		syncClaudeBillingUsage(claudeInfo, estimated)
 	}
 
 	if info.RelayFormat == types.RelayFormatClaude {

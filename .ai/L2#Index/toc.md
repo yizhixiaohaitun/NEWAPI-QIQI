@@ -118,7 +118,7 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 ### Relay 完成、断连和超时回归
 
 - `controller/relay_completion_context_http_test.go`：通过本地模拟上游覆盖响应写出后断连仍成功、上游执行中真实取消返回 499、请求总时限返回上游超时；成功场景检查未记录错误日志。
-- `controller/relay_first_byte_timeout_test.go`：覆盖首字节超时、重试及流式输出边界；固定关闭自动转换以匹配聊天模拟上游，测试结束恢复设置。
+- `controller/relay_first_byte_timeout_test.go`：覆盖继承的首字节超时可按预算重试、令牌硬截止停止重试及已提交的流不重放。`controller/relay_error_format.go#writeRelayHTTPError` 只在最终对客 HTTP 响应把 504 写成 498，错误体、站内重试和日志保留原值；回归 `controller/relay_http_error_test.go`。
 
 ### Relay 对外错误隐私边界
 
@@ -147,6 +147,8 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - `setting/operation_setting/channel_retry_policy.go`：可按模型精确名单，也可通过 `stream_hedge.parallel_backup_scope` 选 `claude` 或 `all`，无需写模型名。未配置 JSON 时保留 Opus 5.5 的启动参数行为；只配置旧名单双备用时仍限 Claude 原生流。
 - `controller/relay_hedge.go`：在 `all` 模式增加原生 OpenAI Chat Completions、无状态 Responses 和 Gemini `streamGenerateContent`，不改变非流式或不合格请求。备用只在本次实际分组内选路，不扩大跨组权限。各路先缓冲自己的元数据；只发布最先产出有效内容的一路并取消其余请求，只结算胜出一路，每个备用占用一次既有重试额度并共用总时限。
 - `controller/relay.go`：初始并行阶段未提交时，普通可重试错误和单路有效输出等待超时可以在剩余预算内继续换渠道，排除该阶段已尝试的单 key 渠道；上游真实 HTTP 504、请求总超时、亲和及指定渠道仍沿用原有停止策略。已提交不重放。回归 `controller/relay_hedge_test.go`。
+
+- `relay/channel/claude/relay-claude.go#HandleStreamFinalResponse`：上游没有完整用量时，已有输出的估算同步进结算读取的 Anthropic 用量，保留缓存和完整的原报用量；真空回复仍可自动回退。回归 `relay/channel/claude/stream_billing_usage_test.go`、`controller/relay_claude_hedge_settlement_test.go`，后一项使用本地 HTTP 断开胜出流并对账，确认只结算一次。
 
 ### 分组与渠道重试选择链路
 

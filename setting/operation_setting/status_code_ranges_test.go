@@ -77,6 +77,7 @@ func TestShouldRetryByStatusCode_DefaultMatchesLegacyBehavior(t *testing.T) {
 	require.True(t, ShouldRetryByStatusCode(500))
 	require.False(t, ShouldRetryByStatusCode(504))
 	require.False(t, ShouldRetryByStatusCode(524))
+	require.True(t, ShouldRetryByStatusCode(498)) // Public relay timeout.
 	require.True(t, ShouldRetryByStatusCode(599))
 }
 

@@ -133,6 +133,10 @@ func TestRelayFirstByteTimeoutHTTP(t *testing.T) {
 		common.SetContextKey(c, constant.ContextKeyUserQuota, 1000000)
 		common.SetContextKey(c, constant.ContextKeyTokenId, 892)
 		common.SetContextKey(c, constant.ContextKeyTokenKey, "first-byte-local")
+		if scenario.Load() == 8 {
+			timeout := 1
+			common.SetContextKey(c, constant.ContextKeyTokenFirstByteTimeout, &timeout)
+		}
 		c.Next()
 	}
 	router.POST("/v1/chat/completions", identity, middleware.Distribute(), func(c *gin.Context) { Relay(c, types.RelayFormatOpenAI) })
@@ -151,6 +155,7 @@ func TestRelayFirstByteTimeoutHTTP(t *testing.T) {
 		{"responses_body_wait", 4, 1, 1, "hello"},
 		{"disabled_does_not_retry", 5, 1, 0, ""},
 		{"retry_exhaustion", 6, 2, 0, "upstream_first_byte_timeout"},
+		{"token_first_byte_hard_cutoff", 8, 1, 0, "upstream_first_byte_timeout"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			scenario.Store(tc.mode)
@@ -176,8 +181,8 @@ func TestRelayFirstByteTimeoutHTTP(t *testing.T) {
 			router.ServeHTTP(out, req)
 			if tc.mode == 5 {
 				assert.Equal(t, 499, out.Code)
-			} else if tc.mode == 6 {
-				assert.Equal(t, 504, out.Code)
+			} else if tc.mode == 6 || tc.mode == 8 {
+				assert.Equal(t, statusRelayUpstreamTimeout, out.Code)
 				assert.Contains(t, out.Body.String(), tc.content)
 			} else {
 				assert.Equal(t, http.StatusOK, out.Code, out.Body.String())
