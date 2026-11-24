@@ -199,6 +199,9 @@ type RelayInfo struct {
 	ParamOverrideAudit               []string
 	DeferStreamHeadersUntilResponse  bool
 	ResponsesStreamErrorBeforeCommit bool
+	// Positive only on a successfully sent native Responses attempt. A real
+	// upstream zero is authoritative but does not make delivered text an empty reply.
+	ResponsesDeliveredText bool
 
 	// PurityResponseObserver receives anonymous structural evidence extracted from
 	// the raw upstream response before protocol normalization.

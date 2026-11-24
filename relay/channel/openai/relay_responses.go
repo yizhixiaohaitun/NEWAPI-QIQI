@@ -72,7 +72,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	defer service.CloseResponseBodyGracefully(resp)
 
 	var usage = &dto.Usage{}
-	var responseTextBuilder strings.Builder
+	var observed responsesObservedText
+	var reported responsesReportedTokens
 	var streamErr *types.NewAPIError
 	retryEnabled := operation_setting.IsResponsesStreamErrorRetryEnabled()
 	var retryWriter *upstreamStreamRetryWriter
@@ -177,8 +178,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		}
 
+		sendErr := error(nil)
 		if !moderationFrame {
-			sendResponsesStreamData(c, info, streamResponse, data)
+			sendErr = sendResponsesStreamData(c, info, streamResponse, data)
 		}
 		addResponseAffinityAliases(streamResponse.Response)
 		if streamResponse.Item != nil {
@@ -191,8 +193,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		case "response.completed", "response.incomplete":
 			if streamResponse.Response != nil {
 				if streamResponse.Response.Usage != nil {
-					normalized := normalizedResponsesUsage(streamResponse.Response.Usage)
-					*usage = normalized
+					*usage = normalizedResponsesUsage(streamResponse.Response.Usage)
+					var terminal struct {
+						Response struct{ Usage responsesReportedTokens }
+					}
+					if common.UnmarshalJsonStr(data, &terminal) == nil {
+						reported = terminal.Response.Usage
+					}
 				}
 				if streamResponse.Response.HasImageGenerationCall() {
 					c.Set("image_generation_call", true)
@@ -200,9 +207,6 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 					c.Set("image_generation_call_size", streamResponse.Response.GetSize())
 				}
 			}
-		case "response.output_text.delta":
-			// 处理输出文本
-			responseTextBuilder.WriteString(streamResponse.Delta)
 		case dto.ResponsesOutputTypeItemDone:
 			// 函数调用处理
 			if streamResponse.Item != nil {
@@ -215,6 +219,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 					}
 				}
 			}
+		}
+		if !moderationFrame && sendErr == nil && (!reported.hasOutput() || (usage.CompletionTokens == 0 && usage.OutputTokens == 0)) {
+			observed.observe(&streamResponse, data)
 		}
 	})
 	if streamErr != nil {
@@ -229,21 +236,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		recordResponsesStateChannelAffinity(c, info, affinityAliases)
 	}
 
-	if usage.CompletionTokens == 0 {
-		// 计算输出文本的 token 数量
-		tempStr := responseTextBuilder.String()
-		if len(tempStr) > 0 {
-			// 非正常结束，使用输出文本的 token 数量
-			completionTokens := service.CountTextToken(tempStr, info.UpstreamModelName)
-			usage.CompletionTokens = completionTokens
-		}
-	}
-
-	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 {
-		usage.PromptTokens = info.GetEstimatePromptTokens()
-	}
-
-	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	info.ResponsesDeliveredText = len(observed.spans) != 0
+	observed.settleUsage(usage, reported, info.UpstreamModelName, info.GetEstimatePromptTokens())
 
 	return usage, nil
 }

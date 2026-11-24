@@ -149,6 +149,7 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 - `controller/relay.go`：初始并行阶段未提交时，普通可重试错误和单路有效输出等待超时可以在剩余预算内继续换渠道，排除该阶段已尝试的单 key 渠道；上游真实 HTTP 504、请求总超时、亲和及指定渠道仍沿用原有停止策略。已提交不重放。回归 `controller/relay_hedge_test.go`。
 
 - `relay/channel/claude/relay-claude.go#HandleStreamFinalResponse`：上游没有完整用量时，已有输出的估算同步进结算读取的 Anthropic 用量，保留缓存和完整的原报用量；真空回复仍可自动回退。回归 `relay/channel/claude/stream_billing_usage_test.go`、`controller/relay_claude_hedge_settlement_test.go`，后一项使用本地 HTTP 断开胜出流并对账，确认只结算一次。
+- `relay/channel/openai/responses_observed_usage.go`：原生 Responses 流缺上游用量时，只按本路已成功写出的正文、推理、拒答和工具参数估算；同一内容块的增量与 `.done`、条目及终态快照不重复计；上游已报的输入、输出或缓存（含显式 0）优先，估算标记 `billing-usage-openai-estimated`。有已写出正文时不按零回复退款（`relay/common/relay_info.go#ResponsesDeliveredText`、`service/zero_reply_refund.go`）。回归 `relay/channel/openai/responses_observed_usage_test.go`、`controller/relay_responses_hedge_settlement_test.go`（同渠道竞速断流，钱包和令牌各对账一次）。
 
 ### 分组与渠道重试选择链路
 

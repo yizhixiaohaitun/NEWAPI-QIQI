@@ -39,7 +39,7 @@ func MaybeAutoRefundZeroReplyQuota(ctx *gin.Context, relayInfo *relaycommon.Rela
 		return false
 	}
 	// Embedding 只有输入 token、没有 completion token 是正常协议语义，不能按 0 回复退款。
-	if relayInfo.GetFinalRequestRelayFormat() == types.RelayFormatEmbedding {
+	if relayInfo.GetFinalRequestRelayFormat() == types.RelayFormatEmbedding || relayInfo.ResponsesDeliveredText {
 		return false
 	}
 	// 上游已经给出明确的拒绝/拦截结果时，虽然 completion_tokens 可能为 0，
