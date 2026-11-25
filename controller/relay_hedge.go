@@ -23,6 +23,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
@@ -449,7 +450,9 @@ func (a *streamRaceAttempt) prepareParallelAlternate(ctx context.Context, group 
 // A nil attempt means the ordinary relay path should run. The returned
 // backups are actual attempts, each counted against the shared retry budget.
 func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model.Channel, budget context.Context, storage common.BodyStorage, wait time.Duration, sameChannelFirst, parallelBackups, allProtocols bool, retries int) (*streamRaceAttempt, []*model.Channel) {
-	if !canRaceStream(c, info, primary, allProtocols) || storage.IsDisk() || storage.Size() > 1<<20 {
+	// Each lane builds its own upstream body, so stream_hedge.max_body_mb bounds
+	// how large a request may be duplicated. Larger bodies use the normal path.
+	if !canRaceStream(c, info, primary, allProtocols) || storage.IsDisk() || storage.Size() > operation_setting.GetStreamHedgeMaxBodyBytes() {
 		return nil, nil
 	}
 	body, err := storage.Bytes()

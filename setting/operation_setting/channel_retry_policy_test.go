@@ -113,6 +113,34 @@ func TestChannelRetryPolicyStreamHedgeModels(t *testing.T) {
 	}
 }
 
+func TestChannelRetryPolicyStreamHedgeMaxBody(t *testing.T) {
+	previous := channelRetryPolicy.Load()
+	t.Cleanup(func() { channelRetryPolicy.Store(previous) })
+	const defaultBytes = int64(DefaultStreamHedgeMaxBodyMB) << 20
+	require.NoError(t, SetChannelRetryPolicy(`[]`))
+	require.Equal(t, defaultBytes, GetStreamHedgeMaxBodyBytes())
+	require.NoError(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":5000,"retry_same_channel_first":true}}]`))
+	require.Equal(t, defaultBytes, GetStreamHedgeMaxBodyBytes(), "omitting max_body_mb uses the default")
+	require.Greater(t, GetStreamHedgeMaxBodyBytes(), int64(1336357), "the reported 1.3 MB request fits the default")
+
+	const custom = `[{"status":429,"action":"stop"},{"stream_hedge":{"delay_ms":5000,"retry_same_channel_first":true,"max_body_mb":8}}]`
+	require.NoError(t, SetChannelRetryPolicy(custom))
+	require.Equal(t, int64(8)<<20, GetStreamHedgeMaxBodyBytes())
+	for _, invalid := range []string{`0`, `-1`, `129`, `1.5`, `"8"`, `null`, `true`} {
+		require.Error(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":5000,"max_body_mb":`+invalid+`}}]`), invalid)
+		require.Equal(t, int64(8)<<20, GetStreamHedgeMaxBodyBytes(), "an invalid value must keep the saved limit")
+	}
+	retry, matched := MatchChannelRetryPolicy(1, 429, "", "")
+	require.True(t, matched)
+	require.False(t, retry)
+	require.NoError(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":5000,"max_body_mb":128}}]`))
+	require.Equal(t, int64(128)<<20, GetStreamHedgeMaxBodyBytes())
+	require.NoError(t, SetChannelRetryPolicy(`[{"stream_hedge":{"delay_ms":5000,"max_body_mb":1}}]`))
+	require.Equal(t, int64(1)<<20, GetStreamHedgeMaxBodyBytes())
+	require.NoError(t, SetChannelRetryPolicy(DefaultChannelRetryPolicy))
+	require.Equal(t, defaultBytes, GetStreamHedgeMaxBodyBytes())
+}
+
 func TestChannelRetryPolicyParallelBackups(t *testing.T) {
 	previous := channelRetryPolicy.Load()
 	t.Cleanup(func() { channelRetryPolicy.Store(previous) })

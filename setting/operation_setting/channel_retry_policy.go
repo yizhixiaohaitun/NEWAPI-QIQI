@@ -14,6 +14,10 @@ const (
 	ChannelRetryPolicyOption  = "ChannelRetryPolicy"
 	DefaultChannelRetryPolicy = "[]"
 	maxChannelRetryRules      = 128
+	// DefaultStreamHedgeMaxBodyMB bounds the request body a delayed stream
+	// backup may duplicate when stream_hedge.max_body_mb is omitted.
+	DefaultStreamHedgeMaxBodyMB = 16
+	maxStreamHedgeMaxBodyMB     = 128
 )
 
 // StreamHedgeParallelScope describes what the configuration opted into. The
@@ -44,6 +48,7 @@ type channelRetrySnapshot struct {
 	hedgeModels           []string
 	hedgeParallelModels   []string
 	hedgeParallelScope    StreamHedgeParallelScope
+	hedgeMaxBodyMB        int // 0 means DefaultStreamHedgeMaxBodyMB
 }
 
 var channelRetryPolicy atomic.Pointer[channelRetrySnapshot]
@@ -83,6 +88,8 @@ func parseChannelRetryPolicy(value string) (*channelRetrySnapshot, error) {
 					dst = &snapshot.hedgeParallelModels
 				case "parallel_backup_scope":
 					dst = &parallelScope
+				case "max_body_mb":
+					dst = &snapshot.hedgeMaxBodyMB
 				default:
 					return nil, fmt.Errorf("stream_hedge: unknown field %q", key)
 				}
@@ -92,6 +99,9 @@ func parseChannelRetryPolicy(value string) (*channelRetrySnapshot, error) {
 			}
 			if _, ok := fields["delay_ms"]; !ok || snapshot.hedgeDelayMS < 0 || snapshot.hedgeDelayMS > 300_000 {
 				return nil, fmt.Errorf("stream_hedge.delay_ms must be an integer between 0 and 300000")
+			}
+			if _, ok := fields["max_body_mb"]; ok && (snapshot.hedgeMaxBodyMB < 1 || snapshot.hedgeMaxBodyMB > maxStreamHedgeMaxBodyMB) {
+				return nil, fmt.Errorf("stream_hedge.max_body_mb must be an integer between 1 and %d", maxStreamHedgeMaxBodyMB)
 			}
 			for _, modelList := range []struct {
 				name   string
@@ -215,6 +225,16 @@ func GetChannelRetryStreamHedge(model string) (delayMS int, sameChannelFirst boo
 		parallelScope = StreamHedgeParallelClaude
 	}
 	return snapshot.hedgeDelayMS, snapshot.hedgeSameChannelFirst, parallelScope, true
+}
+
+// GetStreamHedgeMaxBodyBytes returns the largest request body a delayed stream
+// backup may duplicate. Larger bodies keep the ordinary single-attempt path.
+func GetStreamHedgeMaxBodyBytes() int64 {
+	mb := DefaultStreamHedgeMaxBodyMB
+	if snapshot := channelRetryPolicy.Load(); snapshot != nil && snapshot.hedgeMaxBodyMB > 0 {
+		mb = snapshot.hedgeMaxBodyMB
+	}
+	return int64(mb) << 20
 }
 
 // MatchChannelRetryPolicy returns the first matching action. All fields on a

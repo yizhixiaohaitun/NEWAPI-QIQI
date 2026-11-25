@@ -145,6 +145,8 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 		{"json_opus_excluded", 1, false, 200, false},
 		{"legacy_fable_not_enabled", 1, false, 200, false},
 		{"json_parallel_fable", 3, true, 200, true},
+		{"json_parallel_fable_large_body", 3, true, 200, true},
+		{"json_capped_large_body_fable", 1, false, 200, false},
 		{"json_parallel_claude_scope_alias", 3, true, 200, true},
 		{"json_parallel_all_claude_alias", 3, true, 200, true},
 		{"json_parallel_all_chat_alias", 3, true, 200, true},
@@ -167,6 +169,11 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 				modelName = "custom-native-alias"
 			}
 			protocol := hedgeHTTPProtocolFor(modelName, tc.name)
+			largeBody := strings.Contains(tc.name, "large_body")
+			if largeBody {
+				// Just over the old fixed 1 MiB guard, like the reported 1.3 MB request.
+				protocol.payload = strings.Replace(protocol.payload, "replayed body", "replayed body "+strings.Repeat("x", 1300000), 1)
+			}
 			parallel := strings.HasPrefix(tc.name, "json_parallel_")
 			cross := strings.Contains(tc.name, "_cross_")
 			auto := cross || tc.name == "json_parallel_fable_auto_same_group"
@@ -296,7 +303,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 							close(canceled[lane])
 							return
 						}
-					case "json_zero_disables_startup_setting", "json_opus_excluded", "legacy_fable_not_enabled":
+					case "json_zero_disables_startup_setting", "json_opus_excluded", "legacy_fable_not_enabled", "json_capped_large_body_fable":
 						select {
 						case <-time.After(140 * time.Millisecond):
 						case <-r.Context().Done():
@@ -410,6 +417,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 				policy = `[{"stream_hedge":{"delay_ms":0}}]`
 			case "json_fable_included", "json_opus_excluded":
 				policy = `[{"stream_hedge":{"delay_ms":70,"retry_same_channel_first":true,"models":["claude-fable-5-2"]}}]`
+			case "json_capped_large_body_fable":
+				// An explicit 1 MB cap restores the old behaviour for larger bodies.
+				policy = `[{"stream_hedge":{"delay_ms":70,"retry_same_channel_first":true,"max_body_mb":1}}]`
 			}
 			require.NoError(t, db.Exec("DELETE FROM channels").Error)
 			require.NoError(t, db.Exec("DELETE FROM abilities").Error)
@@ -491,6 +501,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			require.Equal(t, tc.status, out.Code, out.Body.String())
 			require.EqualValues(t, 1, calls[0].Load())
 			require.Contains(t, *bodies[0].Load(), "replayed body")
+			if largeBody {
+				require.Greater(t, len(*bodies[0].Load()), 1<<20)
+			}
 			if tc.backup {
 				require.EqualValues(t, 1, calls[1].Load())
 				require.JSONEq(t, *bodies[0].Load(), *bodies[1].Load())
