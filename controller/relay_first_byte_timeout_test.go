@@ -182,7 +182,7 @@ func TestRelayFirstByteTimeoutHTTP(t *testing.T) {
 			if tc.mode == 5 {
 				assert.Equal(t, 499, out.Code)
 			} else if tc.mode == 6 || tc.mode == 8 {
-				assert.Equal(t, statusRelayUpstreamTimeout, out.Code)
+				assert.Equal(t, http.StatusGatewayTimeout, out.Code)
 				assert.Contains(t, out.Body.String(), tc.content)
 			} else {
 				assert.Equal(t, http.StatusOK, out.Code, out.Body.String())

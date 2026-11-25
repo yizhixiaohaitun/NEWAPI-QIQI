@@ -22,13 +22,13 @@ func TestRelayHTTPErrorStatusAndEnvelope(t *testing.T) {
 		{
 			name: "OpenAI timeout", format: types.RelayFormatOpenAI,
 			upstream:   types.NewOpenAIError(errors.New("upstream timed out"), types.ErrorCodeBadResponse, http.StatusGatewayTimeout),
-			wantStatus: 498,
+			wantStatus: http.StatusGatewayTimeout,
 			wantBody:   `{"error":{"message":"upstream timed out","type":"bad_response","param":"","code":"bad_response"}}`,
 		},
 		{
 			name: "Claude timeout", format: types.RelayFormatClaude,
 			upstream:   types.WithClaudeError(types.ClaudeError{Type: "api_error", Message: "upstream timed out"}, http.StatusGatewayTimeout),
-			wantStatus: 498,
+			wantStatus: http.StatusGatewayTimeout,
 			wantBody:   `{"type":"error","error":{"type":"api_error","message":"upstream timed out"}}`,
 		},
 		{

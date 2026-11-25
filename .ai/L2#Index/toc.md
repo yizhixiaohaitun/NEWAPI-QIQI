@@ -118,7 +118,7 @@ ZERO 是以文件夹路径为唯一主体的命名规范框架（路径为王）
 ### Relay 完成、断连和超时回归
 
 - `controller/relay_completion_context_http_test.go`：通过本地模拟上游覆盖响应写出后断连仍成功、上游执行中真实取消返回 499、请求总时限返回上游超时；成功场景检查未记录错误日志。
-- `controller/relay_first_byte_timeout_test.go`：覆盖继承的首字节超时可按预算重试、令牌硬截止停止重试及已提交的流不重放。`controller/relay_error_format.go#writeRelayHTTPError` 只在最终对客 HTTP 响应把 504 写成 498，错误体、站内重试和日志保留原值；回归 `controller/relay_http_error_test.go`。
+- `controller/relay_first_byte_timeout_test.go`：覆盖继承的首字节超时可按预算重试、令牌硬截止停止重试及已提交的流不重放。`controller/relay_error_format.go#writeRelayHTTPError` 按原状态码写出最终对客 HTTP 错误，上游超时对客为 504；回归 `controller/relay_http_error_test.go`。
 
 ### Relay 对外错误隐私边界
 
