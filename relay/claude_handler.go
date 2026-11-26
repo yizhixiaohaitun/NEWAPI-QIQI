@@ -254,15 +254,15 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if newAPIError == nil {
 			break
 		}
-		// Do not replay errors from an HTTP 200 body: a race writer may already
-		// have protocol frames buffered even though Written() is still false.
-		upstreamRejected := httpResp != nil && httpResp.StatusCode != http.StatusOK
+		// Keep the existing serial policy (including JSON error envelopes).
+		// A race writer, however, may already have private protocol frames after
+		// receiving HTTP 200, even when Written() is still false.
+		canRetrySignatureOnPath := info.ClaimStreamOutput == nil || (httpResp != nil && httpResp.StatusCode >= http.StatusBadRequest)
 		if httpResp == nil && info.ApiType == constant.APITypeAws {
-			// Bedrock reports the SDK invocation failure separately from any
-			// body/stream error. Only that path supplies the SDK's HTTP status.
-			upstreamRejected = newAPIError.GetErrorCode() == types.ErrorCodeAwsInvokeError
+			// Bedrock separates invocation failures from response stream errors.
+			canRetrySignatureOnPath = canRetrySignatureOnPath || newAPIError.GetErrorCode() == types.ErrorCodeAwsInvokeError
 		}
-		if attempt == 0 && len(retrySource) > 0 && upstreamRejected && !c.Writer.Written() &&
+		if attempt == 0 && len(retrySource) > 0 && canRetrySignatureOnPath && !c.Writer.Written() &&
 			c.Request.Context().Err() == nil && (info.UpstreamContext == nil || info.UpstreamContext.Err() == nil) &&
 			isClaudeThinkingSignatureRejection(newAPIError) {
 			if body, changed, toolRecovery := prepareClaudeSignatureRecovery(retrySource); changed && claimClaudeSignatureRetry(c, info) {

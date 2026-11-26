@@ -151,6 +151,7 @@ func TestClaudeSignatureRetryHTTP(t *testing.T) {
 				{name: "success unchanged", expected: 1},
 				{name: "precise signature then success", firstStatus: 400, message: signatureValidationMessage, expected: 2},
 				{name: "hedge_claim_pending", firstStatus: 400, message: signatureValidationMessage, claimPending: true, expected: 2},
+				{name: "serial nonstream 200 error envelope still retries", firstStatus: 200, message: signatureValidationMessage, expected: 2},
 				{name: "precise signature 429 then success", firstStatus: 429, message: signatureValidationMessage, expected: 2},
 				{name: "unrelated 429 does not retry", firstStatus: 429, message: "rate limit exceeded", expected: 1},
 				{name: "wrapped signature429 then success", firstStatus: 429, message: "messages.3.content.44: " + signatureValidationMessage, expected: 2},
@@ -194,6 +195,10 @@ func TestClaudeSignatureRetryHTTP(t *testing.T) {
 				// Bedrock's SDK can resend the original body on HTTP 500. Only
 				// direct Claude HTTP makes one call in this non-recovery case.
 				if aws && tc.firstStatus == http.StatusInternalServerError {
+					continue
+				}
+				// A native nonstream JSON error envelope may carry an HTTP 200.
+				if tc.firstStatus == http.StatusOK && (aws || stream) {
 					continue
 				}
 				name := "claude/"
