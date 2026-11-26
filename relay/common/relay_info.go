@@ -128,7 +128,10 @@ type RelayInfo struct {
 	FirstByteWatch           *FirstByteWatch
 	// ClaimStreamOutput is set only for isolated stream race attempts. The
 	// adapter calls it before writing its first effective protocol frame.
-	ClaimStreamOutput            func() bool
+	ClaimStreamOutput func() bool
+	// ClaimClaudeSignatureRetry atomically reserves this channel's single
+	// compatibility retry across all lanes of a stream race.
+	ClaimClaudeSignatureRetry    func(channelID int) bool
 	EffectiveStreamOutputClaimed bool
 	// DeferStreamSettlement hands settlement to the request controller, which
 	// runs it once with the winning RelayInfo and original billing session.

@@ -99,7 +99,7 @@ func TestClaudeToolSignatureConservativeBoundaries(t *testing.T) {
 		{"unmatched tool", `"tool_use_id":"b"`, `"tool_use_id":"unknown"`},
 		{"duplicate call", `"id":"b"`, `"id":"a"`},
 		{"duplicate result", `"tool_use_id":"b"`, `"tool_use_id":"a"`},
-		{"mixed user content", `"tool_use_id":"b","content":"done"}`, `"tool_use_id":"b","content":"done"},{"type":"text","text":"new input"}`},
+		{"mixed media remains unsupported", `"tool_use_id":"b","content":"done"}`, `"tool_use_id":"b","content":"done"},{"type":"image","source":{}}`},
 		{"server tool", `"type":"tool_use","id":"b"`, `"type":"server_tool_use","id":"b"`},
 		{"unknown content", `"type":"text","text":"plan"`, `"type":"future_output","value":9007199254740993`},
 		{"thinking-only", `,{"type":"tool_use","id":"b","name":"local","input":{}}`, ``},

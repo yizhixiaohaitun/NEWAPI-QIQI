@@ -241,21 +241,21 @@ API路径：/api/admin/users/config/levels
 
 - `relay/claude_signature_tool_recovery.go` 在状态映射前仅识别 HTTP 400/429 中精确的 ``Invalid `signature` in `thinking` block``；普通限流不触发。`ClaudeHelper` 沿用 SK 兼容开启、非 raw、未输出/Flush、请求与上游上下文有效、同渠道最多一次的门槛；二次失败保留真实错误。
 - 用户明确选择优先恢复续聊：有活动 thinking 且最后真实输入后的纯客户端 `tool_use/tool_result` 完整配对时，删除所有 assistant 的 `thinking/redacted_thinking`，不留下依赖已修改前缀的签名。保留消息数量、正文、工具与结果顺序、thinking/output_config 和未知精确数值。这是有损最佳努力，不等价于正常工具轮次，不保证上游接受；不验签、不补造签名、不关闭新请求思考。
-- 混合用户输入、未知/服务器工具、重复或缺失 ID、未配对调用、助手预填、移除后空消息均不降级；无活动 thinking 时沿用历史清理。纯函数采用 RawMessage，字符串历史助手回复原样保留。
+- 活动续轮允许完整配对的纯客户端工具结果后接文本，并保留可识别的文本 system 消息；system 和混合工具结果都不重划用户边界。含媒体的混合输入、未知/服务器工具、重复或缺失 ID、未配对调用、助手预填或移除后令活动消息为空均放弃恢复；无活动 thinking 时走历史清理。纯函数用 RawMessage 保留非目标字段与首次出站数字。
 - 事件 `QIQI-EC-006` / `claude_tool_thinking_signature_retry` / `strip_tool_turn_thinking_and_retry` / `retry_started` 与 EC005 历史清理分开；两主题管理员日志说明明确“有损、尝试、不保证接受”，不伪造成功或数量，普通用户 admin_info 隔离保留。令牌请求兼容说明及独立中英文/繁中翻译同步。
 - 回归：`relay/claude_signature_tool_recovery_test.go` 的独立删除 oracle、配对/保守边界与可选 `NEWAPI_CLAUDE_TOOL_SIGNATURE_ATTACHMENT`（57 消息、19 thinking，Claude/真实 AWS SDK 流/非流 localhost）；`claude_signature_http_test.go` 覆盖成功不变、400/429、映射前状态、一次重试、二次错误、SK/raw/输出/取消。模拟只证明转换与重试，不证明真实签名或真实上游接受；附件不入仓、不发付费模型。前端回归沿两主题 compatibility-reference 与 token-request-compatibility、默认 claude-signature-reference 测试。
-- 重试额度存于入站 Gin 请求上下文并按渠道 ID 分隔；控制器换同渠道其他 key、再次进入 helper 也不能再兼容重试。历史清理遇纯思考消息须整次放弃，不能先改前缀又留下签名。数值保真承诺仅为首次实际出站到二次；已有 DTO/SDK 首次 any 序列化不在本轮修复范围，新增 HTTP 大数工具参数测试覆盖此边界。
-- 本轮仅本地提交；禁止推送、构建线上镜像、更新或访问服务器。
+- `ClaudeSignatureRetryClaimer` 在入站 Gin 请求创建按渠道的共享额度，`controller/relay_hedge.go` 在分流前取得，尚无赢家且请求仍有效的 lane 才可占用；切同渠道 key 或再次进入 helper 均不重置额度。`TestStreamRaceClaudeSignatureRetryBudgetSharedByChannel` 与 `TestClaudeHedgeHTTP` 的签名场景回归同渠道并发、成功流、流内错误、响应 ID 和单次结算。
+- 2026-11-11 当轮交付范围仅限本地提交。
 
 ### Claude 历史 thinking 签名精确 400 兼容（2026-11-04）
 
-- `relay/claude_handler.go#ClaudeHelper`：仅 SK 请求兼容开启、非原始透传、客户端尚未写入或 Flush、请求与上游总上下文均未取消/超时，且状态码映射前确为 HTTP 400、错误含完整 ``Invalid `signature` in `thinking` block`` 时，同渠道最多重发一次。普通成功和其他错误不改；同时接住常规 `DoRequest` HTTP 错误与 AWS 在 `DoResponse` 中真正调用 SDK 后的错误。每次都重新 `DoRequest`，刷新 AWS 已组装请求；二次失败按真实错误走原有状态映射，不覆盖成首次签名错误，不关闭 thinking。
-- `relay/claude_signature_history.go#stripHistoricalClaudeThinking`：从最终转换/覆盖后的首次 JSON 保存副本，仅删除最后一个非纯 `tool_result` 用户输入之前的历史 assistant `thinking/redacted_thinking`，不转文本，不动消息数量、正文、工具调用与结果顺序、当前工具续轮或顶层 thinking/output_config。用 `json.RawMessage` 保留未知字段与数字文本；用户内容不明、工具结果与普通输入混合时不尝试，移除后会成为空消息的历史块保守保留。本轮不修已有 Claude/AWS `any` 首次序列化的数字边界，只保证首次实际出站到二次不新增改写。
-- 回归：`relay/claude_signature_history_test.go` 验证保守裁剪、活动工具轮次、未知字段及精确数值；`relay/claude_signature_http_test.go#TestClaudeSignatureRetryHTTP` 经 localhost mock 覆盖 Claude 与真实 AWS SDK 流/非流、成功不改、仅重发一次、第二次不同错误、开关关闭/raw/非目标400/非400/映射前状态/已输出/Flush/PING/开始帧/取消/上游总上下文终止不重发，比较首次实际出站与二次只有历史块差异。成功路径使用隔离内存库并关闭消费日志与 Redis，不触碰用户状态。
+- `relay/claude_handler.go#ClaudeHelper`：仅 SK 兼容开启、非原始透传、尚未写出或 Flush、请求与上游上下文有效，且未进入流解析的原始 HTTP 400/429（含 Bedrock SDK 调用拒绝）精确含 ``Invalid `signature` in `thinking` block`` 时，同渠道最多发起一次兼容重试。HTTP 200 流内错误即使被映射为 400 也不重放。正常签名照常转发；重试重新组装出站请求并清除首轮失败的上游 ID，二次失败保留实际错误。
+- `relay/claude_signature_history.go`：只裁剪最后一个真实用户输入之前的历史 assistant `thinking/redacted_thinking`。通常遇到裁剪后为空的消息则整次放弃；仅在明确签名拒绝时，可整个省略没有额外字段、且内容都是已知思考块的历史消息。保留正文、system、工具调用和结果顺序、顶层 thinking/output_config；不修第一次序列化的数字，只保证从首次出站到重试不新增改写。
+- 回归：`relay/claude_signature_history_recovery_test.go` 覆盖纯思考历史、system 边界、工具配对及回环 HTTP；`relay/claude_signature_release_test.go` 覆盖多步工具续聊、原生 `signature_delta` 经客户端组装后在下一次请求原样送出；`relay/claude_signature_http_test.go#TestClaudeSignatureRetryHTTP` 覆盖 Claude 与真实 AWS SDK 经 localhost 的状态门槛、成功不改、SK/raw/输出/取消门槛、仅重试一次、二次错误和 200 流内不重放。模拟签名与上游响应不证明真实渠道接受。
 - 本轮附件独立可选入口：设置 `NEWAPI_CLAUDE_SIGNATURE_ATTACHMENT` 后仅运行 `TestClaudeSignatureAttachmentReplay`，不复用旧 `TestClaudeAdaptiveAttachmentReplay` 的 high/无 display 断言；核对 54 条消息、12 个历史 thinking、`adaptive/display=summarized/effort=medium`，Claude/AWS 流式均只向 localhost 回放，附件内容不写进仓库或输出。
 - 签名兼容参考提示：复用 `service/relay_compatibility.go` 的请求级事件与既有成功/错误日志附加链，`QIQI-EC-005` / `claude_historical_thinking_signature_retry` 只在确实清理历史思考块并发起同渠道一次重试时记录；`retry_started` 仅说明已尝试，不证明真实上游恢复，且不记录签名或请求正文。默认主题沿用管理员使用日志“参考”列，由 `web/default/src/features/usage-logs/components/columns/compatibility-reference.tsx` 展示；经典主题由 `web/classic/src/hooks/usage-logs/useUsageLogsData.jsx` 调用同目录 `compatibility-reference.js` 在管理员日志详情展示同项。令牌编辑“请求兼容”附静态能力说明，无新增独立开关；无事件的请求及旧日志不补造触发记录，普通用户仍由既有 `admin_info` 过滤隔离。直接回归入口：`relay/claude_signature_http_test.go`、`service/relay_compatibility_test.go`（真实成功日志附加、事件去重、无事件不补造）、上述两主题提示实现的同名 `.test.tsx` / `.test.js`、两主题 `src/i18n/token-request-compatibility.test.*` 及 production build。
 
-**最后更新**：2026-11-04
+**最后更新**：2026-11-26
 
 ### SK 请求兼容集合（2026-10-14）
 

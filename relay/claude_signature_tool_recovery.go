@@ -4,30 +4,38 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/QuantumNous/new-api/common"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
 
-// The controller can re-enter ClaudeHelper for another key on the same channel.
-// Keep the compatibility retry budget on the whole inbound request, not the
-// helper invocation. Different channels retain their own single attempt.
-func claimClaudeSignatureRetry(c *gin.Context, channelID int) bool {
-	const key = "claude_signature_retry_channels"
-	var channels map[int]bool
-	if value, ok := c.Get(key); ok {
-		channels, _ = value.(map[int]bool)
+// ClaudeSignatureRetryClaimer returns the inbound request's per-channel
+// compatibility budget. The controller obtains it before copying the context
+// for any race lanes, so those lanes and later key selection share one budget.
+func ClaudeSignatureRetryClaimer(c *gin.Context) func(channelID int) bool {
+	const key = "claude_signature_retry_claim"
+	if existing, ok := c.Get(key); ok {
+		if claim, ok := existing.(func(int) bool); ok {
+			return claim
+		}
 	}
-	if channels == nil {
-		channels = make(map[int]bool)
-		c.Set(key, channels)
+	var channels sync.Map
+	claim := func(channelID int) bool {
+		_, alreadyRetried := channels.LoadOrStore(channelID, struct{}{})
+		return !alreadyRetried
 	}
-	if channels[channelID] {
-		return false
+	c.Set(key, claim)
+	return claim
+}
+
+func claimClaudeSignatureRetry(c *gin.Context, info *relaycommon.RelayInfo) bool {
+	if info.ClaimClaudeSignatureRetry != nil {
+		return info.ClaimClaudeSignatureRetry(info.ChannelId)
 	}
-	channels[channelID] = true
-	return true
+	return ClaudeSignatureRetryClaimer(c)(info.ChannelId)
 }
 
 // Status is checked before channel mappings. A normal 429 is never a signal to
@@ -63,9 +71,11 @@ func prepareClaudeSignatureRecovery(body []byte) ([]byte, bool, bool) {
 			return body, false, false
 		}
 		switch msg.Role {
-		case "assistant":
+		case "assistant", "system":
+			// Preserve system messages in place. They do not establish a user
+			// boundary and must not block completed-turn history recovery.
 		case "user":
-			genuine, known := claudeGenuineUserContent(msg.Content)
+			genuine, known := claudeSignatureUserBoundary(msg.Content, true)
 			if !known {
 				return body, false, false
 			}
@@ -82,37 +92,54 @@ func prepareClaudeSignatureRecovery(body []byte) ([]byte, bool, bool) {
 	if cutoff < 0 {
 		return body, false, false
 	}
-	// With no active thinking, preserve the existing completed-turn policy.
+	// Only extend the historical fallback to mixed or system-interleaved
+	// tool continuations after the same pairing checks as active recovery.
 	activeThinking := false
+	hasSystem, hasContinuation, hasMixed := false, false, false
 	for _, raw := range messages[cutoff+1:] {
 		var msg struct {
-			Role    string `json:"role"`
-			Content []struct {
-				Type string `json:"type"`
-			} `json:"content"`
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
 		}
 		if common.Unmarshal(raw, &msg) != nil {
 			return body, false, false
 		}
-		if msg.Role == "assistant" {
-			for _, block := range msg.Content {
-				if block.Type == "thinking" || block.Type == "redacted_thinking" {
-					activeThinking = true
-				}
+		if msg.Role == "system" {
+			hasSystem = true
+			continue
+		}
+		hasContinuation = true
+		if msg.Role == "user" {
+			_, plain := claudeGenuineUserContent(msg.Content)
+			hasMixed = hasMixed || !plain // This tail was already checked with mixed results allowed.
+			continue
+		}
+		var blocks []struct {
+			Type string `json:"type"`
+		}
+		if common.Unmarshal(msg.Content, &blocks) != nil {
+			return body, false, false
+		}
+		for _, block := range blocks {
+			if block.Type == "thinking" || block.Type == "redacted_thinking" {
+				activeThinking = true
 			}
 		}
 	}
-	if !activeThinking {
-		out, changed := stripHistoricalClaudeThinking(body)
-		return out, changed, false
-	}
-	if !pairedClaudeToolContinuation(messages[cutoff+1:]) {
+	if (activeThinking || hasMixed || hasSystem && hasContinuation) && !pairedClaudeToolContinuation(messages[cutoff+1:]) {
 		return body, false, false
 	}
+	if !activeThinking {
+		// The rejected response permits omission of a completed assistant
+		// message only when it consists entirely of known thinking blocks.
+		out, changed := stripClaudeThinkingBeforeUser(body, request, messages, cutoff, true)
+		return out, changed, false
+	}
 	changed := false
+	cleanedMessages := make([]json.RawMessage, 0, len(messages))
 	for i, raw := range messages {
 		var msg map[string]json.RawMessage
-		if common.Unmarshal(raw, &msg) != nil {
+		if common.Unmarshal(raw, &msg) != nil || msg == nil {
 			return body, false, false
 		}
 		var role string
@@ -120,6 +147,7 @@ func prepareClaudeSignatureRecovery(body []byte) ([]byte, bool, bool) {
 			return body, false, false
 		}
 		if role != "assistant" {
+			cleanedMessages = append(cleanedMessages, raw)
 			continue
 		}
 		var blocks []json.RawMessage
@@ -128,6 +156,7 @@ func prepareClaudeSignatureRecovery(body []byte) ([]byte, bool, bool) {
 			// no signed blocks and must stay unchanged, not block recovery.
 			var text string
 			if common.Unmarshal(msg["content"], &text) == nil {
+				cleanedMessages = append(cleanedMessages, raw)
 				continue
 			}
 			return body, false, false
@@ -144,12 +173,17 @@ func prepareClaudeSignatureRecovery(body []byte) ([]byte, bool, bool) {
 				kept = append(kept, rawBlock)
 			}
 		}
-		// Never invent text, drop a message, or leave a signed block behind after
-		// changing its prefix. Abort the entire recovery if any message empties.
 		if len(kept) == 0 {
-			return body, false, false
+			// Only a safely recognized completed historical thinking-only
+			// message may disappear. Never drop active-turn content.
+			if i >= cutoff || !isClaudeThinkingOnlyMessage(msg, blocks) {
+				return body, false, false
+			}
+			changed = true
+			continue
 		}
 		if len(kept) == len(blocks) {
+			cleanedMessages = append(cleanedMessages, raw)
 			continue
 		}
 		var err error
@@ -157,17 +191,18 @@ func prepareClaudeSignatureRecovery(body []byte) ([]byte, bool, bool) {
 		if err != nil {
 			return body, false, false
 		}
-		messages[i], err = common.Marshal(msg)
+		encoded, err := common.Marshal(msg)
 		if err != nil {
 			return body, false, false
 		}
+		cleanedMessages = append(cleanedMessages, encoded)
 		changed = true
 	}
 	if !changed {
 		return body, false, false
 	}
 	var err error
-	request["messages"], err = common.Marshal(messages)
+	request["messages"], err = common.Marshal(cleanedMessages)
 	if err != nil {
 		return body, false, false
 	}
@@ -178,27 +213,53 @@ func prepareClaudeSignatureRecovery(body []byte) ([]byte, bool, bool) {
 	return out, true, true
 }
 
-// Only known client tool calls/results are supported. No mixed user input,
-// server tools, duplicate IDs, unpaired results or assistant prefill recovery.
+// Only known, fully paired client tools are supported. Text after the results
+// and text-only system messages stay in place and never start a new user turn.
+// Reject server tools, duplicate IDs, unpaired results and assistant prefill.
 func pairedClaudeToolContinuation(messages []json.RawMessage) bool {
 	pending, seen := map[string]bool{}, map[string]bool{}
 	lastRole := ""
 	for _, raw := range messages {
 		var msg struct {
-			Role    string `json:"role"`
-			Content []struct {
-				Type      string `json:"type"`
-				ID        string `json:"id"`
-				ToolUseID string `json:"tool_use_id"`
-			} `json:"content"`
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
 		}
-		if common.Unmarshal(raw, &msg) != nil || len(msg.Content) == 0 {
+		if common.Unmarshal(raw, &msg) != nil {
+			return false
+		}
+		if msg.Role == "system" {
+			var text string
+			if common.GetJsonType(msg.Content) == "string" && common.Unmarshal(msg.Content, &text) == nil {
+				continue
+			}
+			var blocks []struct {
+				Type string  `json:"type"`
+				Text *string `json:"text"`
+			}
+			if common.Unmarshal(msg.Content, &blocks) != nil || len(blocks) == 0 {
+				return false
+			}
+			for _, block := range blocks {
+				if block.Type != "text" || block.Text == nil {
+					return false
+				}
+			}
+			continue
+		}
+		var blocks []struct {
+			Type      string  `json:"type"`
+			ID        string  `json:"id"`
+			ToolUseID string  `json:"tool_use_id"`
+			Text      *string `json:"text"`
+		}
+		if common.Unmarshal(msg.Content, &blocks) != nil || len(blocks) == 0 {
 			return false
 		}
 		if msg.Role == "assistant" && lastRole == "user" && len(pending) != 0 {
 			return false
 		}
-		for _, block := range msg.Content {
+		hasResult := false
+		for _, block := range blocks {
 			switch msg.Role {
 			case "assistant":
 				switch block.Type {
@@ -212,13 +273,28 @@ func pairedClaudeToolContinuation(messages []json.RawMessage) bool {
 					return false
 				}
 			case "user":
-				if block.Type != "tool_result" || !pending[block.ToolUseID] {
+				switch block.Type {
+				case "tool_result":
+					if !pending[block.ToolUseID] {
+						return false
+					}
+					delete(pending, block.ToolUseID)
+					hasResult = true
+				case "text":
+					// Text can follow a complete result batch, not interrupt it
+					// even when results span consecutive user messages.
+					if block.Text == nil || !hasResult || len(pending) != 0 {
+						return false
+					}
+				default:
 					return false
 				}
-				delete(pending, block.ToolUseID)
 			default:
 				return false
 			}
+		}
+		if msg.Role == "user" && !hasResult {
+			return false
 		}
 		lastRole = msg.Role
 	}

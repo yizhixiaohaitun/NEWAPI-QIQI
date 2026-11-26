@@ -33,13 +33,14 @@ import (
 const maxStreamRaceLanes = 3
 
 type streamRace struct {
-	mu      sync.Mutex
-	ctx     context.Context
-	cancel  [maxStreamRaceLanes]context.CancelCauseFunc
-	lanes   [maxStreamRaceLanes]context.Context
-	winner  int // 0 = unclaimed; lanes are one-based
-	started int // starts at 1 for the original request
-	done    [maxStreamRaceLanes]bool
+	mu                  sync.Mutex
+	ctx                 context.Context
+	cancel              [maxStreamRaceLanes]context.CancelCauseFunc
+	lanes               [maxStreamRaceLanes]context.Context
+	winner              int // 0 = unclaimed; lanes are one-based
+	started             int // starts at 1 for the original request
+	done                [maxStreamRaceLanes]bool
+	claimSignatureRetry func(channelID int) bool
 }
 
 func (r *streamRace) startBackups(count int) bool {
@@ -55,6 +56,15 @@ func (r *streamRace) startBackups(count int) bool {
 		}
 	}
 	return false
+}
+
+func (r *streamRace) claimClaudeSignatureRetry(lane, channelID int) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if lane < 1 || lane > r.started || r.winner != 0 || r.ctx.Err() != nil || r.lanes[lane-1].Err() != nil {
+		return false
+	}
+	return r.claimSignatureRetry(channelID)
 }
 
 func (r *streamRace) claim(lane int) bool {
@@ -367,6 +377,11 @@ func (a *streamRaceAttempt) run(r *streamRace, lane int, ctx context.Context) {
 	a.c.Set(common.UpstreamRequestIdKey, "")
 	var publishErr error
 	a.writer.cancel = r.cancel[lane-1]
+	if r.claimSignatureRetry != nil {
+		a.info.ClaimClaudeSignatureRetry = func(channelID int) bool {
+			return r.claimClaudeSignatureRetry(lane, channelID)
+		}
+	}
 	a.info.ClaimStreamOutput = func() bool {
 		if a.writer.selected {
 			return true
@@ -412,6 +427,7 @@ func (a *streamRaceAttempt) run(r *streamRace, lane int, ctx context.Context) {
 	}
 	// These callbacks are attempt-local, not state for settlement or retries.
 	a.info.ClaimStreamOutput = nil
+	a.info.ClaimClaudeSignatureRetry = nil
 	a.info.DeferStreamSettlement = nil
 }
 
@@ -473,6 +489,9 @@ func raceRelayStream(c *gin.Context, info *relaycommon.RelayInfo, primary *model
 	}
 	ctx, cancel := context.WithCancel(budget)
 	r := &streamRace{ctx: ctx, started: 1}
+	if info.RelayFormat == types.RelayFormatClaude {
+		r.claimSignatureRetry = relay.ClaudeSignatureRetryClaimer(c)
+	}
 	var attempts [maxStreamRaceLanes]*streamRaceAttempt
 	header, status := c.Writer.Header(), c.Writer.Status()
 	for i := range count {

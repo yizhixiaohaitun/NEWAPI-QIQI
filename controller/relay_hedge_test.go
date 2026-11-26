@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -38,6 +39,36 @@ func TestStreamRaceFirstEffectiveOutputWins(t *testing.T) {
 	require.ErrorIs(t, context.Cause(primaryCtx), relaycommon.ErrStreamRaceLost)
 	require.Nil(t, context.Cause(backupCtx))
 	require.False(t, r.claim(1))
+}
+
+func TestStreamRaceClaudeSignatureRetryBudgetSharedByChannel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	lane1, cancel1 := context.WithCancel(ctx)
+	defer cancel1()
+	lane2, cancel2 := context.WithCancel(ctx)
+	defer cancel2()
+	c := &gin.Context{}
+	r := &streamRace{
+		ctx: ctx, started: 2, lanes: [maxStreamRaceLanes]context.Context{lane1, lane2},
+		claimSignatureRetry: relay.ClaudeSignatureRetryClaimer(c),
+	}
+	start := make(chan struct{})
+	results := make(chan bool, 2)
+	for _, lane := range []int{1, 2} {
+		go func() {
+			<-start
+			results <- r.claimClaudeSignatureRetry(lane, 983)
+		}()
+	}
+	close(start)
+	first, second := <-results, <-results
+	require.NotEqual(t, first, second, "same-channel retry budget must be atomic across lanes")
+	require.False(t, relay.ClaudeSignatureRetryClaimer(c)(983), "later serial key selection must share the race budget")
+	require.True(t, r.claimClaudeSignatureRetry(2, 984), "different channels retain independent retry budgets")
+	cancel1()
+	require.False(t, r.claimClaudeSignatureRetry(1, 985), "canceled lane cannot consume the budget")
+	require.True(t, r.claimClaudeSignatureRetry(2, 985))
 }
 
 func TestStreamRaceBackupCanWinAfterPrimaryFinished(t *testing.T) {
@@ -128,6 +159,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 		{"backup_wins", 2, true, 200, false}, {"primary_wins_after_backup_error", 1, true, 200, false},
 		{"backup_wins_after_primary_empty", 2, true, 200, false}, {"both_empty", 0, true, 502, false},
 		{"effective_before_threshold", 1, false, 200, false}, {"disabled", 1, false, 200, false},
+		{"json_parallel_fable_signature_retry_before_hedge_output", 1, false, 200, false},
+		{"json_parallel_fable_signature_same_channel_once", 1, true, 200, false},
+		{"json_parallel_fable_sse_signature_no_retry", 0, false, 400, false},
 		{"pinned", 1, false, 200, false}, {"client_cancels", 0, true, 499, false},
 		{"primary_empty_before_threshold", 0, false, 502, false},
 		{"primary_rate_limit_before_threshold", 2, true, 200, false},
@@ -169,6 +203,14 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 				modelName = "custom-native-alias"
 			}
 			protocol := hedgeHTTPProtocolFor(modelName, tc.name)
+			signatureCase := strings.Contains(tc.name, "signature_")
+			signatureRace := tc.name == "json_parallel_fable_signature_same_channel_once"
+			signatureSSE := tc.name == "json_parallel_fable_sse_signature_no_retry"
+			const signatureError = "Invalid `signature` in `thinking` block"
+			const signatureBlock = `"signature":"synthetic-signature"`
+			if signatureCase {
+				protocol.payload = `{"model":"` + modelName + `","stream":true,"max_tokens":64,"thinking":{"type":"adaptive"},"messages":[{"role":"user","content":"old question"},{"role":"assistant","content":[{"type":"thinking","thinking":"old reasoning","signature":"synthetic-signature"},{"type":"text","text":"previous answer"}]},{"role":"user","content":"replayed body"}]}`
+			}
 			largeBody := strings.Contains(tc.name, "large_body")
 			if largeBody {
 				// Just over the old fixed 1 MiB guard, like the reported 1.3 MB request.
@@ -181,6 +223,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			var primaryRequests atomic.Int32
 			var calls [3]atomic.Int32
 			var bodies [3]atomic.Pointer[string]
+			var recoveryCalls, rejectedCalls atomic.Int32
+			var recoveryBody atomic.Pointer[string]
+			sameChannelStarted, bothRejected := make(chan struct{}), make(chan struct{})
 			var arrived [3]atomic.Int64
 			started := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 			finished := [3]chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
@@ -197,22 +242,68 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			defer cancel()
 			makeUpstream := func(endpoint int) *httptest.Server {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					lane := endpoint
-					if sameChannel && endpoint == 0 && primaryRequests.Add(1) > 1 {
-						lane = 1
-					}
-					if sameChannel && endpoint == 1 {
-						lane = 2
-					}
-					if calls[lane].Add(1) != 1 {
-						w.WriteHeader(500)
-						return
-					}
-					arrived[lane].Store(time.Now().UnixNano())
-					defer close(finished[lane])
 					body, _ := io.ReadAll(r.Body)
 					text := string(body)
-					bodies[lane].Store(&text)
+					recovery := signatureCase && endpoint == 0 && !strings.Contains(text, signatureBlock)
+					lane := endpoint
+					if recovery {
+						if recoveryCalls.Add(1) != 1 {
+							w.WriteHeader(http.StatusInternalServerError)
+							return
+						}
+						recoveryBody.Store(&text)
+						if signatureRace {
+							// Both original requests must be rejected before the retry can win.
+							select {
+							case <-bothRejected:
+							case <-r.Context().Done():
+								return
+							}
+						}
+					} else {
+						if sameChannel && endpoint == 0 && primaryRequests.Add(1) > 1 {
+							lane = 1
+						}
+						if sameChannel && endpoint == 1 {
+							lane = 2
+						}
+						if calls[lane].Add(1) != 1 {
+							w.WriteHeader(http.StatusInternalServerError)
+							return
+						}
+						arrived[lane].Store(time.Now().UnixNano())
+						bodies[lane].Store(&text)
+						defer close(finished[lane])
+					}
+					if signatureSSE && !recovery && lane == 0 {
+						w.Header().Set("Content-Type", "text/event-stream")
+						w.WriteHeader(http.StatusOK)
+						_, _ = fmt.Fprintf(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"sse-old-preamble\",\"model\":%q,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\r\n\r\n", modelName)
+						w.(http.Flusher).Flush()
+						_, _ = fmt.Fprintf(w, "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":%q}}\r\n\r\n", signatureError)
+						w.(http.Flusher).Flush()
+						return
+					}
+					if signatureCase && !recovery && endpoint == 0 {
+						if signatureRace {
+							if lane == 1 {
+								close(sameChannelStarted)
+							}
+							select {
+							case <-sameChannelStarted:
+							case <-r.Context().Done():
+								return
+							}
+						}
+						w.Header().Set(common.RequestIdKey, fmt.Sprintf("rejected-%d-request-id", lane))
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusBadRequest)
+						_, _ = fmt.Fprintf(w, `{"type":"error","error":{"type":"invalid_request_error","message":%q}}`, signatureError)
+						if signatureRace && rejectedCalls.Add(1) == 2 {
+							close(bothRejected)
+						}
+						return
+					}
 					label := []string{"primary", "backup", "fallback"}[lane]
 					if tc.name == "json_fable_included" && lane == 0 {
 						// Match the reported failure: the original upstream never sends headers.
@@ -234,7 +325,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 						return
 					}
 					w.Header().Set("Content-Type", "text/event-stream")
-					w.Header().Set(common.RequestIdKey, label+"-request-id")
+					if !signatureRace { // A recovered response may omit the upstream ID.
+						w.Header().Set(common.RequestIdKey, label+"-request-id")
+					}
 					send := func(data string) { _, _ = io.WriteString(w, "data: "+data+"\r\n\r\n"); w.(http.Flusher).Flush() }
 					if protocol.frames != nil {
 						for _, frame := range protocol.frames(label, true) {
@@ -253,7 +346,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 						case <-r.Context().Done():
 						}
 					}
-					if parallel {
+					if parallel && !signatureCase {
 						if tc.winner == 3 {
 							if lane < 2 {
 								<-r.Context().Done()
@@ -402,6 +495,9 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			}
 			if parallel {
 				policy = `[{"stream_hedge":{"delay_ms":160,"retry_same_channel_first":true,"parallel_backup_models":["claude-fable-5-2"]}}]`
+				if signatureCase && !signatureRace {
+					policy = `[{"stream_hedge":{"delay_ms":2000,"retry_same_channel_first":true,"parallel_backup_models":["claude-fable-5-2"]}}]`
+				}
 				if tc.name == "json_parallel_claude_scope_alias" {
 					policy = `[{"stream_hedge":{"delay_ms":160,"retry_same_channel_first":true,"parallel_backup_scope":"claude"}}]`
 				}
@@ -409,7 +505,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 					policy = fmt.Sprintf(`[{"stream_hedge":{"delay_ms":%d,"retry_same_channel_first":true,"parallel_backup_scope":"all"}}]`, delayMS)
 				}
 			}
-			if tc.name == "json_budget_only_allows_same_channel" || tc.name == "json_parallel_fable_one_slot" {
+			if tc.name == "json_budget_only_allows_same_channel" || tc.name == "json_parallel_fable_one_slot" || signatureRace {
 				common.RetryTimes = 1
 			}
 			switch tc.name {
@@ -501,6 +597,21 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			require.Equal(t, tc.status, out.Code, out.Body.String())
 			require.EqualValues(t, 1, calls[0].Load())
 			require.Contains(t, *bodies[0].Load(), "replayed body")
+			if signatureCase {
+				require.Contains(t, *bodies[0].Load(), signatureBlock)
+				if signatureSSE {
+					require.Zero(t, recoveryCalls.Load())
+					require.Contains(t, out.Body.String(), signatureError)
+				} else {
+					require.EqualValues(t, 1, recoveryCalls.Load())
+					require.NotNil(t, recoveryBody.Load())
+					require.NotContains(t, *recoveryBody.Load(), `"signature"`)
+					require.Contains(t, *recoveryBody.Load(), `"text":"previous answer"`)
+				}
+				if signatureRace {
+					require.EqualValues(t, 2, rejectedCalls.Load())
+				}
+			}
 			if largeBody {
 				require.Greater(t, len(*bodies[0].Load()), 1<<20)
 			}
@@ -549,7 +660,7 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 			}
 			var logs []model.Log
 			require.NoError(t, db.Where("type = ?", model.LogTypeConsume).Find(&logs).Error)
-			if parallel {
+			if parallel && !signatureCase {
 				if tc.winner == 3 {
 					waitCanceled(0)
 					waitCanceled(1)
@@ -587,6 +698,15 @@ func TestClaudeHedgeHTTP(t *testing.T) {
 						wantChannelID--
 					}
 					require.Equal(t, wantChannelID, logs[0].ChannelId)
+					if signatureCase {
+						require.Contains(t, logs[0].Other, "QIQI-EC-005")
+						require.EqualValues(t, 3, logs[0].CompletionTokens)
+						if signatureRace {
+							require.Empty(t, logs[0].UpstreamRequestId)
+						} else {
+							require.Equal(t, "primary-request-id", logs[0].UpstreamRequestId)
+						}
+					}
 					if parallel {
 						require.Equal(t, "hedge-test", logs[0].Group)
 					}

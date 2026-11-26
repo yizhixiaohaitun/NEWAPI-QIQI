@@ -254,13 +254,24 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if newAPIError == nil {
 			break
 		}
-		if info.ClaimStreamOutput == nil && attempt == 0 && len(retrySource) > 0 && !c.Writer.Written() &&
+		// Do not replay errors from an HTTP 200 body: a race writer may already
+		// have protocol frames buffered even though Written() is still false.
+		upstreamRejected := httpResp != nil && httpResp.StatusCode != http.StatusOK
+		if httpResp == nil && info.ApiType == constant.APITypeAws {
+			// Bedrock reports the SDK invocation failure separately from any
+			// body/stream error. Only that path supplies the SDK's HTTP status.
+			upstreamRejected = newAPIError.GetErrorCode() == types.ErrorCodeAwsInvokeError
+		}
+		if attempt == 0 && len(retrySource) > 0 && upstreamRejected && !c.Writer.Written() &&
 			c.Request.Context().Err() == nil && (info.UpstreamContext == nil || info.UpstreamContext.Err() == nil) &&
 			isClaudeThinkingSignatureRejection(newAPIError) {
-			if body, changed, toolRecovery := prepareClaudeSignatureRecovery(retrySource); changed && claimClaudeSignatureRetry(c, info.ChannelId) {
+			if body, changed, toolRecovery := prepareClaudeSignatureRecovery(retrySource); changed && claimClaudeSignatureRetry(c, info) {
 				toolThinkingRecovery = toolRecovery
 				requestBody = bytes.NewReader(body)
 				info.UpstreamRequestBodySize = int64(len(body))
+				// A response without an upstream ID must not inherit the failed
+				// request's ID in the eventual settlement.
+				c.Set(common.UpstreamRequestIdKey, "")
 				continue
 			}
 		}

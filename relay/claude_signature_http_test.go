@@ -141,15 +141,16 @@ func TestClaudeSignatureRetryHTTP(t *testing.T) {
 	for _, aws := range []bool{false, true} {
 		for _, stream := range []bool{false, true} {
 			for _, tc := range []struct {
-				name                                                                             string
-				firstStatus                                                                      int
-				message                                                                          string
-				secondFailure, secondSignature, raw, disabled, cancel, timeout, deadline, active bool
-				written, mapping                                                                 string
-				expected                                                                         int
+				name                                                                                           string
+				firstStatus                                                                                    int
+				message                                                                                        string
+				secondFailure, secondSignature, raw, disabled, cancel, timeout, deadline, active, claimPending bool
+				written, mapping                                                                               string
+				expected                                                                                       int
 			}{
 				{name: "success unchanged", expected: 1},
 				{name: "precise signature then success", firstStatus: 400, message: signatureValidationMessage, expected: 2},
+				{name: "hedge_claim_pending", firstStatus: 400, message: signatureValidationMessage, claimPending: true, expected: 2},
 				{name: "precise signature 429 then success", firstStatus: 429, message: signatureValidationMessage, expected: 2},
 				{name: "unrelated 429 does not retry", firstStatus: 429, message: "rate limit exceeded", expected: 1},
 				{name: "wrapped signature429 then success", firstStatus: 429, message: "messages.3.content.44: " + signatureValidationMessage, expected: 2},
@@ -167,6 +168,7 @@ func TestClaudeSignatureRetryHTTP(t *testing.T) {
 				{name: "second failure remains real", firstStatus: 400, message: signatureValidationMessage, secondFailure: true, expected: 2},
 				{name: "other validation", firstStatus: 400, message: "other validation failure", expected: 1},
 				{name: "signature non400", firstStatus: 403, message: signatureValidationMessage, expected: 1},
+				{name: "signature text on 500 does not retry", firstStatus: 500, message: signatureValidationMessage, expected: 1},
 				{name: "disabled", firstStatus: 400, message: signatureValidationMessage, disabled: true, expected: 1},
 				{name: "raw", firstStatus: 400, message: signatureValidationMessage, raw: true, expected: 1},
 				{name: "cancel", firstStatus: 400, message: signatureValidationMessage, cancel: true, expected: 1},
@@ -189,6 +191,11 @@ func TestClaudeSignatureRetryHTTP(t *testing.T) {
 				{name: "active429 mapped raw retries", firstStatus: 429, message: signatureValidationMessage, active: true, mapping: `{"429":"503"}`, expected: 2},
 				{name: "active403 mapped does not retry", firstStatus: 403, message: signatureValidationMessage, active: true, mapping: `{"403":"429"}`, expected: 1},
 			} {
+				// Bedrock's SDK can resend the original body on HTTP 500. Only
+				// direct Claude HTTP makes one call in this non-recovery case.
+				if aws && tc.firstStatus == http.StatusInternalServerError {
+					continue
+				}
 				name := "claude/"
 				if aws {
 					name = "aws/"
@@ -248,6 +255,11 @@ func TestClaudeSignatureRetryHTTP(t *testing.T) {
 						body = []byte(`{"model":"claude-opus-5-5","max_tokens":512,"thinking":{"type":"adaptive"},"messages":[{"role":"user","content":"first"},{"role":"assistant","content":[{"type":"thinking","thinking":"active","signature":"active-synthetic"},{"type":"tool_use","id":"a","name":"local","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":"result"}]}]}`)
 					}
 					c, info, recorder := signatureTestContext(t, body, upstream.URL, aws, stream, tc.raw, !tc.disabled)
+					if tc.claimPending && stream {
+						// The hedge callback is installed, but the 400 arrives before
+						// the lane claims output; therefore the response stays uncommitted.
+						info.ClaimStreamOutput = func() bool { return true }
+					}
 					if tc.cancel {
 						ctx, fn := context.WithCancel(c.Request.Context())
 						cancel = fn
